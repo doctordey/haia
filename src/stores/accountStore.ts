@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { TradingAccount } from '@/types';
 
 interface AccountState {
@@ -8,18 +9,21 @@ interface AccountState {
   setAccounts: (accounts: TradingAccount[]) => void;
   setSelectedAccountId: (id: string | null) => void;
   setLoading: (loading: boolean) => void;
-  selectedAccount: () => TradingAccount | undefined;
 }
 
-export const useAccountStore = create<AccountState>((set, get) => ({
-  accounts: [],
-  selectedAccountId: null,
-  loading: false,
-  setAccounts: (accounts) => set({ accounts }),
-  setSelectedAccountId: (id) => set({ selectedAccountId: id }),
-  setLoading: (loading) => set({ loading }),
-  selectedAccount: () => {
-    const { accounts, selectedAccountId } = get();
-    return accounts.find((a) => a.id === selectedAccountId);
-  },
-}));
+export const useAccountStore = create<AccountState>()(
+  persist(
+    (set) => ({
+      accounts: [],
+      selectedAccountId: null,
+      loading: false,
+      setAccounts: (accounts) => set({ accounts }),
+      setSelectedAccountId: (id) => set({ selectedAccountId: id }),
+      setLoading: (loading) => set({ loading }),
+    }),
+    {
+      name: 'haia-account',
+      partialize: (state) => ({ selectedAccountId: state.selectedAccountId }),
+    }
+  )
+);

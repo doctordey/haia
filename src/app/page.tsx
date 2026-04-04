@@ -28,20 +28,25 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative px-6 pt-24 pb-32 max-w-7xl mx-auto text-center">
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent-primary/5 rounded-full blur-3xl" />
+      <section className="relative px-6 pt-24 pb-32 max-w-7xl mx-auto text-center overflow-hidden">
+        {/* Animated gradient orbs */}
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute top-1/3 left-1/3 w-[500px] h-[500px] bg-accent-primary/8 rounded-full blur-[120px] animate-[drift_12s_ease-in-out_infinite]" />
+          <div className="absolute bottom-1/3 right-1/3 w-[400px] h-[400px] bg-accent-secondary/6 rounded-full blur-[100px] animate-[drift_15s_ease-in-out_infinite_reverse]" />
         </div>
 
-        <h1 className="relative text-4xl md:text-6xl font-bold text-text-primary leading-tight mb-6">
+        <h1 className="relative text-4xl md:text-6xl font-bold text-text-primary leading-tight mb-4">
           Your FX Performance,{' '}
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent-primary to-accent-secondary">
             Visualized
           </span>
         </h1>
-        <p className="relative text-lg text-text-secondary max-w-2xl mx-auto mb-10">
-          Connect your MetaTrader 4/5 accounts and get rich analytics, PNL calendars, and
-          shareable flex cards — all in a dark, terminal-style interface built for traders.
+        <p className="relative text-base md:text-lg text-text-secondary max-w-2xl mx-auto mb-4">
+          Connect MetaTrader. Track every trade. Share your results.
+        </p>
+        <p className="relative text-sm text-text-tertiary max-w-xl mx-auto mb-10">
+          Rich analytics, PNL calendars, and shareable flex cards — all in a dark,
+          terminal-style interface built for serious traders.
         </p>
         <div className="relative flex items-center justify-center gap-4">
           <Link

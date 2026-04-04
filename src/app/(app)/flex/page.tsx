@@ -31,6 +31,8 @@ export default function FlexCardsPage() {
   const previewRef = useRef<HTMLDivElement>(null);
 
   const [period, setPeriod] = useState('30D');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
   const [metric, setMetric] = useState<MetricType>('pnl');
   const [themeId, setThemeId] = useState<ThemeId>('clean-minimal');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('square');
@@ -65,7 +67,9 @@ export default function FlexCardsPage() {
         const lossDays = calDays.filter((d: { pnl: number }) => d.pnl < 0);
 
         setCardData({
-          period,
+          period: period === 'custom' && customDateFrom
+            ? customDateTo ? `${customDateFrom} – ${customDateTo}` : customDateFrom
+            : period,
           username: 'trader',
           totalPnl: dash.totalPnl || 0,
           pctGain: dash.pnlPercent || 0,
@@ -232,21 +236,48 @@ export default function FlexCardsPage() {
           {/* Time Period */}
           <Card>
             <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Time Period</h3></CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 space-y-2">
               <div className="flex flex-wrap gap-1.5">
                 {periods.map((p) => (
                   <button
                     key={p}
-                    onClick={() => setPeriod(p)}
+                    onClick={() => { setPeriod(p); setCustomDateFrom(''); setCustomDateTo(''); }}
                     className={cn(
                       'px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors cursor-pointer',
-                      period === p ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                      period === p && !customDateFrom ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
                     )}
                   >
                     {p}
                   </button>
                 ))}
+                <button
+                  onClick={() => setPeriod('custom')}
+                  className={cn(
+                    'px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors cursor-pointer',
+                    period === 'custom' ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                  )}
+                >
+                  Custom
+                </button>
               </div>
+              {period === 'custom' && (
+                <div className="flex gap-2">
+                  <Input
+                    type="date"
+                    value={customDateFrom}
+                    onChange={(e) => setCustomDateFrom(e.target.value)}
+                    className="h-8 text-xs flex-1"
+                    placeholder="From"
+                  />
+                  <Input
+                    type="date"
+                    value={customDateTo}
+                    onChange={(e) => setCustomDateTo(e.target.value)}
+                    className="h-8 text-xs flex-1"
+                    placeholder="To"
+                  />
+                </div>
+              )}
             </CardContent>
           </Card>
 

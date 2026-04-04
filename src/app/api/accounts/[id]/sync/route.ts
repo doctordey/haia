@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne, sql } from 'drizzle-orm';
 import { fetchHistoricalDeals } from '@/lib/metaapi';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
@@ -18,33 +18,42 @@ export async function POST(
 
   const { id } = await params;
 
+  // Atomic claim: only set syncing if not already syncing
+  const claimed = await db
+    .update(tradingAccounts)
+    .set({ syncStatus: 'syncing' })
+    .where(and(
+      eq(tradingAccounts.id, id),
+      eq(tradingAccounts.userId, session.user.id),
+      ne(tradingAccounts.syncStatus, 'syncing')
+    ))
+    .returning({ id: tradingAccounts.id });
+
+  if (claimed.length === 0) {
+    // Either account doesn't exist, wrong user, or already syncing
+    const account = await db.query.tradingAccounts.findFirst({
+      where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, session.user.id)),
+    });
+    if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+    return NextResponse.json({ error: 'Sync already in progress' }, { status: 409 });
+  }
+
   const account = await db.query.tradingAccounts.findFirst({
-    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, session.user.id)),
+    where: eq(tradingAccounts.id, id),
   });
 
   if (!account) {
     return NextResponse.json({ error: 'Account not found' }, { status: 404 });
   }
 
-  // Prevent concurrent syncs — only start if not already syncing
-  if (account.syncStatus === 'syncing') {
-    return NextResponse.json({ error: 'Sync already in progress' }, { status: 409 });
-  }
-
-  await db
-    .update(tradingAccounts)
-    .set({ syncStatus: 'syncing' })
-    .where(eq(tradingAccounts.id, id));
-
   try {
     const endDate = new Date();
-    // Use lastSyncAt for incremental sync, fall back to 2-year lookback for initial sync
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
-    // Track balance deposits/withdrawals
-    let initialBalance = 0;
+    // Track balance events by date for accurate daily snapshots
+    const balanceByDate = new Map<string, number>();
 
     if (deals && Array.isArray(deals)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,51 +62,40 @@ export async function POST(
       );
 
       for (const deal of sortedDeals) {
-        // Capture deposits/withdrawals for balance tracking
+        const dealTime = new Date(deal.time);
+        const dateKey = format(dealTime, 'yyyy-MM-dd');
+
+        // Track balance operations (deposits/withdrawals) by date
         if (deal.type === 'DEAL_TYPE_BALANCE') {
-          initialBalance += deal.profit || 0;
+          balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + (deal.profit || 0));
           continue;
         }
 
         if (!deal.symbol) continue;
 
         const ticket = String(deal.positionId || deal.orderId || deal.id);
-        const dealTime = new Date(deal.time);
 
         const isOpenDeal = deal.entryType === 'DEAL_ENTRY_IN';
-        const isCloseDeal = deal.entryType === 'DEAL_ENTRY_OUT' || deal.entryType === 'DEAL_ENTRY_INOUT';
+        const isCloseDeal = deal.entryType === 'DEAL_ENTRY_OUT';
+        const isInOut = deal.entryType === 'DEAL_ENTRY_INOUT';
 
         if (isOpenDeal) {
           await db
             .insert(trades)
             .values({
-              accountId: id,
-              ticket,
-              symbol: deal.symbol,
+              accountId: id, ticket, symbol: deal.symbol,
               direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
-              lots: deal.volume || 0,
-              entryPrice: deal.price || 0,
-              closePrice: null,
-              openTime: dealTime,
-              closeTime: null,
-              profit: 0,
-              pips: null,
-              commission: deal.commission || 0,
-              swap: 0,
-              isOpen: true,
-              magicNumber: deal.magic || null,
-              comment: deal.comment || null,
+              lots: deal.volume || 0, entryPrice: deal.price || 0,
+              closePrice: null, openTime: dealTime, closeTime: null,
+              profit: 0, pips: null, commission: deal.commission || 0, swap: 0,
+              isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
-              set: {
-                entryPrice: deal.price || 0,
-                lots: deal.volume || 0,
-                openTime: dealTime,
-                commission: deal.commission || 0,
-              },
+              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0 },
             });
-        } else if (isCloseDeal) {
+        } else if (isCloseDeal || isInOut) {
+          // Close the existing position
           const existingTrade = await db.query.trades.findFirst({
             where: and(eq(trades.accountId, id), eq(trades.ticket, ticket)),
           });
@@ -106,80 +104,69 @@ export async function POST(
             await db
               .update(trades)
               .set({
-                closePrice: deal.price || null,
-                closeTime: dealTime,
-                profit: deal.profit || 0,
-                pips: deal.pips || null,
+                closePrice: deal.price || null, closeTime: dealTime,
+                profit: deal.profit || 0, pips: deal.pips || null,
                 commission: (existingTrade.commission || 0) + (deal.commission || 0),
-                swap: deal.swap || 0,
-                isOpen: false,
+                swap: deal.swap || 0, isOpen: false,
               })
               .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
           } else {
-            // No matching open trade — invert direction since close deal type is opposite of position
+            // No matching open trade — insert as completed, invert direction
             await db
               .insert(trades)
               .values({
-                accountId: id,
-                ticket,
-                symbol: deal.symbol,
+                accountId: id, ticket, symbol: deal.symbol,
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
-                lots: deal.volume || 0,
-                entryPrice: deal.price || 0,
-                closePrice: deal.price || null,
-                openTime: dealTime,
-                closeTime: dealTime,
-                profit: deal.profit || 0,
-                pips: deal.pips || null,
-                commission: deal.commission || 0,
-                swap: deal.swap || 0,
-                isOpen: false,
-                magicNumber: deal.magic || null,
-                comment: deal.comment || null,
+                lots: deal.volume || 0, entryPrice: deal.price || 0,
+                closePrice: deal.price || null, openTime: dealTime, closeTime: dealTime,
+                profit: deal.profit || 0, pips: deal.pips || null,
+                commission: deal.commission || 0, swap: deal.swap || 0,
+                isOpen: false, magicNumber: deal.magic || null, comment: deal.comment || null,
               })
               .onConflictDoUpdate({
                 target: [trades.accountId, trades.ticket],
                 set: {
-                  profit: deal.profit || 0,
-                  closePrice: deal.price || null,
-                  closeTime: dealTime,
-                  commission: deal.commission || 0,
-                  swap: deal.swap || 0,
-                  pips: deal.pips || null,
-                  isOpen: false,
+                  profit: deal.profit || 0, closePrice: deal.price || null,
+                  closeTime: dealTime, isOpen: false,
+                  commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
                 },
               });
           }
+
+          // INOUT: also open a new position in the opposite direction
+          if (isInOut) {
+            const newTicket = `${ticket}_inout_${dealTime.getTime()}`;
+            await db
+              .insert(trades)
+              .values({
+                accountId: id, ticket: newTicket, symbol: deal.symbol,
+                direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+                lots: deal.volume || 0, entryPrice: deal.price || 0,
+                closePrice: null, openTime: dealTime, closeTime: null,
+                profit: 0, pips: null, commission: 0, swap: 0,
+                isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
+              })
+              .onConflictDoNothing();
+          }
         } else {
-          // Fallback for unknown entry types — invert like close deals since these are completed
+          // Fallback for unknown entry types
           await db
             .insert(trades)
             .values({
-              accountId: id,
-              ticket,
-              symbol: deal.symbol,
+              accountId: id, ticket, symbol: deal.symbol,
               direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
-              lots: deal.volume || 0,
-              entryPrice: deal.price || 0,
-              closePrice: deal.price || null,
-              openTime: dealTime,
-              closeTime: dealTime,
-              profit: deal.profit || 0,
-              pips: deal.pips || null,
-              commission: deal.commission || 0,
-              swap: deal.swap || 0,
-              isOpen: false,
-              magicNumber: deal.magic || null,
-              comment: deal.comment || null,
+              lots: deal.volume || 0, entryPrice: deal.price || 0,
+              closePrice: deal.price || null, openTime: dealTime, closeTime: dealTime,
+              profit: deal.profit || 0, pips: deal.pips || null,
+              commission: deal.commission || 0, swap: deal.swap || 0,
+              isOpen: false, magicNumber: deal.magic || null, comment: deal.comment || null,
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
               set: {
-                profit: deal.profit || 0,
-                closePrice: deal.price || null,
-                commission: deal.commission || 0,
-                swap: deal.swap || 0,
-                pips: deal.pips || null,
+                profit: deal.profit || 0, closePrice: deal.price || null,
+                closeTime: dealTime, isOpen: false,
+                commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
               },
             });
         }
@@ -187,10 +174,7 @@ export async function POST(
     }
 
     // Aggregate daily snapshots
-    const allTrades = await db.query.trades.findMany({
-      where: eq(trades.accountId, id),
-    });
-
+    const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, id) });
     const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
     const dailyMap = new Map<string, typeof closedTrades>();
 
@@ -200,12 +184,17 @@ export async function POST(
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Start from initial balance (deposits/withdrawals), then accumulate PNL
-    let runningBalance = initialBalance;
-    const sortedDates = [...dailyMap.keys()].sort();
+    // Collect all dates that have either trades or balance events
+    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
+    let runningBalance = 0;
 
-    for (const dateKey of sortedDates) {
-      const dayTrades = dailyMap.get(dateKey)!;
+    for (const dateKey of [...allDates].sort()) {
+      // Apply balance deposits/withdrawals for this date
+      const balanceChange = balanceByDate.get(dateKey) || 0;
+      runningBalance += balanceChange;
+
+      // Apply trade PNL for this date
+      const dayTrades = dailyMap.get(dateKey) || [];
       const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
       runningBalance += dayPnl;
 

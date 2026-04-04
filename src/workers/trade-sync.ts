@@ -1,15 +1,15 @@
 /**
- * BullMQ Trade Sync Worker
+ * Trade Sync Worker
  *
  * Runs as a separate process: npm run worker
  * Processes sync jobs for all active trading accounts.
  *
- * Requires REDIS_URL and DATABASE_URL environment variables.
+ * Requires DATABASE_URL environment variable.
  */
 
 import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, ne } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
 import { format } from 'date-fns';
 
@@ -20,18 +20,19 @@ async function syncAccount(accountId: string) {
 
   if (!account || !account.isActive) return;
 
-  // Guard against concurrent syncs
-  if (account.syncStatus === 'syncing') {
+  // Atomic claim: only set syncing if not already syncing
+  const claimed = await db
+    .update(tradingAccounts)
+    .set({ syncStatus: 'syncing' })
+    .where(and(eq(tradingAccounts.id, accountId), ne(tradingAccounts.syncStatus, 'syncing')))
+    .returning({ id: tradingAccounts.id });
+
+  if (claimed.length === 0) {
     console.log(`[sync] Skipping ${account.name} — already syncing`);
     return;
   }
 
   console.log(`[sync] Starting sync for account ${account.name} (${account.id})`);
-
-  await db
-    .update(tradingAccounts)
-    .set({ syncStatus: 'syncing' })
-    .where(eq(tradingAccounts.id, accountId));
 
   try {
     const MetaApi = require('metaapi.cloud-sdk').default;
@@ -46,158 +47,128 @@ async function syncAccount(accountId: string) {
     await connection.connect();
     await connection.waitSynchronized();
 
-    // Fetch deals since last sync (or last 2 years if never synced)
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
     const deals = await connection.getDealsByTimeRange(startDate, endDate);
     await connection.close();
 
-    // Track balance deposits/withdrawals for accurate account balance
-    let initialBalance = 0;
+    // Track balance events by date for accurate daily snapshots
+    const balanceByDate = new Map<string, number>();
 
     if (deals && Array.isArray(deals)) {
-      // Sort deals chronologically
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
         (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
       );
 
       for (const deal of sortedDeals) {
-        // Capture balance operations (deposits/withdrawals) for balance tracking
+        const dealTime = new Date(deal.time);
+        const dateKey = format(dealTime, 'yyyy-MM-dd');
+
+        // Track balance operations (deposits/withdrawals) by date
         if (deal.type === 'DEAL_TYPE_BALANCE') {
-          initialBalance += deal.profit || 0;
+          balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + (deal.profit || 0));
           continue;
         }
 
-        // Skip deals without a symbol (non-trade deals)
         if (!deal.symbol) continue;
 
         const ticket = String(deal.positionId || deal.orderId || deal.id);
-        const dealTime = new Date(deal.time);
 
-        // Determine if this is an opening or closing deal
-        // MetaApi deal entry types: DEAL_ENTRY_IN (open), DEAL_ENTRY_OUT (close), DEAL_ENTRY_INOUT (close+open)
         const isOpenDeal = deal.entryType === 'DEAL_ENTRY_IN';
-        const isCloseDeal = deal.entryType === 'DEAL_ENTRY_OUT' || deal.entryType === 'DEAL_ENTRY_INOUT';
+        const isCloseDeal = deal.entryType === 'DEAL_ENTRY_OUT';
+        const isInOut = deal.entryType === 'DEAL_ENTRY_INOUT';
 
         if (isOpenDeal) {
-          // Opening deal — create a new trade record as open
           await db
             .insert(trades)
             .values({
-              accountId,
-              ticket,
-              symbol: deal.symbol,
+              accountId, ticket, symbol: deal.symbol,
               direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
-              lots: deal.volume || 0,
-              entryPrice: deal.price || 0,
-              closePrice: null,
-              openTime: dealTime,
-              closeTime: null,
-              profit: 0,
-              pips: null,
-              commission: deal.commission || 0,
-              swap: 0,
-              isOpen: true,
-              magicNumber: deal.magic || null,
-              comment: deal.comment || null,
+              lots: deal.volume || 0, entryPrice: deal.price || 0,
+              closePrice: null, openTime: dealTime, closeTime: null,
+              profit: 0, pips: null, commission: deal.commission || 0, swap: 0,
+              isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
-              set: {
-                entryPrice: deal.price || 0,
-                lots: deal.volume || 0,
-                openTime: dealTime,
-                commission: deal.commission || 0,
-              },
+              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0 },
             });
-        } else if (isCloseDeal) {
-          // Closing deal — find and update the existing open trade
+        } else if (isCloseDeal || isInOut) {
+          // Close the existing position
           const existingTrade = await db.query.trades.findFirst({
             where: and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)),
           });
 
           if (existingTrade) {
-            // Update existing trade with close data
             await db
               .update(trades)
               .set({
-                closePrice: deal.price || null,
-                closeTime: dealTime,
-                profit: deal.profit || 0,
-                pips: deal.pips || null,
+                closePrice: deal.price || null, closeTime: dealTime,
+                profit: deal.profit || 0, pips: deal.pips || null,
                 commission: (existingTrade.commission || 0) + (deal.commission || 0),
-                swap: deal.swap || 0,
-                isOpen: false,
+                swap: deal.swap || 0, isOpen: false,
               })
               .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           } else {
-            // No matching open trade — invert direction since close deal type is opposite of position
+            // No matching open trade — insert as completed, invert direction
             await db
               .insert(trades)
               .values({
-                accountId,
-                ticket,
-                symbol: deal.symbol,
+                accountId, ticket, symbol: deal.symbol,
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
-                lots: deal.volume || 0,
-                entryPrice: deal.price || 0,
-                closePrice: deal.price || null,
-                openTime: dealTime,
-                closeTime: dealTime,
-                profit: deal.profit || 0,
-                pips: deal.pips || null,
-                commission: deal.commission || 0,
-                swap: deal.swap || 0,
-                isOpen: false,
-                magicNumber: deal.magic || null,
-                comment: deal.comment || null,
+                lots: deal.volume || 0, entryPrice: deal.price || 0,
+                closePrice: deal.price || null, openTime: dealTime, closeTime: dealTime,
+                profit: deal.profit || 0, pips: deal.pips || null,
+                commission: deal.commission || 0, swap: deal.swap || 0,
+                isOpen: false, magicNumber: deal.magic || null, comment: deal.comment || null,
               })
               .onConflictDoUpdate({
                 target: [trades.accountId, trades.ticket],
                 set: {
-                  profit: deal.profit || 0,
-                  closePrice: deal.price || null,
-                  closeTime: dealTime,
-                  commission: deal.commission || 0,
-                  swap: deal.swap || 0,
-                  pips: deal.pips || null,
-                  isOpen: false,
+                  profit: deal.profit || 0, closePrice: deal.price || null,
+                  closeTime: dealTime, isOpen: false,
+                  commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
                 },
               });
           }
+
+          // INOUT: also open a new position in the opposite direction
+          if (isInOut) {
+            const newTicket = `${ticket}_inout_${dealTime.getTime()}`;
+            await db
+              .insert(trades)
+              .values({
+                accountId, ticket: newTicket, symbol: deal.symbol,
+                direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+                lots: deal.volume || 0, entryPrice: deal.price || 0,
+                closePrice: null, openTime: dealTime, closeTime: null,
+                profit: 0, pips: null, commission: 0, swap: 0,
+                isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
+              })
+              .onConflictDoNothing();
+          }
         } else {
-          // Unknown entry type — invert like close deals since these are completed trades
+          // Unknown entry type
           console.warn(`[sync] Unknown entry type for deal ${deal.id}, treating as close`);
           await db
             .insert(trades)
             .values({
-              accountId,
-              ticket,
-              symbol: deal.symbol,
+              accountId, ticket, symbol: deal.symbol,
               direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
-              lots: deal.volume || 0,
-              entryPrice: deal.price || 0,
-              closePrice: deal.price || null,
-              openTime: dealTime,
-              closeTime: dealTime,
-              profit: deal.profit || 0,
-              pips: deal.pips || null,
-              commission: deal.commission || 0,
-              swap: deal.swap || 0,
-              isOpen: false,
-              magicNumber: deal.magic || null,
-              comment: deal.comment || null,
+              lots: deal.volume || 0, entryPrice: deal.price || 0,
+              closePrice: deal.price || null, openTime: dealTime, closeTime: dealTime,
+              profit: deal.profit || 0, pips: deal.pips || null,
+              commission: deal.commission || 0, swap: deal.swap || 0,
+              isOpen: false, magicNumber: deal.magic || null, comment: deal.comment || null,
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
               set: {
-                profit: deal.profit || 0,
-                closePrice: deal.price || null,
-                commission: deal.commission || 0,
-                swap: deal.swap || 0,
-                pips: deal.pips || null,
+                profit: deal.profit || 0, closePrice: deal.price || null,
+                closeTime: dealTime, isOpen: false,
+                commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
               },
             });
         }
@@ -215,10 +186,15 @@ async function syncAccount(accountId: string) {
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Start balance from deposits/withdrawals, then accumulate PNL
-    let runningBalance = initialBalance;
-    for (const dateKey of [...dailyMap.keys()].sort()) {
-      const dayTrades = dailyMap.get(dateKey)!;
+    // Collect all dates with trades or balance events
+    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
+    let runningBalance = 0;
+
+    for (const dateKey of [...allDates].sort()) {
+      const balanceChange = balanceByDate.get(dateKey) || 0;
+      runningBalance += balanceChange;
+
+      const dayTrades = dailyMap.get(dateKey) || [];
       const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
       runningBalance += dayPnl;
 
@@ -236,10 +212,15 @@ async function syncAccount(accountId: string) {
         })
         .onConflictDoUpdate({
           target: [dailySnapshots.accountId, dailySnapshots.date],
-          set: { balance: runningBalance, equity: runningBalance, pnl: dayPnl, tradeCount: dayTrades.length,
-            winCount: dayTrades.filter((t) => t.profit > 0).length, lossCount: dayTrades.filter((t) => t.profit < 0).length,
-            volume: dayTrades.reduce((sum, t) => sum + t.lots, 0), pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
-            commission: dayTrades.reduce((sum, t) => sum + t.commission, 0), swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
+          set: {
+            balance: runningBalance, equity: runningBalance, pnl: dayPnl,
+            tradeCount: dayTrades.length,
+            winCount: dayTrades.filter((t) => t.profit > 0).length,
+            lossCount: dayTrades.filter((t) => t.profit < 0).length,
+            volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
+            pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
+            commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
+            swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
           },
         });
     }
@@ -294,7 +275,6 @@ async function runSyncCycle() {
   console.log('[sync] Sync cycle complete.');
 }
 
-// Run every 5 minutes
 const INTERVAL = 5 * 60 * 1000;
 
 async function main() {

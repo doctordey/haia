@@ -57,5 +57,10 @@ export async function GET(
     totalLots: stats?.totalLots || 0,
     totalCommission: stats?.totalCommission || 0,
     totalSwap: stats?.totalSwap || 0,
+    totalPips: stats?.totalPips || 0,
+    avgPipsPerTrade: stats?.avgPipsPerTrade || 0,
+    bestTradePips: stats?.bestTradePips || 0,
+    averageWin: stats?.averageWin || 0,
+    averageLoss: stats?.averageLoss || 0,
   });
 }

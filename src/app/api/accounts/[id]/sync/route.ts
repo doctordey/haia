@@ -26,6 +26,11 @@ export async function POST(
     return NextResponse.json({ error: 'Account not found' }, { status: 404 });
   }
 
+  // Prevent concurrent syncs — only start if not already syncing
+  if (account.syncStatus === 'syncing') {
+    return NextResponse.json({ error: 'Sync already in progress' }, { status: 409 });
+  }
+
   await db
     .update(tradingAccounts)
     .set({ syncStatus: 'syncing' })
@@ -33,8 +38,8 @@ export async function POST(
 
   try {
     const endDate = new Date();
-    const startDate = new Date();
-    startDate.setFullYear(startDate.getFullYear() - 2);
+    // Use lastSyncAt for incremental sync, fall back to 2-year lookback for initial sync
+    const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
@@ -42,8 +47,9 @@ export async function POST(
     let initialBalance = 0;
 
     if (deals && Array.isArray(deals)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
-        (a: { time: string }, b: { time: string }) => new Date(a.time).getTime() - new Date(b.time).getTime()
+        (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
       );
 
       for (const deal of sortedDeals) {
@@ -110,13 +116,14 @@ export async function POST(
               })
               .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
           } else {
+            // No matching open trade — invert direction since close deal type is opposite of position
             await db
               .insert(trades)
               .values({
                 accountId: id,
                 ticket,
                 symbol: deal.symbol,
-                direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+                direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
                 lots: deal.volume || 0,
                 entryPrice: deal.price || 0,
                 closePrice: deal.price || null,
@@ -144,7 +151,7 @@ export async function POST(
               });
           }
         } else {
-          // Fallback for unknown entry types
+          // Fallback for unknown entry types — use deal.type directly (best guess)
           await db
             .insert(trades)
             .values({
@@ -253,8 +260,8 @@ export async function POST(
 
     return NextResponse.json({ success: true, tradesImported: closedTrades.length });
   } catch (error: unknown) {
-    console.error('Sync error:', error);
     const message = error instanceof Error ? error.message : 'Sync failed';
+    console.error(`Sync error for account ${id}:`, message);
 
     await db
       .update(tradingAccounts)

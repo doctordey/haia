@@ -52,8 +52,9 @@ async function syncAccount(accountId: string) {
 
     if (deals && Array.isArray(deals)) {
       // Sort deals chronologically
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
-        (a: { time: string }, b: { time: string }) => new Date(a.time).getTime() - new Date(b.time).getTime()
+        (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
       );
 
       for (const deal of sortedDeals) {
@@ -126,14 +127,14 @@ async function syncAccount(accountId: string) {
               })
               .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           } else {
-            // No matching open trade found — insert as a completed trade
+            // No matching open trade — invert direction since close deal type is opposite of position
             await db
               .insert(trades)
               .values({
                 accountId,
                 ticket,
                 symbol: deal.symbol,
-                direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+                direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
                 lots: deal.volume || 0,
                 entryPrice: deal.price || 0,
                 closePrice: deal.price || null,

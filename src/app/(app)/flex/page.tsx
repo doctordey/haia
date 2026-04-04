@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData } from '@/components/flex-card/card-preview';
 import { themes, type ThemeId } from '@/components/flex-card/themes';
 import { useAccounts } from '@/hooks/useAccounts';
+import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 
 const periods = ['1D', '7D', '30D', '90D', '1Y', 'MAX'];
@@ -27,7 +28,8 @@ const aspectRatios: { id: AspectRatio; label: string }[] = [
 ];
 
 export default function FlexCardsPage() {
-  const { selectedAccountId, accounts } = useAccounts();
+  const { selectedAccountId, accounts, loading: accountsLoading } = useAccounts();
+  const { data: session } = useSession();
   const previewRef = useRef<HTMLDivElement>(null);
 
   const [period, setPeriod] = useState('30D');
@@ -71,7 +73,7 @@ export default function FlexCardsPage() {
           period: period === 'custom' && customDateFrom
             ? customDateTo ? `${customDateFrom} – ${customDateTo}` : customDateFrom
             : period,
-          username: 'trader',
+          username: session?.user?.name || session?.user?.email?.split('@')[0] || 'trader',
           totalPnl: dash.totalPnl || 0,
           pctGain: dash.pnlPercent || 0,
           tradeCount: dash.totalTrades || 0,
@@ -102,7 +104,7 @@ export default function FlexCardsPage() {
     }
 
     fetchData();
-  }, [selectedAccountId, period, metric]);
+  }, [selectedAccountId, period, metric, customDateFrom, customDateTo]);
 
   // Fetch saved cards
   useEffect(() => {
@@ -110,7 +112,9 @@ export default function FlexCardsPage() {
       try {
         const res = await fetch('/api/flex-cards');
         if (res.ok) setSavedCards(await res.json());
-      } catch {}
+      } catch (err) {
+        console.error('Failed to fetch saved cards:', err);
+      }
     }
     fetchSaved();
   }, []);
@@ -138,10 +142,20 @@ export default function FlexCardsPage() {
     if (!el) return;
     setExporting(true);
     try {
-      const { toBlob } = await import('html-to-image');
-      const blob = await toBlob(el, { pixelRatio: 2 });
-      if (blob) {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      const { toBlob, toPng } = await import('html-to-image');
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        const blob = await toBlob(el, { pixelRatio: 2 });
+        if (blob) {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        }
+      } else {
+        // Fallback: open image in new tab for manual copy
+        const dataUrl = await toPng(el, { pixelRatio: 2 });
+        const win = window.open();
+        if (win) {
+          win.document.write(`<img src="${dataUrl}" />`);
+          win.document.title = 'Haia Flex Card — Right-click to copy';
+        }
       }
     } catch (err) {
       console.error('Copy failed:', err);
@@ -184,7 +198,9 @@ export default function FlexCardsPage() {
     try {
       const res = await fetch(`/api/flex-cards/${id}`, { method: 'DELETE' });
       if (res.ok) setSavedCards((prev) => prev.filter((c) => c.id !== id));
-    } catch {}
+    } catch (err) {
+      console.error('Failed to delete card:', err);
+    }
   }, []);
 
   const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -196,7 +212,7 @@ export default function FlexCardsPage() {
     reader.readAsDataURL(file);
   }, []);
 
-  if (accounts.length === 0) {
+  if (!accountsLoading && accounts.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[calc(100vh-56px)]">
         <div className="text-center">
@@ -389,9 +405,12 @@ export default function FlexCardsPage() {
                 { label: 'Win/Loss Stats', checked: showWinLoss, onChange: setShowWinLoss },
                 { label: 'Branding', checked: showBranding, onChange: setShowBranding },
               ].map((toggle) => (
-                <label key={toggle.label} className="flex items-center justify-between cursor-pointer">
-                  <span className="text-xs text-text-secondary">{toggle.label}</span>
+                <div key={toggle.label} className="flex items-center justify-between">
+                  <span className="text-xs text-text-secondary" id={`toggle-${toggle.label.replace(/\s+/g, '-').toLowerCase()}`}>{toggle.label}</span>
                   <button
+                    role="switch"
+                    aria-checked={toggle.checked}
+                    aria-labelledby={`toggle-${toggle.label.replace(/\s+/g, '-').toLowerCase()}`}
                     onClick={() => toggle.onChange(!toggle.checked)}
                     className={cn(
                       'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
@@ -403,7 +422,7 @@ export default function FlexCardsPage() {
                       toggle.checked ? 'translate-x-4' : 'translate-x-0.5'
                     )} />
                   </button>
-                </label>
+                </div>
               ))}
             </CardContent>
           </Card>

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { CardPreview, type MetricType, type AspectRatio, type FlexCardData } from '@/components/flex-card/card-preview';
+import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData } from '@/components/flex-card/card-preview';
 import { themes, type ThemeId } from '@/components/flex-card/themes';
 import { useAccounts } from '@/hooks/useAccounts';
 import { cn } from '@/lib/utils';
@@ -36,6 +36,7 @@ export default function FlexCardsPage() {
   const [metric, setMetric] = useState<MetricType>('pnl');
   const [themeId, setThemeId] = useState<ThemeId>('clean-minimal');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('square');
+  const [cardLayout, setCardLayout] = useState<CardLayout>('default');
   const [showUsername, setShowUsername] = useState(true);
   const [showChart, setShowChart] = useState(true);
   const [showWinLoss, setShowWinLoss] = useState(true);
@@ -222,6 +223,7 @@ export default function FlexCardsPage() {
                 theme={themeId}
                 customBgUrl={customBgUrl}
                 aspectRatio={aspectRatio}
+                layout={cardLayout}
                 showUsername={showUsername}
                 showChart={showChart}
                 showWinLoss={showWinLoss}
@@ -336,23 +338,43 @@ export default function FlexCardsPage() {
             </CardContent>
           </Card>
 
-          {/* Aspect Ratio */}
+          {/* Layout + Aspect Ratio */}
           <Card>
-            <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Aspect Ratio</h3></CardHeader>
-            <CardContent className="pt-0">
+            <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Layout</h3></CardHeader>
+            <CardContent className="pt-0 space-y-3">
               <div className="flex gap-1.5">
-                {aspectRatios.map((a) => (
+                {([
+                  { id: 'default' as CardLayout, label: 'Haia' },
+                  { id: 'terminal' as CardLayout, label: 'Terminal' },
+                ]).map((l) => (
                   <button
-                    key={a.id}
-                    onClick={() => setAspectRatio(a.id)}
+                    key={l.id}
+                    onClick={() => setCardLayout(l.id)}
                     className={cn(
                       'flex-1 px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors cursor-pointer',
-                      aspectRatio === a.id ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                      cardLayout === l.id ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
                     )}
                   >
-                    {a.label}
+                    {l.label}
                   </button>
                 ))}
+              </div>
+              <div>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Aspect Ratio</p>
+                <div className="flex gap-1.5">
+                  {aspectRatios.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setAspectRatio(a.id)}
+                      className={cn(
+                        'flex-1 px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors cursor-pointer',
+                        aspectRatio === a.id ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                      )}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -151,14 +151,14 @@ export async function POST(
               });
           }
         } else {
-          // Fallback for unknown entry types — use deal.type directly (best guess)
+          // Fallback for unknown entry types — invert like close deals since these are completed
           await db
             .insert(trades)
             .values({
               accountId: id,
               ticket,
               symbol: deal.symbol,
-              direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+              direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
               lots: deal.volume || 0,
               entryPrice: deal.price || 0,
               closePrice: deal.price || null,

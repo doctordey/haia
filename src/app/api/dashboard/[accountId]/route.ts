@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, accountStats, trades } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
   _request: Request,
@@ -27,9 +27,11 @@ export async function GET(
     where: eq(accountStats.accountId, accountId),
   });
 
-  const openTradesCount = await db.query.trades.findMany({
-    where: and(eq(trades.accountId, accountId), eq(trades.isOpen, true)),
-  });
+  const openCountResult = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(trades)
+    .where(and(eq(trades.accountId, accountId), eq(trades.isOpen, true)));
+  const openTradesCount = Number(openCountResult[0]?.count || 0);
 
   const startBalance = (stats?.balance || 0) - (stats?.totalPnl || 0);
 
@@ -41,7 +43,7 @@ export async function GET(
     winRate: stats?.winRate || 0,
     winningTrades: stats?.winningTrades || 0,
     losingTrades: stats?.losingTrades || 0,
-    openTradesCount: openTradesCount.length,
+    openTradesCount,
     unrealizedPnl: stats?.unrealizedPnl || 0,
     profitFactor: stats?.profitFactor || 0,
     totalTrades: stats?.totalTrades || 0,

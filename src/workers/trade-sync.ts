@@ -20,6 +20,12 @@ async function syncAccount(accountId: string) {
 
   if (!account || !account.isActive) return;
 
+  // Guard against concurrent syncs
+  if (account.syncStatus === 'syncing') {
+    console.log(`[sync] Skipping ${account.name} — already syncing`);
+    return;
+  }
+
   console.log(`[sync] Starting sync for account ${account.name} (${account.id})`);
 
   await db
@@ -162,14 +168,15 @@ async function syncAccount(accountId: string) {
               });
           }
         } else {
-          // Unknown entry type — treat as a completed trade (fallback)
+          // Unknown entry type — invert like close deals since these are completed trades
+          console.warn(`[sync] Unknown entry type for deal ${deal.id}, treating as close`);
           await db
             .insert(trades)
             .values({
               accountId,
               ticket,
               symbol: deal.symbol,
-              direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+              direction: deal.type === 'DEAL_TYPE_BUY' ? 'SELL' : 'BUY',
               lots: deal.volume || 0,
               entryPrice: deal.price || 0,
               closePrice: deal.price || null,

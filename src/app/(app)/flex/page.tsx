@@ -149,12 +149,18 @@ export default function FlexCardsPage() {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
         }
       } else {
-        // Fallback: open image in new tab for manual copy
+        // Fallback: try opening image in new tab, or download
         const dataUrl = await toPng(el, { pixelRatio: 2 });
         const win = window.open();
         if (win) {
           win.document.write(`<img src="${dataUrl}" />`);
           win.document.title = 'Haia Flex Card — Right-click to copy';
+        } else {
+          // Popup blocked — trigger download instead
+          const link = document.createElement('a');
+          link.download = `haia-${metric}-${period}.png`;
+          link.href = dataUrl;
+          link.click();
         }
       }
     } catch (err) {

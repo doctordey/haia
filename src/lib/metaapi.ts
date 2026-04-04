@@ -11,7 +11,8 @@ async function getMetaApi() {
     throw new Error('METAAPI_TOKEN environment variable is not set');
   }
 
-  const MetaApi = (await import('metaapi.cloud-sdk')).default;
+  // Use the CJS entry point to avoid ESM issues in Next.js server runtime
+  const MetaApi = require('metaapi.cloud-sdk').default;
   return new MetaApi(process.env.METAAPI_TOKEN);
 }
 

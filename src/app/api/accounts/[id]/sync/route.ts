@@ -26,58 +26,156 @@ export async function POST(
     return NextResponse.json({ error: 'Account not found' }, { status: 404 });
   }
 
-  // Update sync status
   await db
     .update(tradingAccounts)
     .set({ syncStatus: 'syncing' })
     .where(eq(tradingAccounts.id, id));
 
   try {
-    // Fetch deals from MetaApi (last 2 years)
     const endDate = new Date();
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 2);
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
-    // Map deals to trades and upsert
+    // Track balance deposits/withdrawals
+    let initialBalance = 0;
+
     if (deals && Array.isArray(deals)) {
-      for (const deal of deals) {
-        if (deal.type === 'DEAL_TYPE_BALANCE') continue;
+      const sortedDeals = [...deals].sort(
+        (a: { time: string }, b: { time: string }) => new Date(a.time).getTime() - new Date(b.time).getTime()
+      );
 
-        const tradeData = {
-          accountId: id,
-          ticket: String(deal.id || deal.orderId),
-          symbol: deal.symbol || 'UNKNOWN',
-          direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
-          lots: deal.volume || 0,
-          entryPrice: deal.price || 0,
-          closePrice: deal.price || null,
-          openTime: new Date(deal.time),
-          closeTime: deal.type === 'DEAL_TYPE_BUY' || deal.type === 'DEAL_TYPE_SELL' ? null : new Date(deal.time),
-          profit: deal.profit || 0,
-          pips: deal.pips || null,
-          commission: deal.commission || 0,
-          swap: deal.swap || 0,
-          isOpen: false,
-          magicNumber: deal.magic || null,
-          comment: deal.comment || null,
-        };
+      for (const deal of sortedDeals) {
+        // Capture deposits/withdrawals for balance tracking
+        if (deal.type === 'DEAL_TYPE_BALANCE') {
+          initialBalance += deal.profit || 0;
+          continue;
+        }
 
-        await db
-          .insert(trades)
-          .values(tradeData)
-          .onConflictDoUpdate({
-            target: [trades.accountId, trades.ticket],
-            set: {
-              profit: tradeData.profit,
-              closePrice: tradeData.closePrice,
-              closeTime: tradeData.closeTime,
-              commission: tradeData.commission,
-              swap: tradeData.swap,
-              pips: tradeData.pips,
-            },
+        if (!deal.symbol) continue;
+
+        const ticket = String(deal.positionId || deal.orderId || deal.id);
+        const dealTime = new Date(deal.time);
+
+        const isOpenDeal = deal.entryType === 'DEAL_ENTRY_IN';
+        const isCloseDeal = deal.entryType === 'DEAL_ENTRY_OUT' || deal.entryType === 'DEAL_ENTRY_INOUT';
+
+        if (isOpenDeal) {
+          await db
+            .insert(trades)
+            .values({
+              accountId: id,
+              ticket,
+              symbol: deal.symbol,
+              direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+              lots: deal.volume || 0,
+              entryPrice: deal.price || 0,
+              closePrice: null,
+              openTime: dealTime,
+              closeTime: null,
+              profit: 0,
+              pips: null,
+              commission: deal.commission || 0,
+              swap: 0,
+              isOpen: true,
+              magicNumber: deal.magic || null,
+              comment: deal.comment || null,
+            })
+            .onConflictDoUpdate({
+              target: [trades.accountId, trades.ticket],
+              set: {
+                entryPrice: deal.price || 0,
+                lots: deal.volume || 0,
+                openTime: dealTime,
+                commission: deal.commission || 0,
+              },
+            });
+        } else if (isCloseDeal) {
+          const existingTrade = await db.query.trades.findFirst({
+            where: and(eq(trades.accountId, id), eq(trades.ticket, ticket)),
           });
+
+          if (existingTrade) {
+            await db
+              .update(trades)
+              .set({
+                closePrice: deal.price || null,
+                closeTime: dealTime,
+                profit: deal.profit || 0,
+                pips: deal.pips || null,
+                commission: (existingTrade.commission || 0) + (deal.commission || 0),
+                swap: deal.swap || 0,
+                isOpen: false,
+              })
+              .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
+          } else {
+            await db
+              .insert(trades)
+              .values({
+                accountId: id,
+                ticket,
+                symbol: deal.symbol,
+                direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+                lots: deal.volume || 0,
+                entryPrice: deal.price || 0,
+                closePrice: deal.price || null,
+                openTime: dealTime,
+                closeTime: dealTime,
+                profit: deal.profit || 0,
+                pips: deal.pips || null,
+                commission: deal.commission || 0,
+                swap: deal.swap || 0,
+                isOpen: false,
+                magicNumber: deal.magic || null,
+                comment: deal.comment || null,
+              })
+              .onConflictDoUpdate({
+                target: [trades.accountId, trades.ticket],
+                set: {
+                  profit: deal.profit || 0,
+                  closePrice: deal.price || null,
+                  closeTime: dealTime,
+                  commission: deal.commission || 0,
+                  swap: deal.swap || 0,
+                  pips: deal.pips || null,
+                  isOpen: false,
+                },
+              });
+          }
+        } else {
+          // Fallback for unknown entry types
+          await db
+            .insert(trades)
+            .values({
+              accountId: id,
+              ticket,
+              symbol: deal.symbol,
+              direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
+              lots: deal.volume || 0,
+              entryPrice: deal.price || 0,
+              closePrice: deal.price || null,
+              openTime: dealTime,
+              closeTime: dealTime,
+              profit: deal.profit || 0,
+              pips: deal.pips || null,
+              commission: deal.commission || 0,
+              swap: deal.swap || 0,
+              isOpen: false,
+              magicNumber: deal.magic || null,
+              comment: deal.comment || null,
+            })
+            .onConflictDoUpdate({
+              target: [trades.accountId, trades.ticket],
+              set: {
+                profit: deal.profit || 0,
+                closePrice: deal.price || null,
+                commission: deal.commission || 0,
+                swap: deal.swap || 0,
+                pips: deal.pips || null,
+              },
+            });
+        }
       }
     }
 
@@ -95,49 +193,38 @@ export async function POST(
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    let runningBalance = 0;
+    // Start from initial balance (deposits/withdrawals), then accumulate PNL
+    let runningBalance = initialBalance;
     const sortedDates = [...dailyMap.keys()].sort();
 
     for (const dateKey of sortedDates) {
       const dayTrades = dailyMap.get(dateKey)!;
       const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
-      const dayWins = dayTrades.filter((t) => t.profit > 0).length;
-      const dayLosses = dayTrades.filter((t) => t.profit < 0).length;
-      const dayVolume = dayTrades.reduce((sum, t) => sum + t.lots, 0);
-      const dayPips = dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0);
-      const dayCommission = dayTrades.reduce((sum, t) => sum + t.commission, 0);
-      const daySwap = dayTrades.reduce((sum, t) => sum + t.swap, 0);
       runningBalance += dayPnl;
 
       await db
         .insert(dailySnapshots)
         .values({
-          accountId: id,
-          date: dateKey,
-          balance: runningBalance,
-          equity: runningBalance,
-          pnl: dayPnl,
-          tradeCount: dayTrades.length,
-          winCount: dayWins,
-          lossCount: dayLosses,
-          volume: dayVolume,
-          pips: dayPips,
-          commission: dayCommission,
-          swap: daySwap,
+          accountId: id, date: dateKey, balance: runningBalance, equity: runningBalance,
+          pnl: dayPnl, tradeCount: dayTrades.length,
+          winCount: dayTrades.filter((t) => t.profit > 0).length,
+          lossCount: dayTrades.filter((t) => t.profit < 0).length,
+          volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
+          pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
+          commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
+          swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
         })
         .onConflictDoUpdate({
           target: [dailySnapshots.accountId, dailySnapshots.date],
           set: {
-            balance: runningBalance,
-            equity: runningBalance,
-            pnl: dayPnl,
+            balance: runningBalance, equity: runningBalance, pnl: dayPnl,
             tradeCount: dayTrades.length,
-            winCount: dayWins,
-            lossCount: dayLosses,
-            volume: dayVolume,
-            pips: dayPips,
-            commission: dayCommission,
-            swap: daySwap,
+            winCount: dayTrades.filter((t) => t.profit > 0).length,
+            lossCount: dayTrades.filter((t) => t.profit < 0).length,
+            volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
+            pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
+            commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
+            swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
           },
         });
     }
@@ -145,37 +232,20 @@ export async function POST(
     // Calculate and store account stats
     const stats = calculateAccountStats(
       allTrades.map((t) => ({
-        profit: t.profit,
-        pips: t.pips,
-        lots: t.lots,
-        commission: t.commission,
-        swap: t.swap,
-        openTime: t.openTime,
-        closeTime: t.closeTime,
-        isOpen: t.isOpen,
+        profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
+        swap: t.swap, openTime: t.openTime, closeTime: t.closeTime, isOpen: t.isOpen,
+        symbol: t.symbol, direction: t.direction, entryPrice: t.entryPrice, closePrice: t.closePrice,
       }))
     );
 
     await db
       .insert(accountStats)
-      .values({
-        accountId: id,
-        balance: runningBalance,
-        equity: runningBalance,
-        ...stats,
-        lastCalculatedAt: new Date(),
-      })
+      .values({ accountId: id, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
       .onConflictDoUpdate({
         target: accountStats.accountId,
-        set: {
-          balance: runningBalance,
-          equity: runningBalance,
-          ...stats,
-          lastCalculatedAt: new Date(),
-        },
+        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
       });
 
-    // Update sync status
     await db
       .update(tradingAccounts)
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })

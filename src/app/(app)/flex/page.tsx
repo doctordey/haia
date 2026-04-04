@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -187,7 +187,7 @@ export default function FlexCardsPage() {
     } catch {}
   }, []);
 
-  const handleCustomBg = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 512000) { alert('Max 0.5MB'); return; }

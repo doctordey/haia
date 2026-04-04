@@ -133,20 +133,17 @@ export async function POST(
               });
           }
 
-          // INOUT: also open a new position in the opposite direction
+          // INOUT: reopen position — update the same ticket row back to open
           if (isInOut) {
-            const newTicket = `${ticket}_inout_${dealTime.getTime()}`;
             await db
-              .insert(trades)
-              .values({
-                accountId: id, ticket: newTicket, symbol: deal.symbol,
+              .update(trades)
+              .set({
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
-                lots: deal.volume || 0, entryPrice: deal.price || 0,
-                closePrice: null, openTime: dealTime, closeTime: null,
-                profit: 0, pips: null, commission: 0, swap: 0,
-                isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
+                entryPrice: deal.price || 0, openTime: dealTime,
+                closePrice: null, closeTime: null,
+                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true,
               })
-              .onConflictDoNothing();
+              .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
           }
         } else {
           // Fallback for unknown entry types
@@ -184,9 +181,14 @@ export async function POST(
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Collect all dates that have either trades or balance events
+    // Seed balance from existing stats for incremental syncs
+    const existingStats = await db.query.accountStats.findFirst({
+      where: eq(accountStats.accountId, id),
+    });
+
     const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-    let runningBalance = 0;
+    // For incremental syncs, start from the last known balance
+    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
 
     for (const dateKey of [...allDates].sort()) {
       // Apply balance deposits/withdrawals for this date

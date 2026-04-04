@@ -2,9 +2,7 @@
  * Trade Sync Worker
  *
  * Runs as a separate process: npm run worker
- * Processes sync jobs for all active trading accounts.
- *
- * Requires DATABASE_URL environment variable.
+ * Syncs all active trading accounts every 5 minutes.
  */
 
 import { db } from '../lib/db';
@@ -13,6 +11,10 @@ import { eq, and, ne } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
 import { format } from 'date-fns';
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function syncAccount(accountId: string) {
   const account = await db.query.tradingAccounts.findFirst({
     where: eq(tradingAccounts.id, accountId),
@@ -20,7 +22,7 @@ async function syncAccount(accountId: string) {
 
   if (!account || !account.isActive) return;
 
-  // Atomic claim: only set syncing if not already syncing
+  // Atomic claim
   const claimed = await db
     .update(tradingAccounts)
     .set({ syncStatus: 'syncing' })
@@ -34,6 +36,9 @@ async function syncAccount(accountId: string) {
 
   console.log(`[sync] Starting sync for account ${account.name} (${account.id})`);
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let connection: any = null;
+
   try {
     const MetaApi = require('metaapi.cloud-sdk').default;
     const api = new MetaApi(process.env.METAAPI_TOKEN);
@@ -43,7 +48,7 @@ async function syncAccount(accountId: string) {
       await metaAccount.waitDeployed();
     }
 
-    const connection = metaAccount.getRPCConnection();
+    connection = metaAccount.getRPCConnection();
     await connection.connect();
     await connection.waitSynchronized();
 
@@ -51,9 +56,8 @@ async function syncAccount(accountId: string) {
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
     const deals = await connection.getDealsByTimeRange(startDate, endDate);
-    await connection.close();
 
-    // Track balance events by date for accurate daily snapshots
+    // Track balance events by date
     const balanceByDate = new Map<string, number>();
 
     if (deals && Array.isArray(deals)) {
@@ -66,7 +70,6 @@ async function syncAccount(accountId: string) {
         const dealTime = new Date(deal.time);
         const dateKey = format(dealTime, 'yyyy-MM-dd');
 
-        // Track balance operations (deposits/withdrawals) by date
         if (deal.type === 'DEAL_TYPE_BALANCE') {
           balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + (deal.profit || 0));
           continue;
@@ -74,6 +77,7 @@ async function syncAccount(accountId: string) {
 
         if (!deal.symbol) continue;
 
+        // Use canonical position ID as ticket — no suffixes
         const ticket = String(deal.positionId || deal.orderId || deal.id);
 
         const isOpenDeal = deal.entryType === 'DEAL_ENTRY_IN';
@@ -96,7 +100,6 @@ async function syncAccount(accountId: string) {
               set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0 },
             });
         } else if (isCloseDeal || isInOut) {
-          // Close the existing position
           const existingTrade = await db.query.trades.findFirst({
             where: and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)),
           });
@@ -112,7 +115,6 @@ async function syncAccount(accountId: string) {
               })
               .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           } else {
-            // No matching open trade — insert as completed, invert direction
             await db
               .insert(trades)
               .values({
@@ -134,23 +136,19 @@ async function syncAccount(accountId: string) {
               });
           }
 
-          // INOUT: also open a new position in the opposite direction
+          // INOUT: reopen position — update the same ticket row back to open
           if (isInOut) {
-            const newTicket = `${ticket}_inout_${dealTime.getTime()}`;
             await db
-              .insert(trades)
-              .values({
-                accountId, ticket: newTicket, symbol: deal.symbol,
+              .update(trades)
+              .set({
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
-                lots: deal.volume || 0, entryPrice: deal.price || 0,
-                closePrice: null, openTime: dealTime, closeTime: null,
-                profit: 0, pips: null, commission: 0, swap: 0,
-                isOpen: true, magicNumber: deal.magic || null, comment: deal.comment || null,
+                entryPrice: deal.price || 0, openTime: dealTime,
+                closePrice: null, closeTime: null,
+                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true,
               })
-              .onConflictDoNothing();
+              .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           }
         } else {
-          // Unknown entry type
           console.warn(`[sync] Unknown entry type for deal ${deal.id}, treating as close`);
           await db
             .insert(trades)
@@ -186,11 +184,27 @@ async function syncAccount(accountId: string) {
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Collect all dates with trades or balance events
-    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-    let runningBalance = 0;
+    // Seed balance from last known stats (for incremental syncs)
+    const existingStats = await db.query.accountStats.findFirst({
+      where: eq(accountStats.accountId, accountId),
+    });
 
-    for (const dateKey of [...allDates].sort()) {
+    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
+
+    // For incremental syncs, use the existing balance as the base
+    // For initial syncs, start from 0 and let balance events build it up
+    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
+
+    // If this is a full rebuild (no lastSyncAt), process all dates
+    // If incremental, only process new dates but carry forward the existing balance
+    const datesToProcess = [...allDates].sort();
+
+    if (!account.lastSyncAt) {
+      // Full rebuild — process everything from scratch
+      runningBalance = 0;
+    }
+
+    for (const dateKey of datesToProcess) {
       const balanceChange = balanceByDate.get(dateKey) || 0;
       runningBalance += balanceChange;
 
@@ -225,7 +239,6 @@ async function syncAccount(accountId: string) {
         });
     }
 
-    // Recalculate stats
     const stats = calculateAccountStats(
       allTrades.map((t) => ({
         profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
@@ -256,6 +269,11 @@ async function syncAccount(accountId: string) {
       .update(tradingAccounts)
       .set({ syncStatus: 'error', syncError: message })
       .where(eq(tradingAccounts.id, accountId));
+  } finally {
+    // Always close the connection
+    if (connection) {
+      try { await connection.close(); } catch {}
+    }
   }
 }
 
@@ -281,8 +299,11 @@ async function main() {
   console.log('[worker] Trade sync worker started');
   console.log(`[worker] Sync interval: ${INTERVAL / 1000}s`);
 
-  await runSyncCycle();
-  setInterval(runSyncCycle, INTERVAL);
+  // Serial loop: await cycle completion before waiting for next interval
+  while (true) {
+    await runSyncCycle();
+    await sleep(INTERVAL);
+  }
 }
 
 main().catch((err) => {

@@ -7,9 +7,11 @@ import type { DashboardData } from '@/types';
 
 interface SummaryCardsProps {
   data: DashboardData | null;
+  onSync?: () => void;
+  syncing?: boolean;
 }
 
-export function SummaryCards({ data }: SummaryCardsProps) {
+export function SummaryCards({ data, onSync, syncing }: SummaryCardsProps) {
   if (!data) {
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -55,10 +57,22 @@ export function SummaryCards({ data }: SummaryCardsProps) {
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {cards.map((card) => (
+      {cards.map((card, i) => (
         <Card key={card.label} hover>
           <CardContent className="py-4">
-            <p className="text-xs text-text-secondary uppercase tracking-wide font-medium mb-2">{card.label}</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-text-secondary uppercase tracking-wide font-medium">{card.label}</p>
+              {i === 0 && onSync && (
+                <button
+                  onClick={onSync}
+                  disabled={syncing}
+                  className="text-xs text-accent-primary hover:text-accent-hover disabled:opacity-50 cursor-pointer"
+                  title="Re-sync trades from MetaTrader"
+                >
+                  {syncing ? 'Syncing...' : 'Sync'}
+                </button>
+              )}
+            </div>
             <div className="flex items-baseline gap-2">
               <span className={`text-2xl font-bold ${card.mono ? 'font-mono' : ''} ${card.color || 'text-text-primary'}`}>
                 {card.value}

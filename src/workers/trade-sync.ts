@@ -55,14 +55,22 @@ async function syncAccount(accountId: string) {
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
+    // Fetch account info and deals in parallel
+    const [accountInfo, dealsResponse] = await Promise.all([
+      connection.getAccountInformation().catch(() => null),
+      connection.getDealsByTimeRange(startDate, endDate),
+    ]);
+
     // MetaAPI returns { deals: [...], synchronizing: boolean }, extract the array
-    const dealsResponse = await connection.getDealsByTimeRange(startDate, endDate);
-    const deals = dealsResponse?.deals || dealsResponse || [];
+    const rawDeals = dealsResponse?.deals || dealsResponse || [];
+    const deals = Array.isArray(rawDeals) ? rawDeals : [];
+
+    console.log(`[sync] Account ${account.name}: fetched ${deals.length} deals, broker balance: ${accountInfo?.balance}`);
 
     // Track balance events by date
     const balanceByDate = new Map<string, number>();
 
-    if (deals && Array.isArray(deals)) {
+    if (deals.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
         (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
@@ -249,12 +257,16 @@ async function syncAccount(accountId: string) {
       }))
     );
 
+    // Use live balance/equity from broker when available
+    const liveBalance = accountInfo?.balance ?? runningBalance;
+    const liveEquity = accountInfo?.equity ?? runningBalance;
+
     await db
       .insert(accountStats)
-      .values({ accountId, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
+      .values({ accountId, balance: liveBalance, equity: liveEquity, ...stats, lastCalculatedAt: new Date() })
       .onConflictDoUpdate({
         target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
+        set: { balance: liveBalance, equity: liveEquity, ...stats, lastCalculatedAt: new Date() },
       });
 
     await db
@@ -262,7 +274,7 @@ async function syncAccount(accountId: string) {
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })
       .where(eq(tradingAccounts.id, accountId));
 
-    console.log(`[sync] Completed sync for ${account.name}: ${closedTrades.length} trades, balance: ${runningBalance}`);
+    console.log(`[sync] Completed sync for ${account.name}: ${closedTrades.length} trades, balance: ${liveBalance}, equity: ${liveEquity}`);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Sync failed';
     console.error(`[sync] Error syncing ${account.name}:`, message);

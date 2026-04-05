@@ -50,12 +50,14 @@ export async function POST(
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
-    const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
+    const { deals, accountInfo } = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
+
+    console.log(`[sync] Account ${id}: fetched ${deals.length} deals, accountInfo balance: ${accountInfo?.balance}`);
 
     // Track balance events by date for accurate daily snapshots
     const balanceByDate = new Map<string, number>();
 
-    if (deals && Array.isArray(deals)) {
+    if (deals.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
         (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
@@ -227,6 +229,10 @@ export async function POST(
         });
     }
 
+    // Use live balance/equity from broker when available, fall back to reconstructed balance
+    const liveBalance = accountInfo?.balance ?? runningBalance;
+    const liveEquity = accountInfo?.equity ?? runningBalance;
+
     // Calculate and store account stats
     const stats = calculateAccountStats(
       allTrades.map((t) => ({
@@ -238,11 +244,13 @@ export async function POST(
 
     await db
       .insert(accountStats)
-      .values({ accountId: id, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
+      .values({ accountId: id, balance: liveBalance, equity: liveEquity, ...stats, lastCalculatedAt: new Date() })
       .onConflictDoUpdate({
         target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
+        set: { balance: liveBalance, equity: liveEquity, ...stats, lastCalculatedAt: new Date() },
       });
+
+    console.log(`[sync] Account ${id}: saved stats — balance: ${liveBalance}, equity: ${liveEquity}, totalPnl: ${stats.totalPnl}, trades: ${stats.totalTrades}`);
 
     await db
       .update(tradingAccounts)

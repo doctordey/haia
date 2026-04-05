@@ -63,11 +63,17 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   await connection.connect();
   await connection.waitSynchronized();
 
-  const response = await connection.getDealsByTimeRange(startDate, endDate);
+  // Fetch account info (balance/equity) and deals in parallel
+  const [accountInfo, dealsResponse] = await Promise.all([
+    connection.getAccountInformation().catch(() => null),
+    connection.getDealsByTimeRange(startDate, endDate),
+  ]);
   await connection.close();
 
   // MetaAPI returns { deals: [...], synchronizing: boolean }, extract the array
-  return response?.deals || response || [];
+  const deals = dealsResponse?.deals || dealsResponse || [];
+
+  return { deals: Array.isArray(deals) ? deals : [], accountInfo };
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {

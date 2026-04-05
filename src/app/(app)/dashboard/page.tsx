@@ -16,37 +16,65 @@ export default function DashboardPage() {
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
   const [range, setRange] = useState('MAX');
   const [fullStats, setFullStats] = useState<Record<string, number | string> | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  async function fetchDashboard() {
+    if (!selectedAccountId) return;
+    try {
+      const res = await fetch(`/api/dashboard/${selectedAccountId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDashData(data);
+        setFullStats({
+          'Profit Factor': formatNumber(data.profitFactor),
+          'Sharpe Ratio': formatNumber(data.sharpeRatio),
+          'Max Drawdown': formatPercent(data.maxDrawdownPct),
+          'Max Drawdown ($)': formatCurrency(data.maxDrawdownAbs),
+          'Best Trade': formatCurrency(data.bestTrade),
+          'Worst Trade': formatCurrency(data.worstTrade),
+          'Avg Duration': formatDuration(data.avgTradeDuration),
+          'Win Streak': data.longestWinStreak,
+          'Loss Streak': data.longestLossStreak,
+          'Total Lots': formatNumber(data.totalLots),
+          'Total Commission': formatCurrency(data.totalCommission),
+          'Total Swap': formatCurrency(data.totalSwap),
+        });
+        return data;
+      }
+    } catch (error) {
+      console.error('Failed to fetch dashboard:', error);
+    }
+    return null;
+  }
+
+  async function triggerSync() {
+    if (!selectedAccountId || syncing) return;
+    setSyncing(true);
+    try {
+      const res = await fetch(`/api/accounts/${selectedAccountId}/sync`, { method: 'POST' });
+      if (res.ok || res.status === 409) {
+        // Refresh dashboard and equity data after sync
+        await fetchDashboard();
+        const eqRes = await fetch(`/api/dashboard/${selectedAccountId}/equity-curve?range=${range}`);
+        if (eqRes.ok) setEquityData(await eqRes.json());
+      }
+    } catch (error) {
+      console.error('Sync failed:', error);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedAccountId) return;
 
-    async function fetchDashboard() {
-      try {
-        const res = await fetch(`/api/dashboard/${selectedAccountId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setDashData(data);
-          setFullStats({
-            'Profit Factor': formatNumber(data.profitFactor),
-            'Sharpe Ratio': formatNumber(data.sharpeRatio),
-            'Max Drawdown': formatPercent(data.maxDrawdownPct),
-            'Max Drawdown ($)': formatCurrency(data.maxDrawdownAbs),
-            'Best Trade': formatCurrency(data.bestTrade),
-            'Worst Trade': formatCurrency(data.worstTrade),
-            'Avg Duration': formatDuration(data.avgTradeDuration),
-            'Win Streak': data.longestWinStreak,
-            'Loss Streak': data.longestLossStreak,
-            'Total Lots': formatNumber(data.totalLots),
-            'Total Commission': formatCurrency(data.totalCommission),
-            'Total Swap': formatCurrency(data.totalSwap),
-          });
-        }
-      } catch (error) {
-        console.error('Failed to fetch dashboard:', error);
+    fetchDashboard().then((data) => {
+      // Auto-trigger sync if dashboard data is empty (no trades synced yet)
+      if (data && data.totalTrades === 0 && data.balance === 0) {
+        triggerSync();
       }
-    }
-
-    fetchDashboard();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccountId]);
 
   useEffect(() => {
@@ -91,7 +119,13 @@ export default function DashboardPage() {
 
   return (
     <div className="p-4 space-y-4">
-      <SummaryCards data={dashData} />
+      {syncing && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-accent-primary/10 border border-accent-primary/20 rounded-[var(--radius-md)] text-sm text-accent-primary">
+          <div className="w-4 h-4 border-2 border-accent-primary border-t-transparent rounded-full animate-spin" />
+          Syncing trades from MetaTrader...
+        </div>
+      )}
+      <SummaryCards data={dashData} onSync={triggerSync} syncing={syncing} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_350px] gap-4">
         {/* Equity Curve */}

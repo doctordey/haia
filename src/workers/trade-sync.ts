@@ -55,7 +55,9 @@ async function syncAccount(accountId: string) {
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
-    const deals = await connection.getDealsByTimeRange(startDate, endDate);
+    // MetaAPI returns { deals: [...], synchronizing: boolean }, extract the array
+    const dealsResponse = await connection.getDealsByTimeRange(startDate, endDate);
+    const deals = dealsResponse?.deals || dealsResponse || [];
 
     // Track balance events by date
     const balanceByDate = new Map<string, number>();

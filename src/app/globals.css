@@ -1,0 +1,150 @@
+@import "tailwindcss";
+
+:root {
+  /* Backgrounds */
+  --bg-primary: #0B0C10;
+  --bg-secondary: #12141A;
+  --bg-tertiary: #1A1D26;
+  --bg-hover: #1E2130;
+
+  /* Borders */
+  --border-primary: #1E2130;
+  --border-secondary: #2A2D3A;
+
+  /* Text */
+  --text-primary: #E8E9ED;
+  --text-secondary: #8B8D98;
+  --text-tertiary: #5A5C66;
+
+  /* Accent — Profit (Green) */
+  --profit-primary: #00DC82;
+  --profit-bg: #00DC8215;
+  --profit-border: #00DC8230;
+
+  /* Accent — Loss (Red/Pink) */
+  --loss-primary: #FF4D6A;
+  --loss-bg: #FF4D6A15;
+  --loss-border: #FF4D6A30;
+
+  /* Accent — Brand / Interactive */
+  --accent-primary: #6C5CE7;
+  --accent-secondary: #00B4D8;
+  --accent-hover: #7C6CF7;
+
+  /* Chart Colors */
+  --chart-line: #00DC82;
+  --chart-area: #00DC8220;
+  --chart-grid: #1A1D26;
+  --chart-crosshair: #5A5C66;
+
+  /* Status */
+  --warning: #FFB347;
+  --info: #00B4D8;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-bg-hover: var(--bg-hover);
+
+  --color-border-primary: var(--border-primary);
+  --color-border-secondary: var(--border-secondary);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+
+  --color-profit-primary: var(--profit-primary);
+  --color-profit-bg: var(--profit-bg);
+  --color-profit-border: var(--profit-border);
+
+  --color-loss-primary: var(--loss-primary);
+  --color-loss-bg: var(--loss-bg);
+  --color-loss-border: var(--loss-border);
+
+  --color-accent-primary: var(--accent-primary);
+  --color-accent-secondary: var(--accent-secondary);
+  --color-accent-hover: var(--accent-hover);
+
+  --color-chart-line: var(--chart-line);
+  --color-chart-area: var(--chart-area);
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-crosshair: var(--chart-crosshair);
+
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* Focus ring */
+*:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Animations */
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(30px, -20px); }
+  50% { transform: translate(-20px, 30px); }
+  75% { transform: translate(20px, 10px); }
+}
+
+@keyframes slide-in-from-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-in {
+  animation: slide-in-from-right 0.3s ease-out;
+}

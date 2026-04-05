@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'reac
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData } from '@/components/flex-card/card-preview';
+import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData, type CardCustomStyles, defaultCardStyles } from '@/components/flex-card/card-preview';
 import { themes, type ThemeId } from '@/components/flex-card/themes';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useSession } from 'next-auth/react';
@@ -44,6 +44,7 @@ export default function FlexCardsPage() {
   const [showWinLoss, setShowWinLoss] = useState(true);
   const [showBranding, setShowBranding] = useState(true);
   const [customBgUrl, setCustomBgUrl] = useState('');
+  const [customStyles, setCustomStyles] = useState<CardCustomStyles>({ ...defaultCardStyles });
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   const [savedCards, setSavedCards] = useState<{ id: string; metric: string; period: string; backgroundTheme: string; createdAt: string }[]>([]);
   const [saving, setSaving] = useState(false);
@@ -260,6 +261,7 @@ export default function FlexCardsPage() {
                 showChart={showChart}
                 showWinLoss={showWinLoss}
                 showBranding={showBranding}
+                customStyles={customStyles}
               />
             </div>
           </CardContent>
@@ -443,6 +445,62 @@ export default function FlexCardsPage() {
             </CardContent>
           </Card>
 
+          {/* Customize Colors & Style */}
+          <Card>
+            <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Customize Colors</h3></CardHeader>
+            <CardContent className="pt-0 space-y-3">
+              {/* Color pickers */}
+              <div className="space-y-2">
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide">Text Colors</p>
+                <ColorPicker label="Main Text" value={customStyles.textColor} onChange={(v) => setCustomStyles((prev) => ({ ...prev, textColor: v }))} />
+              </div>
+              <div className="space-y-2">
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide">PNL Colors</p>
+                <ColorPicker label="Positive PNL" value={customStyles.profitColor} onChange={(v) => setCustomStyles((prev) => ({ ...prev, profitColor: v }))} />
+                <ColorPicker label="Negative PNL" value={customStyles.lossColor} onChange={(v) => setCustomStyles((prev) => ({ ...prev, lossColor: v }))} />
+              </div>
+
+              {/* Style toggles */}
+              <div className="space-y-2 pt-1">
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide">Layout Options</p>
+                {([
+                  { label: 'Use bold font weight', key: 'boldText' as const },
+                  { label: 'Use text shadows', key: 'textShadow' as const },
+                  { label: 'Show colored PNL rectangle', key: 'showPnlRectangle' as const },
+                ] as const).map((toggle) => (
+                  <div key={toggle.key} className="flex items-center justify-between">
+                    <span className="text-xs text-text-secondary">{toggle.label}</span>
+                    <button
+                      role="switch"
+                      aria-checked={customStyles[toggle.key]}
+                      onClick={() => setCustomStyles((prev) => ({ ...prev, [toggle.key]: !prev[toggle.key] }))}
+                      className={cn(
+                        'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
+                        customStyles[toggle.key] ? 'bg-accent-primary' : 'bg-bg-tertiary'
+                      )}
+                    >
+                      <div className={cn(
+                        'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                        customStyles[toggle.key] ? 'translate-x-4' : 'translate-x-0.5'
+                      )} />
+                    </button>
+                  </div>
+                ))}
+                {customStyles.showPnlRectangle && (
+                  <ColorPicker label="Rectangle Text Color" value={customStyles.rectangleTextColor} onChange={(v) => setCustomStyles((prev) => ({ ...prev, rectangleTextColor: v }))} />
+                )}
+              </div>
+
+              {/* Reset button */}
+              <button
+                onClick={() => setCustomStyles({ ...defaultCardStyles })}
+                className="text-[10px] text-accent-primary hover:text-accent-hover cursor-pointer"
+              >
+                Reset to defaults
+              </button>
+            </CardContent>
+          </Card>
+
           {/* Actions */}
           <div className="flex gap-2">
             <Button className="flex-1" onClick={handleExportPng} loading={exporting}>Download PNG</Button>
@@ -475,6 +533,55 @@ export default function FlexCardsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Color Picker ──────────────────────────────────
+
+function ColorPicker({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const hex = value.replace('#', '').slice(0, 6);
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-xs text-text-secondary">{label}</span>
+      <div className="flex items-center gap-2">
+        <label className="w-7 h-7 rounded-md border border-border-primary cursor-pointer overflow-hidden relative">
+          <input
+            type="color"
+            value={`#${hex}`}
+            onChange={(e) => onChange(e.target.value)}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+          />
+          <div className="w-full h-full" style={{ background: `#${hex}` }} />
+        </label>
+        <input
+          type="text"
+          value={hex.toUpperCase()}
+          onChange={(e) => {
+            const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6);
+            if (v.length === 6) onChange(`#${v}`);
+          }}
+          className="w-20 h-7 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] px-2 text-xs font-mono text-text-primary text-center"
+          maxLength={6}
+        />
+        <button
+          onClick={() => {
+            const defaults: Record<string, string> = {
+              'Main Text': defaultCardStyles.textColor,
+              'Positive PNL': defaultCardStyles.profitColor,
+              'Negative PNL': defaultCardStyles.lossColor,
+              'Rectangle Text Color': defaultCardStyles.rectangleTextColor,
+            };
+            onChange(defaults[label] || '#FFFFFF');
+          }}
+          className="text-text-tertiary hover:text-text-secondary cursor-pointer"
+          title="Reset"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+        </button>
+      </div>
     </div>
   );
 }

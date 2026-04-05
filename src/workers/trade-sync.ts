@@ -214,18 +214,17 @@ async function syncAccount(accountId: string) {
 
     const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
 
-    // For incremental syncs, use the existing balance as the base
-    // For initial syncs, start from 0 and let balance events build it up
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
+    // For full rebuilds (no existing trades before this sync), start from 0.
+    // For incremental syncs, continue from the last known balance.
+    const isFullRebuild = !hasExistingTrades;
+    let runningBalance = (!isFullRebuild && existingStats) ? existingStats.balance : 0;
 
-    // If this is a full rebuild (no lastSyncAt), process all dates
-    // If incremental, only process new dates but carry forward the existing balance
-    const datesToProcess = [...allDates].sort();
-
-    if (!account.lastSyncAt) {
-      // Full rebuild — process everything from scratch
-      runningBalance = 0;
+    // Clear stale daily snapshots on full rebuild
+    if (isFullRebuild) {
+      await db.delete(dailySnapshots).where(eq(dailySnapshots.accountId, accountId));
     }
+
+    const datesToProcess = [...allDates].sort();
 
     for (const dateKey of datesToProcess) {
       const balanceChange = balanceByDate.get(dateKey) || 0;

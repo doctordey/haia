@@ -209,8 +209,16 @@ export async function POST(
     });
 
     const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-    // For incremental syncs, start from the last known balance
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
+
+    // For full rebuilds (no existing trades), start from 0 and let balance events build it up.
+    // For incremental syncs, continue from the last known balance.
+    const isFullRebuild = !hasExistingTrades;
+    let runningBalance = (!isFullRebuild && existingStats) ? existingStats.balance : 0;
+
+    // Clear stale daily snapshots on full rebuild to avoid leftover data from broken syncs
+    if (isFullRebuild) {
+      await db.delete(dailySnapshots).where(eq(dailySnapshots.accountId, id));
+    }
 
     for (const dateKey of [...allDates].sort()) {
       // Apply balance deposits/withdrawals for this date

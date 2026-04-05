@@ -69,8 +69,8 @@ export default function DashboardPage() {
     if (!selectedAccountId) return;
 
     fetchDashboard().then((data) => {
-      // Auto-trigger sync if dashboard data is empty (no trades synced yet)
-      if (data && data.totalTrades === 0 && data.balance === 0) {
+      // Auto-trigger sync if no trades have been synced yet
+      if (data && data.totalTrades === 0) {
         triggerSync();
       }
     });

@@ -63,17 +63,29 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   await connection.connect();
   await connection.waitSynchronized();
 
-  // Fetch account info (balance/equity) and deals in parallel
-  const [accountInfo, dealsResponse] = await Promise.all([
-    connection.getAccountInformation().catch(() => null),
-    connection.getDealsByTimeRange(startDate, endDate),
-  ]);
+  // Fetch account info (balance/equity)
+  const accountInfo = await connection.getAccountInformation().catch(() => null);
+
+  // Paginate through all deals (SDK defaults to 1000 per page)
+  const PAGE_SIZE = 1000;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allDeals: any[] = [];
+  let offset = 0;
+
+  while (true) {
+    const response = await connection.getDealsByTimeRange(startDate, endDate, offset, PAGE_SIZE);
+    const pageDels = response?.deals || [];
+    if (!Array.isArray(pageDels) || pageDels.length === 0) break;
+    allDeals.push(...pageDels);
+    if (pageDels.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
+  }
+
   await connection.close();
 
-  // MetaAPI returns { deals: [...], synchronizing: boolean }, extract the array
-  const deals = dealsResponse?.deals || dealsResponse || [];
+  console.log(`[metaapi] Fetched ${allDeals.length} deals (${Math.ceil(allDeals.length / PAGE_SIZE)} pages)`);
 
-  return { deals: Array.isArray(deals) ? deals : [], accountInfo };
+  return { deals: allDeals, accountInfo };
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {

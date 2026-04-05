@@ -48,11 +48,31 @@ export async function POST(
 
   try {
     const endDate = new Date();
-    const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
+
+    // Check if we have any trades for this account — if not, do a full historical sync
+    // regardless of lastSyncAt (handles case where previous sync failed to import trades)
+    const existingTradeCount = await db.query.trades.findMany({
+      where: eq(trades.accountId, id),
+      columns: { id: true },
+      limit: 1,
+    });
+    const hasExistingTrades = existingTradeCount.length > 0;
+
+    const startDate = (account.lastSyncAt && hasExistingTrades)
+      ? new Date(account.lastSyncAt)
+      : new Date(Date.now() - 2 * 365 * 86400000);
+
+    console.log(`[sync] Account ${id}: syncing from ${startDate.toISOString()} (full=${!hasExistingTrades})`);
 
     const { deals, accountInfo } = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
-    console.log(`[sync] Account ${id}: fetched ${deals.length} deals, accountInfo balance: ${accountInfo?.balance}`);
+    // Log deal types for debugging
+    const dealTypes = deals.reduce((acc: Record<string, number>, d: any) => {
+      const key = `${d.type}/${d.entryType || 'none'}`;
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`[sync] Account ${id}: fetched ${deals.length} deals, balance: ${accountInfo?.balance}, types:`, dealTypes);
 
     // Track balance events by date for accurate daily snapshots
     const balanceByDate = new Map<string, number>();

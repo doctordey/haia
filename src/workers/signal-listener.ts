@@ -516,19 +516,37 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
   return {
     async createOrder(params) {
       try {
-        const result = await connection.createOrder({
-          symbol: params.symbol,
-          type: params.type,
-          volume: params.volume,
-          openPrice: params.openPrice,
-          stopLoss: params.stopLoss,
-          takeProfit: params.takeProfit,
-          comment: params.comment,
-          slippage: params.slippage,
-        });
-        return { orderId: result.orderId };
+        // MetaApi SDK uses specific methods per order type
+        const { symbol, type, volume, openPrice, stopLoss, takeProfit, comment, slippage } = params;
+        const opts = { comment, slippage };
+        let result;
+
+        switch (type) {
+          case 'ORDER_TYPE_BUY':
+            result = await connection.createMarketBuyOrder(symbol, volume, stopLoss, takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_SELL':
+            result = await connection.createMarketSellOrder(symbol, volume, stopLoss, takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_BUY_LIMIT':
+            result = await connection.createLimitBuyOrder(symbol, volume, openPrice, stopLoss, takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_SELL_LIMIT':
+            result = await connection.createLimitSellOrder(symbol, volume, openPrice, stopLoss, takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_BUY_STOP':
+            result = await connection.createStopBuyOrder(symbol, volume, openPrice, stopLoss, takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_SELL_STOP':
+            result = await connection.createStopSellOrder(symbol, volume, openPrice, stopLoss, takeProfit, opts);
+            break;
+          default:
+            throw new Error(`Unknown order type: ${type}`);
+        }
+
+        return { orderId: result.orderId || result.positionId || 'unknown' };
       } catch (error) {
-        console.error(`[metaapi] createOrder failed for ${params.symbol}:`, error);
+        console.error(`[metaapi] createOrder failed for ${params.symbol} (${params.type}):`, error);
         throw new Error(`MetaApi createOrder failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
@@ -542,7 +560,7 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
     },
     async modifyPosition(positionId, params) {
       try {
-        await connection.modifyPosition(positionId, params);
+        await connection.modifyPosition(positionId, params.stopLoss, params.takeProfit);
       } catch (error) {
         console.error(`[metaapi] modifyPosition failed for ${positionId}:`, error);
         throw new Error(`MetaApi modifyPosition failed: ${error instanceof Error ? error.message : String(error)}`);

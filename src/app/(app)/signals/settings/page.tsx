@@ -641,7 +641,7 @@ function SizingSection({
   } else {
     const base = 10000;
     const risk = base * (form.baseRiskPercent * form.mediumMultiplier / 100);
-    previewLots = Math.floor((risk / (stopDist * 0.10)) * 100) / 100;
+    previewLots = Math.floor((risk / (stopDist * 1.00)) * 100) / 100;
     previewLots = Math.min(previewLots, form.maxLotSize);
     previewReason = `${form.baseRiskPercent}% × 1.0 of $${base} = $${risk.toFixed(0)} risk / ${stopDist}pt stop = ${previewLots} lots`;
   }

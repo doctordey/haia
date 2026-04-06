@@ -101,8 +101,8 @@ export interface ContractSpec {
 }
 
 export const DEFAULT_CONTRACT_SPECS: Record<string, ContractSpec> = {
-  NAS100: { pipValuePerLot: 0.10, minLotSize: 0.01, lotStep: 0.01, maxOrderSize: 100 },
-  US500:  { pipValuePerLot: 0.10, minLotSize: 0.01, lotStep: 0.01, maxOrderSize: 100 },
+  NAS100: { pipValuePerLot: 1.00, minLotSize: 0.01, lotStep: 0.01, maxOrderSize: 100 },
+  US500:  { pipValuePerLot: 1.00, minLotSize: 0.01, lotStep: 0.01, maxOrderSize: 100 },
 };
 
 // ─── Sizing ─────────────────────────────────────────

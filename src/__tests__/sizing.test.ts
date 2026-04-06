@@ -3,7 +3,7 @@ import { calculateLotSize, chunkLots } from '@/lib/signals/sizing';
 import type { SizingConfig, ContractSpec, AccountInfo } from '@/types/signals';
 
 const defaultSpec: ContractSpec = {
-  pipValuePerLot: 0.10,
+  pipValuePerLot: 1.00,
   minLotSize: 0.01,
   lotStep: 0.01,
   maxOrderSize: 100,
@@ -86,43 +86,43 @@ describe('calculateLotSize - strict mode', () => {
 
 describe('calculateLotSize - percent_balance mode', () => {
   it('calculates lots from balance percentage', () => {
-    // balance=10000, risk=1%, size=Medium (1.0x), stop=40pts, pipValue=0.10
+    // balance=10000, risk=1%, size=Medium (1.0x), stop=40pts, pipValue=1.00
     // riskAmount = 10000 * 0.01 = 100
-    // lots = 100 / (40 * 0.10) = 25
+    // lots = 100 / (40 * 1.00) = 2.5
     const result = calculateLotSize(
       makeConfig({ mode: 'percent_balance' }),
       defaultSignal,
       defaultAccount,
       defaultSpec,
     );
-    expect(result.lotSize).toBe(25);
+    expect(result.lotSize).toBe(2.5);
     expect(result.riskAmount).toBe(100);
     expect(result.effectiveRiskPercent).toBe(1.0);
   });
 
   it('applies size multiplier for Small', () => {
     // 0.5x multiplier → effectiveRisk = 0.5%, riskAmount = 50
-    // lots = 50 / (40 * 0.10) = 12.5 → 12.50
+    // lots = 50 / (40 * 1.00) = 1.25
     const result = calculateLotSize(
       makeConfig({ mode: 'percent_balance' }),
       { ...defaultSignal, size: 'Small' },
       defaultAccount,
       defaultSpec,
     );
-    expect(result.lotSize).toBe(12.5);
+    expect(result.lotSize).toBe(1.25);
     expect(result.effectiveRiskPercent).toBe(0.5);
   });
 
   it('applies size multiplier for Large', () => {
     // 1.5x multiplier → effectiveRisk = 1.5%, riskAmount = 150
-    // lots = 150 / (40 * 0.10) = 37.5 → 37.50
+    // lots = 150 / (40 * 1.00) = 3.75
     const result = calculateLotSize(
       makeConfig({ mode: 'percent_balance' }),
       { ...defaultSignal, size: 'Large' },
       defaultAccount,
       defaultSpec,
     );
-    expect(result.lotSize).toBe(37.5);
+    expect(result.lotSize).toBe(3.75);
   });
 
   it('caps at maxLotSize', () => {
@@ -171,15 +171,15 @@ describe('calculateLotSize - percent_balance mode', () => {
 
 describe('calculateLotSize - percent_equity mode', () => {
   it('uses equity instead of balance', () => {
-    // equity=12000, risk=1%, stop=40pts, pipValue=0.10
-    // lots = 120 / (40 * 0.10) = 30
+    // equity=12000, risk=1%, stop=40pts, pipValue=1.00
+    // lots = 120 / (40 * 1.00) = 3
     const result = calculateLotSize(
       makeConfig({ mode: 'percent_equity' }),
       defaultSignal,
       { balance: 10000, equity: 12000 },
       defaultSpec,
     );
-    expect(result.lotSize).toBe(30);
+    expect(result.lotSize).toBe(3);
     expect(result.riskAmount).toBe(120);
   });
 });

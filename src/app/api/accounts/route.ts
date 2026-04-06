@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { platform, server, login, password, name } = await request.json();
+    const { platform, server, login, password, name, accessMode } = await request.json();
 
     if (!platform || !server || !login || !password || !name) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
@@ -50,6 +50,7 @@ export async function POST(request: Request) {
         server,
         login,
         currency: 'USD',
+        accessMode: accessMode === 'trading' ? 'trading' : 'investor',
         syncStatus: 'pending',
       })
       .returning();

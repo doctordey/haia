@@ -54,6 +54,7 @@ export const tradingAccounts = pgTable('trading_accounts', {
   broker:     text('broker'),
   leverage:   integer('leverage'),
   currency:   text('currency').notNull().default('USD'),
+  accessMode: text('access_mode').notNull().default('investor'),  // "investor" (read-only) | "trading" (full access)
   isActive:   boolean('is_active').notNull().default(true),
   lastSyncAt: timestamp('last_sync_at'),
   syncStatus: text('sync_status').notNull().default('pending'),

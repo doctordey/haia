@@ -26,6 +26,7 @@ interface TradingAccount {
   name: string;
   platform: string;
   broker: string | null;
+  accessMode: string;
 }
 
 // ─── Main Page ────────────────────────────────────────
@@ -510,8 +511,15 @@ function TelegramSection({
           onChange={(e) => setField('accountId', e.target.value)}
           options={[
             { value: '', label: 'Select account...' },
-            ...accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.platform})` })),
+            ...accounts.map((a) => ({
+              value: a.id,
+              label: `${a.name} (${a.platform}) — ${a.accessMode === 'trading' ? 'Trading' : 'Read-Only'}`,
+            })),
           ]}
+        />
+        <AccountAccessWarning
+          account={accounts.find((a) => a.id === form.accountId)}
+          toast={toast}
         />
       </CardContent>
     </Card>
@@ -824,6 +832,74 @@ function OrderSection({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Account Access Warning ───────────────────────────
+
+function AccountAccessWarning({
+  account,
+  toast,
+}: {
+  account: TradingAccount | undefined;
+  toast: (msg: string, type?: string) => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [upgrading, setUpgrading] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
+  if (!account || account.accessMode === 'trading') return null;
+
+  async function handleUpgrade() {
+    if (!password) return;
+    setUpgrading(true);
+    try {
+      const res = await fetch(`/api/accounts/${account!.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradingPassword: password }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Upgrade failed');
+      }
+      toast('Account upgraded to trading access', 'success');
+      setShowUpgrade(false);
+      setPassword('');
+      // Reload the page to refresh account data
+      window.location.reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Upgrade failed', 'error');
+    } finally {
+      setUpgrading(false);
+    }
+  }
+
+  return (
+    <div className="bg-[#FFB34715] border border-[#FFB34730] rounded-[var(--radius-md)] p-3 space-y-2">
+      <p className="text-xs text-warning font-medium">
+        This account is connected with a read-only (investor) password. The Signal Copier needs a trading password to place orders.
+      </p>
+      {!showUpgrade ? (
+        <button
+          onClick={() => setShowUpgrade(true)}
+          className="text-xs text-accent-primary hover:underline cursor-pointer"
+        >
+          Upgrade to trading access
+        </button>
+      ) : (
+        <div className="flex gap-2 items-end">
+          <Input
+            label="Trading Password"
+            type="password"
+            placeholder="Your MT trading password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <Button size="sm" onClick={handleUpgrade} loading={upgrading}>Upgrade</Button>
+        </div>
+      )}
+    </div>
   );
 }
 

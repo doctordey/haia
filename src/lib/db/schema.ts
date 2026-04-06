@@ -19,9 +19,13 @@ export const users = pgTable('users', {
 });
 
 export const usersRelations = relations(users, ({ many }) => ({
-  accounts: many(tradingAccounts),
-  sessions: many(sessions),
-  flexCards: many(flexCards),
+  accounts:      many(tradingAccounts),
+  sessions:      many(sessions),
+  flexCards:     many(flexCards),
+  roles:         many(userRoles),
+  signalSources: many(signalSources),
+  signalConfigs: many(signalConfigs),
+  journalEntries: many(tradeJournal),
 }));
 
 // ─── Sessions ────────────────────────────────────────
@@ -96,8 +100,9 @@ export const trades = pgTable('trades', {
   index('trades_account_is_open_idx').on(table.accountId, table.isOpen),
 ]);
 
-export const tradesRelations = relations(trades, ({ one }) => ({
-  account: one(tradingAccounts, { fields: [trades.accountId], references: [tradingAccounts.id] }),
+export const tradesRelations = relations(trades, ({ one, many }) => ({
+  account:        one(tradingAccounts, { fields: [trades.accountId], references: [tradingAccounts.id] }),
+  journalEntries: many(tradeJournal),
 }));
 
 // ─── Daily Snapshots ─────────────────────────────────
@@ -190,4 +195,264 @@ export const flexCards = pgTable('flex_cards', {
 
 export const flexCardsRelations = relations(flexCards, ({ one }) => ({
   user: one(users, { fields: [flexCards.userId], references: [users.id] }),
+}));
+
+// ─── User Roles (access control) ──────────────────
+
+export const userRoles = pgTable('user_roles', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  userId:    text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  role:      text('role').notNull(),               // "admin" | "signals" | "journal"
+  grantedBy: text('granted_by').references(() => users.id),
+  grantedAt: timestamp('granted_at').notNull().defaultNow(),
+}, (table) => [
+  unique('user_roles_user_role_uniq').on(table.userId, table.role),
+]);
+
+export const userRolesRelations = relations(userRoles, ({ one }) => ({
+  user:    one(users, { fields: [userRoles.userId], references: [users.id] }),
+  granter: one(users, { fields: [userRoles.grantedBy], references: [users.id], relationName: 'grantedRoles' }),
+}));
+
+// ─── Signal Sources ───────────────────────────────
+
+export const signalSources = pgTable('signal_sources', {
+  id:                   text('id').primaryKey().$defaultFn(() => createId()),
+  userId:               text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name:                 text('name').notNull(),
+  telegramChannelId:    text('telegram_channel_id'),
+  telegramChannelName:  text('telegram_channel_name'),
+  priceFeed:            text('price_feed').notNull(),     // "CME" | "BLACKBULL"
+  isActive:             boolean('is_active').notNull().default(true),
+  createdAt:            timestamp('created_at').notNull().defaultNow(),
+  updatedAt:            timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const signalSourcesRelations = relations(signalSources, ({ one, many }) => ({
+  user:    one(users, { fields: [signalSources.userId], references: [users.id] }),
+  configs: many(signalConfigs),
+  signals: many(signals),
+}));
+
+// ─── Signal Configs ───────────────────────────────
+
+export const signalConfigs = pgTable('signal_configs', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  userId:    text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  sourceId:  text('source_id').notNull().references(() => signalSources.id, { onDelete: 'cascade' }),
+  accountId: text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+
+  // Master controls
+  isEnabled: boolean('is_enabled').notNull().default(false),
+  dryRun:    boolean('dry_run').notNull().default(true),
+
+  // Instrument-specific execution symbols
+  nqSymbol: text('nq_symbol').notNull().default('NAS100'),
+  esSymbol: text('es_symbol').notNull().default('US500'),
+
+  // Size → lot mapping (per instrument)
+  nqSmallLots:  real('nq_small_lots').notNull().default(0.01),
+  nqMediumLots: real('nq_medium_lots').notNull().default(0.05),
+  nqLargeLots:  real('nq_large_lots').notNull().default(0.10),
+  esSmallLots:  real('es_small_lots').notNull().default(0.01),
+  esMediumLots: real('es_medium_lots').notNull().default(0.05),
+  esLargeLots:  real('es_large_lots').notNull().default(0.10),
+
+  // Offset settings (per instrument)
+  offsetMode:    text('offset_mode').notNull().default('webhook'),   // "webhook" | "fixed" | "none"
+  nqFixedOffset: real('nq_fixed_offset').notNull().default(198),
+  esFixedOffset: real('es_fixed_offset').notNull().default(40),
+  nqMaxOffset:   real('nq_max_offset').notNull().default(400),
+  nqMinOffset:   real('nq_min_offset').notNull().default(50),
+  esMaxOffset:   real('es_max_offset').notNull().default(150),
+  esMinOffset:   real('es_min_offset').notNull().default(10),
+
+  // Position sizing
+  sizingMode:       text('sizing_mode').notNull().default('strict'),        // "strict" | "percent_balance" | "percent_equity"
+  executionMode:    text('execution_mode').notNull().default('single'),     // "single" | "split_target"
+  baseRiskPercent:  real('base_risk_percent').notNull().default(1.0),
+  maxRiskPercent:   real('max_risk_percent').notNull().default(5.0),
+  minStopDistance:  real('min_stop_distance').notNull().default(10),
+  maxLotSize:       real('max_lot_size').notNull().default(0.10),
+
+  // Size tier multipliers (for percent modes)
+  smallMultiplier:  real('small_multiplier').notNull().default(0.5),
+  mediumMultiplier: real('medium_multiplier').notNull().default(1.0),
+  largeMultiplier:  real('large_multiplier').notNull().default(1.5),
+
+  // Order settings
+  maxLotsPerOrder:       real('max_lots_per_order').notNull().default(50),
+  marketOrderThreshold:  real('market_order_threshold').notNull().default(5.0),
+  maxSlippage:           real('max_slippage').notNull().default(5.0),
+
+  // Margin safety
+  marginWarningThreshold: real('margin_warning_threshold').notNull().default(80),
+  marginRejectThreshold:  real('margin_reject_threshold').notNull().default(95),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const signalConfigsRelations = relations(signalConfigs, ({ one, many }) => ({
+  user:       one(users, { fields: [signalConfigs.userId], references: [users.id] }),
+  source:     one(signalSources, { fields: [signalConfigs.sourceId], references: [signalSources.id] }),
+  account:    one(tradingAccounts, { fields: [signalConfigs.accountId], references: [tradingAccounts.id] }),
+  executions: many(signalExecutions),
+}));
+
+// ─── Signals ──────────────────────────────────────
+
+export const signals = pgTable('signals', {
+  id:       text('id').primaryKey().$defaultFn(() => createId()),
+  sourceId: text('source_id').notNull().references(() => signalSources.id, { onDelete: 'cascade' }),
+
+  // Raw data
+  telegramMessageId: integer('telegram_message_id'),
+  rawMessage:        text('raw_message').notNull(),
+  receivedAt:        timestamp('received_at').notNull().defaultNow(),
+
+  // Parsed result
+  messageType: text('message_type').notNull(),       // "signals" | "cancellation" | "tp_hit" | "unknown"
+  parsed:      boolean('parsed').notNull().default(false),
+  signalCount: integer('signal_count').notNull().default(0),
+  warning:     text('warning'),
+  parseError:  text('parse_error'),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('signals_source_id_idx').on(table.sourceId),
+  index('signals_received_at_idx').on(table.receivedAt),
+]);
+
+export const signalsRelations = relations(signals, ({ one, many }) => ({
+  source:     one(signalSources, { fields: [signals.sourceId], references: [signalSources.id] }),
+  executions: many(signalExecutions),
+}));
+
+// ─── Signal Executions ────────────────────────────
+
+export const signalExecutions = pgTable('signal_executions', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  signalId:  text('signal_id').notNull().references(() => signals.id, { onDelete: 'cascade' }),
+  configId:  text('config_id').notNull().references(() => signalConfigs.id, { onDelete: 'cascade' }),
+  accountId: text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+
+  // Signal data
+  tradeNumber:       integer('trade_number'),
+  splitIndex:        integer('split_index'),
+  linkedExecutionId: text('linked_execution_id'),
+  chunkIndex:        integer('chunk_index'),
+  totalChunks:       integer('total_chunks'),
+  instrument:        text('instrument').notNull(),        // "NQ" | "ES"
+  fusionSymbol:      text('fusion_symbol').notNull(),     // "NAS100" | "US500"
+  direction:         text('direction').notNull(),          // "LONG" | "SHORT"
+  signalEntry:       real('signal_entry').notNull(),
+  signalSl:          real('signal_sl').notNull(),
+  signalTp1:         real('signal_tp1').notNull(),
+  signalTp2:         real('signal_tp2').notNull(),
+  signalSize:        text('signal_size').notNull(),        // "Small" | "Medium" | "Large"
+  lotSize:           real('lot_size').notNull(),
+
+  // Offset
+  futuresPriceAtExec: real('futures_price_at_exec'),
+  fusionPriceAtExec:  real('fusion_price_at_exec'),
+  offsetApplied:      real('offset_applied'),
+  offsetIsStale:      boolean('offset_is_stale').notNull().default(false),
+
+  // Adjusted levels (after offset)
+  adjustedEntry: real('adjusted_entry'),
+  adjustedSl:    real('adjusted_sl'),
+  adjustedTp1:   real('adjusted_tp1'),
+  adjustedTp2:   real('adjusted_tp2'),
+
+  // Order decision
+  orderType:   text('order_type'),       // "MARKET" | "BUY_STOP" | "BUY_LIMIT" | "SELL_STOP" | "SELL_LIMIT"
+  orderReason: text('order_reason'),
+
+  // Execution result
+  status:          text('status').notNull(),     // "pending" | "sent" | "filled" | "cancelled" | "rejected" | "error" | "dry_run"
+  metaapiOrderId:  text('metaapi_order_id'),
+  fillPrice:       real('fill_price'),
+  slippage:        real('slippage'),
+  errorMessage:    text('error_message'),
+
+  // Timing
+  signalReceivedAt: timestamp('signal_received_at'),
+  orderSentAt:      timestamp('order_sent_at'),
+  orderFilledAt:    timestamp('order_filled_at'),
+  totalLatencyMs:   integer('total_latency_ms'),
+
+  // Split target tracking
+  breakevenMovedAt: timestamp('breakeven_moved_at'),
+
+  isDryRun:  boolean('is_dry_run').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('signal_executions_signal_id_idx').on(table.signalId),
+  index('signal_executions_account_id_idx').on(table.accountId),
+  index('signal_executions_status_idx').on(table.status),
+  index('signal_executions_instrument_idx').on(table.instrument),
+]);
+
+export const signalExecutionsRelations = relations(signalExecutions, ({ one }) => ({
+  signal:          one(signals, { fields: [signalExecutions.signalId], references: [signals.id] }),
+  config:          one(signalConfigs, { fields: [signalExecutions.configId], references: [signalConfigs.id] }),
+  account:         one(tradingAccounts, { fields: [signalExecutions.accountId], references: [tradingAccounts.id] }),
+  linkedExecution: one(signalExecutions, { fields: [signalExecutions.linkedExecutionId], references: [signalExecutions.id], relationName: 'linkedPair' }),
+}));
+
+// ─── Offset History (from TradingView Webhooks) ──
+
+export const offsetHistory = pgTable('offset_history', {
+  id:                    text('id').primaryKey().$defaultFn(() => createId()),
+  nqOffset:              real('nq_offset').notNull(),
+  esOffset:              real('es_offset').notNull(),
+  nqFuturesPrice:        real('nq_futures_price').notNull(),
+  esFuturesPrice:        real('es_futures_price').notNull(),
+  nas100Price:            real('nas100_price').notNull(),
+  us500Price:             real('us500_price').notNull(),
+  nqOffsetSma:           real('nq_offset_sma'),
+  esOffsetSma:           real('es_offset_sma'),
+  tradingviewTimestamp:  text('tradingview_timestamp'),
+  receivedAt:            timestamp('received_at').notNull().defaultNow(),
+}, (table) => [
+  index('offset_history_received_at_idx').on(table.receivedAt),
+]);
+
+// ─── Trade Journal ────────────────────────────────
+
+export const tradeJournal = pgTable('trade_journal', {
+  id:                text('id').primaryKey().$defaultFn(() => createId()),
+  userId:            text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tradeId:           text('trade_id').references(() => trades.id, { onDelete: 'set null' }),
+  signalExecutionId: text('signal_execution_id').references(() => signalExecutions.id, { onDelete: 'set null' }),
+
+  // Journal content
+  setupType:      text('setup_type'),
+  reasoning:      text('reasoning'),
+  review:         text('review'),
+  emotionalState: text('emotional_state'),
+  rating:         integer('rating'),
+  tags:           text('tags'),                // JSON array
+  screenshotUrls: text('screenshot_urls'),     // JSON array
+
+  // Denormalized for fast queries
+  symbol:    text('symbol'),
+  direction: text('direction'),
+  pnl:       real('pnl'),
+  pnlPips:   real('pnl_pips'),
+  entryTime: timestamp('entry_time'),
+  exitTime:  timestamp('exit_time'),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  index('trade_journal_user_id_idx').on(table.userId),
+  index('trade_journal_setup_type_idx').on(table.setupType),
+]);
+
+export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({
+  user:            one(users, { fields: [tradeJournal.userId], references: [users.id] }),
+  trade:           one(trades, { fields: [tradeJournal.tradeId], references: [trades.id] }),
+  signalExecution: one(signalExecutions, { fields: [tradeJournal.signalExecutionId], references: [signalExecutions.id] }),
 }));

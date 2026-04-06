@@ -14,7 +14,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "worker": "npx tsx src/workers/trade-sync.ts"
+    "worker": "npx tsx src/workers/trade-sync.ts",
+    "db:seed": "npx tsx scripts/seed-roles.ts"
   },
   "dependencies": {
     "@paralleldrive/cuid2": "^3.3.0",

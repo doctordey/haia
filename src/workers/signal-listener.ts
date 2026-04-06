@@ -61,14 +61,31 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
 
   const connection = account.getStreamingConnection();
 
+  // Base no-op stubs for all SDK listener methods (avoids 'is not a function' errors)
+  const noopListener: Record<string, (...args: unknown[]) => void> = {};
+  const listenerMethods = [
+    'onAccountInformationUpdated', 'onBooksUpdated', 'onBrokerConnectionStatusChanged',
+    'onCandlesUpdated', 'onConnected', 'onDealAdded', 'onDealsSynchronized',
+    'onDisconnected', 'onHealthStatus', 'onHistoryOrderAdded', 'onHistoryOrdersSynchronized',
+    'onPendingOrderCompleted', 'onPendingOrderUpdated', 'onPendingOrdersReplaced',
+    'onPendingOrdersSynchronized', 'onPendingOrdersUpdated', 'onPositionRemoved',
+    'onPositionUpdated', 'onPositionsReplaced', 'onPositionsSynchronized', 'onPositionsUpdated',
+    'onStreamClosed', 'onSubscriptionDowngraded', 'onSymbolPriceUpdated', 'onSymbolPricesUpdated',
+    'onSymbolSpecificationRemoved', 'onSymbolSpecificationUpdated', 'onSymbolSpecificationsUpdated',
+    'onSynchronizationStarted', 'onTicksUpdated', 'onUnsubscribeRegion',
+  ];
+  for (const method of listenerMethods) {
+    noopListener[method] = () => {};
+  }
+
   connection.addSynchronizationListener({
-    // Single symbol price update
+    ...noopListener,
+    // Override the methods we care about
     onSymbolPriceUpdated(_instanceIndex: string, price: { symbol: string; bid: number; ask: number }) {
       if (price.symbol === 'NAS100' || price.symbol === 'US500') {
         priceCache.setPrice(price.symbol, price.bid, price.ask);
       }
     },
-    // Batch symbol prices update (required by SDK)
     onSymbolPricesUpdated(_instanceIndex: string, prices: { symbol: string; bid: number; ask: number }[]) {
       for (const price of prices) {
         if (price.symbol === 'NAS100' || price.symbol === 'US500') {

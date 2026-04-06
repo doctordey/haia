@@ -50,7 +50,13 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
+    console.log(`[metaapi:${accountId}] Waiting for deployment...`);
     await account.waitDeployed();
+  }
+
+  if (account.connectionStatus !== 'CONNECTED') {
+    console.log(`[metaapi:${accountId}] Waiting for broker connection...`);
+    await account.waitConnected();
   }
 
   const connection = account.getStreamingConnection();
@@ -75,12 +81,17 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
   });
 
   await connection.connect();
-  await connection.waitSynchronized();
-  await connection.subscribeToMarketData('NAS100');
-  await connection.subscribeToMarketData('US500');
+  await connection.waitSynchronized({ timeoutInSeconds: 120 });
+
+  try {
+    await connection.subscribeToMarketData('NAS100');
+    await connection.subscribeToMarketData('US500');
+    console.log(`[worker] Streaming active for account ${accountId}`);
+  } catch (error) {
+    console.warn(`[metaapi:${accountId}] Market data subscription failed — will retry on next signal:`, error instanceof Error ? error.message : error);
+  }
 
   accountConnections.set(accountId, connection);
-  console.log(`[worker] Streaming active for account ${accountId}`);
 
   console.log('[worker] Price streaming active for NAS100 + US500');
 }

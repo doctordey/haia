@@ -1,0 +1,124 @@
+// ============================================================================
+// NQ + ES Offset Webhook — Sends offsets to Haia via TradingView Alert
+// ============================================================================
+// This indicator calculates the live price differential between CME futures
+// and Fusion Markets CFDs for both NQ and ES, then sends the data to your
+// Haia app via a TradingView webhook alert.
+//
+// SETUP:
+//   1. Add this indicator to any TradingView chart
+//   2. Create an alert on this indicator:
+//      - Condition: "Offset Webhook" → "Offset Update"
+//      - Expiration: "Open-ended" (requires Premium or higher)
+//      - Webhook URL: https://YOUR_HAIA_URL/api/signals/offset/webhook
+//      - Message: (leave as default — the indicator sets it automatically)
+//   3. The alert will fire once per bar on your chosen timeframe
+//      - Recommended: 15-minute chart for intraday updates
+//      - Or: 1D chart for daily updates
+//
+// SYMBOLS:
+//   - NQ Futures: CME_MINI:NQM2026 → update on contract roll
+//   - ES Futures: CME_MINI:ESM2026 → update on contract roll
+//   - Fusion NAS100: FUSIONMARKETS:NAS100
+//   - Fusion US500:  FUSIONMARKETS:US500
+//
+// SECURITY:
+//   The webhook includes a secret token so Haia can verify the request
+//   came from your TradingView alert and not a random POST.
+// ============================================================================
+
+//@version=6
+indicator("NQ + ES Offset Webhook", overlay=false, precision=2)
+
+// ── INPUTS ──────────────────────────────────────────────────────────────────
+
+nq_symbol   = input.symbol("CME_MINI:NQM2026", "NQ Futures Symbol",
+                 tooltip="CME E-mini Nasdaq-100 futures. Update on contract roll.")
+es_symbol   = input.symbol("CME_MINI:ESM2026", "ES Futures Symbol",
+                 tooltip="CME E-mini S&P 500 futures. Update on contract roll.")
+nas_symbol  = input.symbol("FUSIONMARKETS:NAS100", "Fusion NAS100 Symbol")
+us5_symbol  = input.symbol("FUSIONMARKETS:US500", "Fusion US500 Symbol")
+webhook_secret = input.string("CHANGE_ME", "Webhook Secret",
+                 tooltip="Must match TRADINGVIEW_WEBHOOK_SECRET in your Haia env vars.")
+sma_len     = input.int(20, "SMA Length", minval=1)
+
+// ── DATA ────────────────────────────────────────────────────────────────────
+
+nq_price   = request.security(nq_symbol, timeframe.period, close)
+es_price   = request.security(es_symbol, timeframe.period, close)
+nas_price  = request.security(nas_symbol, timeframe.period, close)
+us5_price  = request.security(us5_symbol, timeframe.period, close)
+
+// ── OFFSET CALCULATION ─────────────────────────────────────────────────────
+
+nq_offset = nq_price - nas_price
+es_offset = es_price - us5_price
+
+nq_sma = ta.sma(nq_offset, sma_len)
+es_sma = ta.sma(es_offset, sma_len)
+
+// ── PLOTTING ────────────────────────────────────────────────────────────────
+
+plot(nq_offset, "NQ Offset", color=color.new(color.aqua, 20), linewidth=2)
+plot(es_offset, "ES Offset", color=color.new(color.orange, 20), linewidth=2)
+plot(nq_sma, "NQ SMA", color=color.new(color.aqua, 60), linewidth=1)
+plot(es_sma, "ES SMA", color=color.new(color.orange, 60), linewidth=1)
+hline(0, "Zero", color=color.new(color.white, 80), linestyle=hline.style_dotted)
+
+// ── INFO TABLE ──────────────────────────────────────────────────────────────
+
+var table info = table.new(position.top_right, 2, 7,
+     bgcolor=color.new(color.black, 30),
+     border_color=color.new(color.gray, 60),
+     border_width=1)
+
+if barstate.islast
+    table.cell(info, 0, 0, "NQ Futures",       text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 0, str.tostring(nq_price, "#,##0.00"),
+               text_color=color.aqua, text_size=size.small)
+
+    table.cell(info, 0, 1, "Fusion NAS100",    text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 1, str.tostring(nas_price, "#,##0.00"),
+               text_color=color.aqua, text_size=size.small)
+
+    table.cell(info, 0, 2, "NQ Offset",        text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 2, str.tostring(nq_offset, "#,##0.00") + " pts",
+               text_color=color.lime, text_size=size.normal)
+
+    table.cell(info, 0, 3, "ES Futures",        text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 3, str.tostring(es_price, "#,##0.00"),
+               text_color=color.orange, text_size=size.small)
+
+    table.cell(info, 0, 4, "Fusion US500",      text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 4, str.tostring(us5_price, "#,##0.00"),
+               text_color=color.orange, text_size=size.small)
+
+    table.cell(info, 0, 5, "ES Offset",         text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 5, str.tostring(es_offset, "#,##0.00") + " pts",
+               text_color=color.lime, text_size=size.normal)
+
+    table.cell(info, 0, 6, "Last Update",       text_color=color.white, text_size=size.small)
+    table.cell(info, 1, 6, str.format_time(timenow, "HH:mm:ss", "America/New_York") + " ET",
+               text_color=color.gray, text_size=size.small)
+
+// ── WEBHOOK ALERT ───────────────────────────────────────────────────────────
+// The alert message is a JSON payload that Haia's webhook endpoint parses.
+// TradingView replaces {{...}} placeholders at alert time.
+
+// Build the JSON message — TradingView alerts send this as the POST body
+alert_msg = '{' +
+     '"secret":"' + webhook_secret + '",' +
+     '"nq_price":' + str.tostring(nq_price, "#.00") + ',' +
+     '"es_price":' + str.tostring(es_price, "#.00") + ',' +
+     '"nas100_price":' + str.tostring(nas_price, "#.00") + ',' +
+     '"us500_price":' + str.tostring(us5_price, "#.00") + ',' +
+     '"nq_offset":' + str.tostring(nq_offset, "#.00") + ',' +
+     '"es_offset":' + str.tostring(es_offset, "#.00") + ',' +
+     '"nq_sma":' + str.tostring(nq_sma, "#.00") + ',' +
+     '"es_sma":' + str.tostring(es_sma, "#.00") + ',' +
+     '"timestamp":"{{timenow}}"' +
+     '}'
+
+// Fire on every bar close — frequency depends on your chart timeframe
+if barstate.isconfirmed
+    alert(alert_msg, alert.freq_once_per_bar)

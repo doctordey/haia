@@ -37,24 +37,63 @@ export default function SignalSettingsPage() {
   const [sources, setSources] = useState<TelegramSource[]>([]);
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [configId, setConfigId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
+  const [allConfigs, setAllConfigs] = useState<Record<string, { id: string; isEnabled: boolean; dryRun: boolean }>>({});
 
-  // Load config, sources, accounts on mount
+  // Load sources, accounts, and all configs on mount
   useEffect(() => {
     Promise.all([
       fetch('/api/signals/config').then((r) => r.json()),
       fetch('/api/signals/sources').then((r) => r.json()),
       fetch('/api/accounts').then((r) => r.json()),
-    ]).then(([config, srcs, accts]) => {
+    ]).then(([configs, srcs, accts]) => {
+      setSources(Array.isArray(srcs) ? srcs : []);
+      const acctList = Array.isArray(accts) ? accts : [];
+      setAccounts(acctList);
+
+      // Build config lookup by accountId
+      const configMap: Record<string, { id: string; isEnabled: boolean; dryRun: boolean }> = {};
+      const configArr = Array.isArray(configs) ? configs : configs ? [configs] : [];
+      for (const c of configArr) {
+        if (c?.accountId) configMap[c.accountId] = { id: c.id, isEnabled: c.isEnabled, dryRun: c.dryRun };
+      }
+      setAllConfigs(configMap);
+
+      // Auto-select first account and load its config
+      if (acctList.length > 0) {
+        const firstId = acctList[0].id;
+        setSelectedAccountId(firstId);
+        const existing = configArr.find((c: Record<string, unknown>) => c?.accountId === firstId);
+        if (existing) {
+          loadFromServer(existing);
+          setConfigId(existing.id);
+        } else {
+          loadFromServer({ accountId: firstId });
+        }
+      } else {
+        loadFromServer({});
+      }
+    }).catch(() => toast('Failed to load settings', 'error'));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When selected account changes, load that account's config
+  const handleAccountSwitch = useCallback(async (accountId: string) => {
+    setSelectedAccountId(accountId);
+    try {
+      const res = await fetch(`/api/signals/config?accountId=${accountId}`);
+      const config = await res.json();
       if (config) {
         loadFromServer(config);
         setConfigId(config.id);
       } else {
-        loadFromServer({});
+        loadFromServer({ accountId });
+        setConfigId(null);
       }
-      setSources(Array.isArray(srcs) ? srcs : []);
-      setAccounts(Array.isArray(accts) ? accts : []);
-    }).catch(() => toast('Failed to load settings', 'error'));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    } catch {
+      loadFromServer({ accountId });
+      setConfigId(null);
+    }
+  }, [loadFromServer]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -62,7 +101,7 @@ export default function SignalSettingsPage() {
       const res = await fetch('/api/signals/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, accountId: selectedAccountId }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -71,28 +110,31 @@ export default function SignalSettingsPage() {
       const updated = await res.json();
       loadFromServer(updated);
       setConfigId(updated.id);
+      setAllConfigs((prev) => ({ ...prev, [selectedAccountId]: { id: updated.id, isEnabled: updated.isEnabled, dryRun: updated.dryRun } }));
       toast('Settings saved', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Save failed', 'error');
     } finally {
       setSaving(false);
     }
-  }, [form, loadFromServer, toast]);
+  }, [form, selectedAccountId, loadFromServer, toast]);
 
   const handleToggle = useCallback(async (field: 'isEnabled' | 'dryRun', value: boolean) => {
+    if (!configId) { toast('Save settings first', 'error'); return; }
     try {
       const res = await fetch('/api/signals/config/toggle', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, value }),
+        body: JSON.stringify({ configId, field, value }),
       });
       if (!res.ok) throw new Error('Toggle failed');
       setField(field, value);
+      setAllConfigs((prev) => ({ ...prev, [selectedAccountId]: { ...prev[selectedAccountId], [field]: value } }));
       toast(`${field === 'isEnabled' ? 'Pipeline' : 'Dry run'} ${value ? 'enabled' : 'disabled'}`, 'success');
     } catch {
       toast('Toggle failed', 'error');
     }
-  }, [setField, toast]);
+  }, [configId, selectedAccountId, setField, toast]);
 
   if (!loaded) {
     return (
@@ -117,6 +159,39 @@ export default function SignalSettingsPage() {
           </Button>
         </div>
       </div>
+
+      {/* Account selector + overview */}
+      {accounts.length > 1 && (
+        <Card>
+          <CardHeader><h3 className="text-sm font-medium">Accounts</h3></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {accounts.map((acct) => {
+                const cfg = allConfigs[acct.id];
+                const isSelected = selectedAccountId === acct.id;
+                return (
+                  <button
+                    key={acct.id}
+                    onClick={() => handleAccountSwitch(acct.id)}
+                    className={`px-3 py-2 rounded-[var(--radius-md)] text-sm border transition-colors cursor-pointer flex items-center gap-2 ${
+                      isSelected
+                        ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                        : 'border-border-primary bg-bg-tertiary text-text-secondary hover:border-border-secondary'
+                    }`}
+                  >
+                    <span>{acct.name}</span>
+                    {cfg?.isEnabled && !cfg.dryRun && <Badge variant="profit">Live</Badge>}
+                    {cfg?.isEnabled && cfg.dryRun && <Badge variant="warning">Dry</Badge>}
+                    {cfg && !cfg.isEnabled && <Badge>Off</Badge>}
+                    {!cfg && <Badge variant="default">New</Badge>}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-text-tertiary">Each account has its own sizing, execution mode, and enable/disable toggle.</p>
+          </CardContent>
+        </Card>
+      )}
 
       <MasterControls
         form={form}
@@ -236,8 +311,9 @@ function TelegramSection({
 }) {
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [phoneCodeHash, setPhoneCodeHash] = useState('');
-  const [authStep, setAuthStep] = useState<'idle' | 'code_sent' | 'verifying'>('idle');
+  const [authStep, setAuthStep] = useState<'idle' | 'code_sent' | 'verifying' | 'needs_2fa'>('idle');
   const [loading, setLoading] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
   const [channelId, setChannelId] = useState('');
@@ -293,26 +369,38 @@ function TelegramSection({
     }
   }
 
-  async function handleVerify() {
-    if (!code) return;
-    setAuthStep('verifying');
+  async function handleVerify(with2FA = false) {
+    if (!code && !with2FA) return;
+    if (with2FA && !password) return;
     setLoading(true);
     try {
       const res = await fetch('/api/signals/telegram/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, phoneCodeHash, sourceId: form.sourceId }),
+        body: JSON.stringify({
+          code,
+          phoneCodeHash,
+          sourceId: form.sourceId,
+          ...(with2FA ? { password } : {}),
+        }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) {
+        if (data.requires2FA) {
+          setAuthStep('needs_2fa');
+          toast('2FA password required', 'info');
+          return;
+        }
+        throw new Error(data.error);
+      }
       setAuthStep('idle');
+      setPassword('');
       toast('Telegram connected!', 'success');
-      // Refresh sources
       const srcs = await fetch('/api/signals/sources').then((r) => r.json());
       setSources(srcs);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Verification failed', 'error');
-      setAuthStep('code_sent');
+      if (authStep !== 'needs_2fa') setAuthStep('code_sent');
     } finally {
       setLoading(false);
     }
@@ -386,7 +474,24 @@ function TelegramSection({
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
                 />
-                <Button size="sm" onClick={handleVerify} loading={loading}>Verify</Button>
+                <Button size="sm" onClick={() => handleVerify(false)} loading={loading}>Verify</Button>
+              </div>
+            )}
+            {authStep === 'needs_2fa' && (
+              <div className="space-y-3">
+                <div className="bg-[#FFB34715] border border-[#FFB34730] rounded-[var(--radius-md)] p-3">
+                  <p className="text-xs text-warning font-medium">Your Telegram account has 2FA enabled. Enter your cloud password to continue.</p>
+                </div>
+                <div className="flex gap-2 items-end">
+                  <Input
+                    label="2FA Password"
+                    type="password"
+                    placeholder="Your Telegram cloud password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <Button size="sm" onClick={() => handleVerify(true)} loading={loading}>Submit</Button>
+                </div>
               </div>
             )}
           </div>

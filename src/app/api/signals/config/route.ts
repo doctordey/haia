@@ -5,23 +5,33 @@ import { signalConfigs, signalSources, tradingAccounts } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 
 /**
- * GET /api/signals/config — returns the user's current signalConfig (or null)
+ * GET /api/signals/config — returns ALL configs for this user (one per account)
+ * Query: ?accountId=xyz — optionally filter to a single account's config
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const config = await db.query.signalConfigs.findFirst({
+  const accountId = request.nextUrl.searchParams.get('accountId');
+
+  if (accountId) {
+    const config = await db.query.signalConfigs.findFirst({
+      where: and(eq(signalConfigs.userId, session.user.id), eq(signalConfigs.accountId, accountId)),
+    });
+    return NextResponse.json(config ?? null);
+  }
+
+  const configs = await db.query.signalConfigs.findMany({
     where: eq(signalConfigs.userId, session.user.id),
   });
 
-  return NextResponse.json(config ?? null);
+  return NextResponse.json(configs);
 }
 
 /**
- * POST /api/signals/config — create or update config (upsert)
+ * POST /api/signals/config — create or update config (upsert by userId + accountId)
  */
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -31,6 +41,10 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
 
+  if (!body.accountId) {
+    return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
+  }
+
   // Validate sourceId and accountId belong to this user
   if (body.sourceId) {
     const source = await db.query.signalSources.findFirst({
@@ -39,15 +53,14 @@ export async function POST(request: NextRequest) {
     if (!source) return NextResponse.json({ error: 'Invalid source' }, { status: 400 });
   }
 
-  if (body.accountId) {
-    const account = await db.query.tradingAccounts.findFirst({
-      where: and(eq(tradingAccounts.id, body.accountId), eq(tradingAccounts.userId, session.user.id)),
-    });
-    if (!account) return NextResponse.json({ error: 'Invalid account' }, { status: 400 });
-  }
+  const account = await db.query.tradingAccounts.findFirst({
+    where: and(eq(tradingAccounts.id, body.accountId), eq(tradingAccounts.userId, session.user.id)),
+  });
+  if (!account) return NextResponse.json({ error: 'Invalid account' }, { status: 400 });
 
+  // Find existing config for this user + account combo
   const existing = await db.query.signalConfigs.findFirst({
-    where: eq(signalConfigs.userId, session.user.id),
+    where: and(eq(signalConfigs.userId, session.user.id), eq(signalConfigs.accountId, body.accountId)),
   });
 
   const configData = {
@@ -95,8 +108,8 @@ export async function POST(request: NextRequest) {
       .returning();
     return NextResponse.json(updated);
   } else {
-    if (!body.sourceId || !body.accountId) {
-      return NextResponse.json({ error: 'sourceId and accountId required for initial setup' }, { status: 400 });
+    if (!body.sourceId) {
+      return NextResponse.json({ error: 'sourceId required for initial setup' }, { status: 400 });
     }
     const [created] = await db.insert(signalConfigs).values(configData).returning();
     return NextResponse.json(created, { status: 201 });

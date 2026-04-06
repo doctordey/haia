@@ -35,14 +35,15 @@ import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 const priceCache = new PriceCache();
 let telegramClient: TelegramSignalClient | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let streamingConnection: any = null;
-let metaApiConnected = false;
+const accountConnections = new Map<string, any>(); // accountId → streaming connection
 let isShuttingDown = false;
 
 // ─── MetaApi Price Streaming ──────────────────────────
 
-async function startPriceStreaming(metaApiId: string): Promise<void> {
-  console.log('[worker] Starting MetaApi price streaming for NAS100 + US500...');
+async function startPriceStreaming(accountId: string, metaApiId: string): Promise<void> {
+  if (accountConnections.has(accountId)) return; // Already connected
+
+  console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId})...`);
 
   const MetaApi = require('metaapi.cloud-sdk').default;
   const api = new MetaApi(process.env.METAAPI_TOKEN);
@@ -52,52 +53,44 @@ async function startPriceStreaming(metaApiId: string): Promise<void> {
     await account.waitDeployed();
   }
 
-  streamingConnection = account.getStreamingConnection();
+  const connection = account.getStreamingConnection();
 
-  // Set up price listener
-  streamingConnection.addSynchronizationListener({
+  connection.addSynchronizationListener({
     onSymbolPriceUpdated(_instanceIndex: string, price: { symbol: string; bid: number; ask: number }) {
       if (price.symbol === 'NAS100' || price.symbol === 'US500') {
         priceCache.setPrice(price.symbol, price.bid, price.ask);
       }
     },
-    // Required listener methods (no-op)
-    onConnected() {
-      console.log('[metaapi] Streaming connected');
-      metaApiConnected = true;
-    },
-    onDisconnected() {
-      console.log('[metaapi] Streaming disconnected — will auto-reconnect');
-      metaApiConnected = false;
-    },
+    onConnected() { console.log(`[metaapi:${accountId}] Connected`); },
+    onDisconnected() { console.log(`[metaapi:${accountId}] Disconnected — will auto-reconnect`); },
     onBrokerConnectionStatusChanged(_i: string, connected: boolean) {
-      console.log(`[metaapi] Broker connection: ${connected ? 'connected' : 'disconnected'}`);
-      metaApiConnected = connected;
+      console.log(`[metaapi:${accountId}] Broker: ${connected ? 'connected' : 'disconnected'}`);
     },
-    // Position closed listener — for breakeven monitoring
     onDealAdded(_instanceIndex: string, deal: { positionId?: string; type?: string; entryType?: string; profit?: number }) {
       if (deal.entryType === 'DEAL_ENTRY_OUT' && deal.positionId) {
         const wasTPHit = (deal.profit ?? 0) > 0;
-        handlePositionClosed(deal.positionId, wasTPHit);
+        handlePositionClosed(deal.positionId, wasTPHit, connection);
       }
     },
   });
 
-  await streamingConnection.connect();
-  await streamingConnection.waitSynchronized();
+  await connection.connect();
+  await connection.waitSynchronized();
+  await connection.subscribeToMarketData('NAS100');
+  await connection.subscribeToMarketData('US500');
 
-  // Subscribe to NAS100 and US500 price streams
-  await streamingConnection.subscribeToMarketData('NAS100');
-  await streamingConnection.subscribeToMarketData('US500');
+  accountConnections.set(accountId, connection);
+  console.log(`[worker] Streaming active for account ${accountId}`);
 
   console.log('[worker] Price streaming active for NAS100 + US500');
 }
 
-async function handlePositionClosed(positionId: string, wasTPHit: boolean): Promise<void> {
-  if (!streamingConnection) return;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handlePositionClosed(positionId: string, wasTPHit: boolean, connection?: any): Promise<void> {
+  if (!connection) return;
 
   try {
-    const metaApi = buildMetaApiInterface(streamingConnection);
+    const metaApi = buildMetaApiInterface(connection);
     const result = await onPositionClosed(positionId, wasTPHit, metaApi);
     if (result?.action === 'breakeven_moved') {
       console.log(`[breakeven] Moved TP2 SL to entry for position ${positionId}`);
@@ -147,8 +140,6 @@ async function loadLastOffset(): Promise<void> {
 
 async function startTelegramListener(
   source: typeof signalSources.$inferSelect,
-  config: typeof signalConfigs.$inferSelect,
-  account: typeof tradingAccounts.$inferSelect,
 ): Promise<void> {
   if (!source.telegramSession || !source.telegramChannelId) {
     console.warn('[telegram] Source missing session or channel ID — skipping');
@@ -179,7 +170,7 @@ async function startTelegramListener(
   console.log(`[telegram] Authenticated. Listening to channel: ${source.telegramChannelName || source.telegramChannelId}`);
 
   telegramClient.listenToChannel(source.telegramChannelId, async (text, messageId) => {
-    await handleTelegramMessage(text, messageId, source, config, account);
+    await handleTelegramMessageMulti(text, messageId, source);
   });
 
   await db
@@ -188,7 +179,55 @@ async function startTelegramListener(
     .where(eq(signalSources.id, source.id));
 }
 
-// ─── Message Handler ──────────────────────────────────
+// ─── Multi-Account Dispatch ───────────────────────────
+
+async function handleTelegramMessageMulti(
+  text: string,
+  messageId: number,
+  source: typeof signalSources.$inferSelect,
+): Promise<void> {
+  // Re-read configs from DB each time to pick up enable/disable changes
+  const configs = await db.query.signalConfigs.findMany({
+    where: and(eq(signalConfigs.sourceId, source.id), eq(signalConfigs.isEnabled, true)),
+  });
+
+  if (configs.length === 0) {
+    console.log(`[signal] No enabled configs for source ${source.name} — skipping`);
+    return;
+  }
+
+  console.log(`[signal] Dispatching to ${configs.length} account(s)`);
+
+  // Execute on each account in parallel
+  await Promise.all(
+    configs.map(async (config) => {
+      const account = await db.query.tradingAccounts.findFirst({
+        where: eq(tradingAccounts.id, config.accountId),
+      });
+      if (!account) {
+        console.warn(`[signal] Account ${config.accountId} not found for config ${config.id}`);
+        return;
+      }
+
+      // Ensure this account has a streaming connection
+      if (!accountConnections.has(account.id) && !config.dryRun) {
+        try {
+          await startPriceStreaming(account.id, account.metaApiId);
+        } catch (err) {
+          console.error(`[signal] Failed to connect account ${account.name}:`, err);
+        }
+      }
+
+      try {
+        await handleTelegramMessage(text, messageId, source, config, account);
+      } catch (err) {
+        console.error(`[signal] Error executing on account ${account.name}:`, err);
+      }
+    }),
+  );
+}
+
+// ─── Message Handler (single account) ─────────────────
 
 async function handleTelegramMessage(
   text: string,
@@ -243,18 +282,19 @@ async function handleTelegramMessage(
         equity: 10000,
       };
 
-      // Get live account info from MetaApi
-      if (streamingConnection) {
+      // Get live account info from MetaApi (account-specific connection)
+      const connection = accountConnections.get(account.id);
+      if (connection) {
         try {
-          const info = await streamingConnection.getAccountInformation();
+          const info = await connection.getAccountInformation();
           accountInfo.balance = info.balance;
           accountInfo.equity = info.equity;
         } catch (err) {
-          console.warn('[signal] Could not fetch live account info, using cached');
+          console.warn(`[signal:${account.name}] Could not fetch live account info, using cached`);
         }
       }
 
-      const metaApi = streamingConnection ? buildMetaApiInterface(streamingConnection) : buildDryRunMetaApi();
+      const metaApi = connection ? buildMetaApiInterface(connection) : buildDryRunMetaApi();
 
       const results = await executePipeline(
         text,
@@ -334,11 +374,12 @@ async function handleTelegramMessage(
     }
 
     case 'cancellation': {
-      console.log(`[signal] Cancellation: ${parsed.cancellation.type}`);
-      if (streamingConnection) {
-        const metaApi = buildMetaApiInterface(streamingConnection);
+      console.log(`[signal:${account.name}] Cancellation: ${parsed.cancellation.type}`);
+      const conn = accountConnections.get(account.id);
+      if (conn) {
+        const metaApi = buildMetaApiInterface(conn);
         const results = await handleCancellation(parsed, config.id, metaApi);
-        console.log(`[signal] Cancellation results: ${results.map((r) => `${r.executionId}=${r.status}`).join(', ')}`);
+        console.log(`[signal:${account.name}] Cancellation results: ${results.map((r) => `${r.executionId}=${r.status}`).join(', ')}`);
       }
       break;
     }
@@ -470,17 +511,14 @@ function buildDryRunMetaApi(): MetaApiTradeInterface {
 async function main(): Promise<void> {
   console.log('[worker] Signal listener starting...');
 
-  // Load the latest offset from DB (TradingView webhook fires to the API server)
+  // Load the latest offset from DB
   await loadLastOffset();
 
-  // Find active signal config
-  const configs = await db.query.signalConfigs.findMany({
-    with: { source: true, account: true },
-  });
+  // Find all configs to determine which source/accounts to connect
+  const allConfigs = await db.query.signalConfigs.findMany();
 
-  if (configs.length === 0) {
+  if (allConfigs.length === 0) {
     console.log('[worker] No signal configs found. Waiting for configuration...');
-    // Poll for config every 30s
     while (!isShuttingDown) {
       await sleep(30_000);
       const newConfigs = await db.query.signalConfigs.findMany();
@@ -492,44 +530,53 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = configs[0];
-  const source = await db.query.signalSources.findFirst({
-    where: eq(signalSources.id, config.sourceId),
-  });
-  const account = await db.query.tradingAccounts.findFirst({
-    where: eq(tradingAccounts.id, config.accountId),
-  });
-
-  if (!source || !account) {
-    console.error('[worker] Source or account not found for config', config.id);
-    return;
+  // Get unique sources (typically one Telegram channel)
+  const sourceIds = [...new Set(allConfigs.map((c) => c.sourceId))];
+  const sources: (typeof signalSources.$inferSelect)[] = [];
+  for (const sid of sourceIds) {
+    const source = await db.query.signalSources.findFirst({ where: eq(signalSources.id, sid) });
+    if (source) sources.push(source);
   }
 
-  console.log(`[worker] Config: ${config.id} | Source: ${source.name} | Account: ${account.name}`);
-  console.log(`[worker] Mode: ${config.dryRun ? 'DRY RUN' : 'LIVE'} | Enabled: ${config.isEnabled}`);
+  // Connect MetaApi streaming for each unique account that has an enabled config
+  const enabledConfigs = allConfigs.filter((c) => c.isEnabled);
+  const accountIds = [...new Set(enabledConfigs.map((c) => c.accountId))];
 
-  // Start MetaApi price streaming
-  try {
-    await startPriceStreaming(account.metaApiId);
-  } catch (error) {
-    console.error('[worker] Failed to start price streaming:', error);
-    console.log('[worker] Continuing without live prices (will use stale/fixed data)');
+  console.log(`[worker] ${allConfigs.length} config(s), ${enabledConfigs.length} enabled, ${accountIds.length} account(s)`);
+
+  for (const accountId of accountIds) {
+    const account = await db.query.tradingAccounts.findFirst({
+      where: eq(tradingAccounts.id, accountId),
+    });
+    if (!account) continue;
+
+    const config = enabledConfigs.find((c) => c.accountId === accountId);
+    console.log(`[worker] Account: ${account.name} | ${config?.dryRun ? 'DRY RUN' : 'LIVE'}`);
+
+    if (!config?.dryRun) {
+      try {
+        await startPriceStreaming(account.id, account.metaApiId);
+      } catch (error) {
+        console.error(`[worker] Failed to start streaming for ${account.name}:`, error);
+      }
+    }
   }
 
-  // Start Telegram listener
-  try {
-    await startTelegramListener(source, config, account);
-  } catch (error) {
-    console.error('[worker] Failed to start Telegram listener:', error);
+  // Start Telegram listener for each source (dispatches to all enabled configs)
+  for (const source of sources) {
+    try {
+      await startTelegramListener(source);
+    } catch (error) {
+      console.error(`[worker] Failed to start Telegram for source ${source.name}:`, error);
+    }
   }
 
-  // Periodically reload offset from DB (in case webhook hit the API server)
+  // Periodically reload offset from DB
   const offsetRefreshInterval = setInterval(async () => {
     if (isShuttingDown) return;
     await loadLastOffset();
-  }, 60_000); // Every 60s
+  }, 60_000);
 
-  // Keep alive
   console.log('[worker] Signal listener running. Press Ctrl+C to stop.');
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
@@ -541,12 +588,12 @@ async function main(): Promise<void> {
       if (telegramClient) {
         await telegramClient.disconnect().catch(() => {});
       }
-      if (streamingConnection) {
-        await streamingConnection.close().catch(() => {});
+      for (const [id, conn] of accountConnections) {
+        try { await conn.close(); } catch {}
       }
+      accountConnections.clear();
 
-      // Mark source as disconnected
-      if (source) {
+      for (const source of sources) {
         await db
           .update(signalSources)
           .set({ telegramStatus: 'disconnected' })

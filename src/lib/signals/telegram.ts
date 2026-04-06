@@ -11,6 +11,27 @@ import { StringSession } from 'telegram/sessions';
 import { NewMessage, type NewMessageEvent } from 'telegram/events';
 import { computeCheck } from 'telegram/Password';
 
+/**
+ * Convert a Telegram channel ID to GramJS MTProto format.
+ * Supergroups/channels use -100 prefix internally.
+ * e.g. -3227094435 → -1003227094435
+ */
+function toGramJsChannelId(channelId: string | number): number {
+  const num = typeof channelId === 'string' ? parseInt(channelId, 10) : channelId;
+  const abs = Math.abs(num);
+  const str = abs.toString();
+
+  // Already has -100 prefix (13+ digits starting with 100)
+  if (str.length >= 13 && str.startsWith('100')) {
+    return -abs;
+  }
+
+  // Needs -100 prefix
+  return -parseInt(`100${str}`, 10);
+}
+
+export { toGramJsChannelId };
+
 export interface TelegramAuthState {
   phoneCodeHash: string;
   phone: string;
@@ -148,9 +169,8 @@ export class TelegramSignalClient {
     channelId: string | number | null,
     callback: (text: string, messageId: number, chatId: string) => void,
   ): void {
-    const numericId = channelId
-      ? (typeof channelId === 'string' ? parseInt(channelId, 10) : channelId)
-      : null;
+    // Convert channel ID to GramJS format: supergroups/channels need -100 prefix
+    const numericId = channelId ? toGramJsChannelId(channelId) : null;
 
     this.client.addEventHandler(
       (event: NewMessageEvent) => {
@@ -171,21 +191,19 @@ export class TelegramSignalClient {
 
         // If no channel filter, process all messages
         if (!numericId) {
-          console.log(`[telegram] Message from chat ${chatId}: ${message.text.slice(0, 60)}...`);
+          console.log(`[telegram] Message from chat ${chatId} (auto-detect): ${message.text.slice(0, 60)}...`);
           callback(message.text, message.id, chatId);
           return;
         }
 
-        // If channel filter set, only process matching
-        if (chatId === numericId.toString()) {
-          console.log(`[telegram] Message from channel ${chatId}: ${message.text.slice(0, 60)}...`);
-          callback(message.text, message.id, chatId);
-        }
+        // Channel filter is set — GramJS handles filtering via NewMessage({ chats })
+        console.log(`[telegram] Signal from channel ${chatId}: ${message.text.slice(0, 60)}...`);
+        callback(message.text, message.id, chatId);
       },
       numericId ? new NewMessage({ chats: [numericId] }) : new NewMessage({}),
     );
 
-    console.log(`[telegram] Listening to ${numericId ? `channel ${numericId}` : 'ALL channels (auto-detect mode)'}`);
+    console.log(`[telegram] Listening to ${numericId ? `channel ${numericId} (converted from ${channelId})` : 'ALL channels (auto-detect mode)'}`);
   }
 
   private _seenChannels = new Map<string, { chatId: string; title: string; lastMessage: string; lastSeen: number }>();

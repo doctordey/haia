@@ -222,6 +222,9 @@ export const signalSources = pgTable('signal_sources', {
   name:                 text('name').notNull(),
   telegramChannelId:    text('telegram_channel_id'),
   telegramChannelName:  text('telegram_channel_name'),
+  telegramSession:      text('telegram_session'),          // GramJS session string for reconnection
+  telegramPhone:        text('telegram_phone'),             // Phone number used for auth
+  telegramStatus:       text('telegram_status').notNull().default('disconnected'), // "connected" | "awaiting_code" | "awaiting_2fa" | "disconnected" | "error"
   priceFeed:            text('price_feed').notNull(),     // "CME" | "BLACKBULL"
   isActive:             boolean('is_active').notNull().default(true),
   createdAt:            timestamp('created_at').notNull().defaultNow(),

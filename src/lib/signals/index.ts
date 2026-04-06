@@ -6,3 +6,5 @@ export { checkMargin, evaluateMargin } from './margin';
 export { handleCancellation } from './cancel';
 export { onPositionClosed } from './breakeven';
 export { executePipeline } from './execute';
+export { PriceCache, priceCache } from './price-cache';
+export { TelegramSignalClient, getOrCreateAuthClient, clearAuthClient } from './telegram';

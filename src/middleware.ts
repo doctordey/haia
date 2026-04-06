@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decode } from '@auth/core/jwt';
 
-const publicPaths = ['/', '/login', '/register', '/api/auth', '/api/health'];
+const publicPaths = ['/', '/login', '/register', '/api/auth', '/api/health', '/api/signals/offset/webhook'];
 
 // Routes that require specific roles
 const ROLE_ROUTES: Record<string, string> = {

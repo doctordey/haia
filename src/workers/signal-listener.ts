@@ -98,9 +98,11 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
     onBrokerConnectionStatusChanged(_i: string, connected: boolean) {
       console.log(`[metaapi:${accountId}] Broker: ${connected ? 'connected' : 'disconnected'}`);
     },
-    onDealAdded(_instanceIndex: string, deal: { positionId?: string; type?: string; entryType?: string; profit?: number }) {
+    onDealAdded(_instanceIndex: string, deal: { positionId?: string; orderId?: string; type?: string; entryType?: string; profit?: number; reason?: string }) {
       if (deal.entryType === 'DEAL_ENTRY_OUT' && deal.positionId) {
-        const wasTPHit = (deal.profit ?? 0) > 0;
+        // TP hit: reason is 'DEAL_REASON_TP' or profit > 0 as fallback
+        const wasTPHit = deal.reason === 'DEAL_REASON_TP' || (deal.profit ?? 0) > 0;
+        console.log(`[breakeven] Deal closed: position=${deal.positionId} profit=${deal.profit} reason=${deal.reason} wasTP=${wasTPHit}`);
         handlePositionClosed(deal.positionId, wasTPHit, accountId);
       }
     },
@@ -557,7 +559,8 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
             throw new Error(`Unknown order type: ${type}`);
         }
 
-        return { orderId: result.orderId || result.positionId || 'unknown' };
+        // Prefer positionId (what onDealAdded uses) over orderId
+        return { orderId: result.positionId || result.orderId || 'unknown' };
       } catch (error) {
         console.error(`[metaapi] createOrder failed for ${params.symbol} (${params.type}):`, error);
         throw new Error(`MetaApi createOrder failed: ${error instanceof Error ? error.message : String(error)}`);

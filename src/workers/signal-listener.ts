@@ -35,7 +35,7 @@ import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 const priceCache = new PriceCache();
 let telegramClient: TelegramSignalClient | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const accountConnections = new Map<string, { streaming: any; rpc: any }>(); // accountId → connections
+const accountConnections = new Map<string, any>(); // accountId → streaming connection (has both price + trade methods)
 let isShuttingDown = false;
 
 // ─── MetaApi Price Streaming ──────────────────────────
@@ -117,23 +117,17 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
     console.warn(`[metaapi:${accountId}] Market data subscription failed:`, error instanceof Error ? error.message : error);
   }
 
-  // Also create an RPC connection for trading operations
-  const rpcConnection = account.getRPCConnection();
-  await rpcConnection.connect();
-  await rpcConnection.waitSynchronized();
-  console.log(`[metaapi:${accountId}] RPC connection ready`);
+  accountConnections.set(accountId, connection);
 
-  accountConnections.set(accountId, { streaming: connection, rpc: rpcConnection });
-
-  console.log(`[worker] Connections ready for account ${accountId}`);
+  console.log(`[worker] Connection ready for account ${accountId}`);
 }
 
 async function handlePositionClosed(positionId: string, wasTPHit: boolean, accountId: string): Promise<void> {
-  const conns = accountConnections.get(accountId);
-  if (!conns?.rpc) return;
+  const conn = accountConnections.get(accountId);
+  if (!conn) return;
 
   try {
-    const metaApi = buildMetaApiInterface(conns.rpc);
+    const metaApi = buildMetaApiInterface(conn);
     const result = await onPositionClosed(positionId, wasTPHit, metaApi);
     if (result?.action === 'breakeven_moved') {
       console.log(`[breakeven] Moved TP2 SL to entry for position ${positionId}`);
@@ -340,27 +334,21 @@ async function handleTelegramMessage(
         equity: 10000,
       };
 
-      // Get live account info from MetaApi (account-specific connections)
-      const conns = accountConnections.get(account.id);
-      if (conns?.rpc) {
+      // Get live account info from MetaApi streaming terminal state
+      const conn = accountConnections.get(account.id);
+      if (conn) {
         try {
-          const info = await conns.rpc.getAccountInformation();
-          accountInfo.balance = info.balance;
-          accountInfo.equity = info.equity;
+          const tsInfo = conn.terminalState.accountInformation;
+          if (tsInfo) {
+            accountInfo.balance = tsInfo.balance;
+            accountInfo.equity = tsInfo.equity;
+          }
         } catch (err) {
-          // Fall back to streaming terminal state
-          try {
-            const tsInfo = conns.streaming.terminalState.accountInformation;
-            if (tsInfo) {
-              accountInfo.balance = tsInfo.balance;
-              accountInfo.equity = tsInfo.equity;
-            }
-          } catch {}
           console.warn(`[signal:${account.name}] Could not fetch live account info, using cached`);
         }
       }
 
-      const metaApi = conns?.rpc ? buildMetaApiInterface(conns.rpc) : buildDryRunMetaApi();
+      const metaApi = conn ? buildMetaApiInterface(conn) : buildDryRunMetaApi();
 
       const results = await executePipeline(
         text,
@@ -451,9 +439,9 @@ async function handleTelegramMessage(
 
     case 'cancellation': {
       console.log(`[signal:${account.name}] Cancellation: ${parsed.cancellation.type}`);
-      const cancelConns = accountConnections.get(account.id);
-      if (cancelConns?.rpc) {
-        const metaApi = buildMetaApiInterface(cancelConns.rpc);
+      const cancelConn = accountConnections.get(account.id);
+      if (cancelConn) {
+        const metaApi = buildMetaApiInterface(cancelConn);
         const results = await handleCancellation(parsed, config.id, metaApi);
         console.log(`[signal:${account.name}] Cancellation results: ${results.map((r) => `${r.executionId}=${r.status}`).join(', ')}`);
       }
@@ -683,9 +671,8 @@ async function main(): Promise<void> {
       if (telegramClient) {
         await telegramClient.disconnect().catch(() => {});
       }
-      for (const [id, { streaming, rpc }] of accountConnections) {
-        try { await streaming.close(); } catch {}
-        try { await rpc.close(); } catch {}
+      for (const [id, conn] of accountConnections) {
+        try { await conn.close(); } catch {}
       }
       accountConnections.clear();
 

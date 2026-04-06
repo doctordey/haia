@@ -74,7 +74,10 @@ export default function SignalSettingsPage() {
       } else {
         loadFromServer({});
       }
-    }).catch(() => toast('Failed to load settings', 'error'));
+    }).catch(() => {
+      toast('Failed to load settings', 'error');
+      loadFromServer({}); // Exit loading skeleton even on error
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When selected account changes, load that account's config
@@ -129,13 +132,15 @@ export default function SignalSettingsPage() {
         body: JSON.stringify({ configId, field, value }),
       });
       if (!res.ok) throw new Error('Toggle failed');
-      setField(field, value);
-      setAllConfigs((prev) => ({ ...prev, [selectedAccountId]: { ...prev[selectedAccountId], [field]: value } }));
+      const updated = await res.json();
+      // Update from server response without marking form dirty
+      loadFromServer({ ...form, [field]: updated[field] });
+      setAllConfigs((prev) => ({ ...prev, [selectedAccountId]: { ...prev[selectedAccountId], [field]: updated[field] } }));
       toast(`${field === 'isEnabled' ? 'Pipeline' : 'Dry run'} ${value ? 'enabled' : 'disabled'}`, 'success');
     } catch {
       toast('Toggle failed', 'error');
     }
-  }, [configId, selectedAccountId, setField, toast]);
+  }, [configId, selectedAccountId, form, loadFromServer, toast]);
 
   if (!loaded) {
     return (
@@ -260,6 +265,7 @@ function MasterControls({
             checked={form.isEnabled}
             onChange={(v) => onToggle('isEnabled', v)}
             disabled={!configId}
+            label="Pipeline Enabled"
             activeColor="bg-profit-primary"
           />
         </div>
@@ -273,6 +279,7 @@ function MasterControls({
             checked={form.dryRun}
             onChange={(v) => onToggle('dryRun', v)}
             disabled={!configId}
+            label="Dry Run Mode"
             activeColor="bg-warning"
           />
         </div>
@@ -399,8 +406,16 @@ function TelegramSection({
       setAuthStep('idle');
       setPassword('');
       toast('Telegram connected!', 'success');
-      const srcs = await fetch('/api/signals/sources').then((r) => r.json());
-      setSources(srcs);
+      // Refresh sources separately — don't let this failure revert auth state
+      try {
+        const srcsRes = await fetch('/api/signals/sources');
+        if (srcsRes.ok) {
+          const srcs = await srcsRes.json();
+          if (Array.isArray(srcs)) setSources(srcs);
+        }
+      } catch {
+        // Source refresh failed — auth still succeeded
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Verification failed', 'error');
       if (authStep !== 'needs_2fa') setAuthStep('code_sent');
@@ -940,7 +955,12 @@ function NumberInput({
       type="number"
       value={value}
       step={step}
-      onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+      onChange={(e) => {
+        const val = e.target.value;
+        if (val === '' || val === '-') return; // Don't coerce empty to 0
+        const num = parseFloat(val);
+        if (!isNaN(num)) onChange(num);
+      }}
       className="font-mono"
     />
   );
@@ -950,11 +970,13 @@ function ToggleSwitch({
   checked,
   onChange,
   disabled,
+  label,
   activeColor = 'bg-accent-primary',
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  label: string;
   activeColor?: string;
 }) {
   return (
@@ -962,10 +984,12 @@ function ToggleSwitch({
       type="button"
       role="switch"
       aria-checked={checked}
-      onClick={() => !disabled && onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
-        disabled ? 'opacity-50 cursor-not-allowed' : ''
-      } ${checked ? activeColor : 'bg-bg-tertiary'}`}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+        checked ? activeColor : 'bg-bg-tertiary'
+      }`}
     >
       <span
         className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${

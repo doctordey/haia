@@ -295,7 +295,12 @@ export const signalConfigs = pgTable('signal_configs', {
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  unique('signal_configs_source_account_uniq').on(table.sourceId, table.accountId),
+  index('signal_configs_user_id_idx').on(table.userId),
+  index('signal_configs_source_id_idx').on(table.sourceId),
+  index('signal_configs_account_id_idx').on(table.accountId),
+]);
 
 export const signalConfigsRelations = relations(signalConfigs, ({ one, many }) => ({
   user:       one(users, { fields: [signalConfigs.userId], references: [users.id] }),

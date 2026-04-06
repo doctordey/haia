@@ -36,6 +36,13 @@
       "when": 1775501336848,
       "tag": "0004_fantastic_ink",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1775508602413,
+      "tag": "0005_black_mad_thinker",
+      "breakpoints": true
     }
   ]
 }

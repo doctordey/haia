@@ -240,6 +240,28 @@ async function handleTelegramMessageMulti(
   messageId: number,
   source: typeof signalSources.$inferSelect,
 ): Promise<void> {
+  const parsed = parseSignalMessage(text);
+
+  // Store raw signal ONCE before per-config dispatch (dedupes on sourceId + telegramMessageId)
+  const [signalRow] = await db
+    .insert(signals)
+    .values({
+      sourceId: source.id,
+      telegramMessageId: messageId,
+      rawMessage: text,
+      messageType: parsed.type,
+      parsed: parsed.type !== 'unknown',
+      signalCount: parsed.type === 'signals' ? parsed.signals.length : 0,
+      warning: parsed.type === 'signals' ? parsed.warning : undefined,
+    })
+    .onConflictDoNothing()
+    .returning();
+
+  if (!signalRow) {
+    console.log(`[signal] Duplicate message #${messageId} — skipping`);
+    return;
+  }
+
   // Re-read configs from DB each time to pick up enable/disable changes
   const configs = await db.query.signalConfigs.findMany({
     where: and(eq(signalConfigs.sourceId, source.id), eq(signalConfigs.isEnabled, true)),
@@ -263,6 +285,12 @@ async function handleTelegramMessageMulti(
         return;
       }
 
+      // Reject live execution for investor-mode accounts
+      if (!config.dryRun && account.accessMode !== 'trading') {
+        console.error(`[signal] Account ${account.name} is in ${account.accessMode} mode — cannot place live orders. Skipping.`);
+        return;
+      }
+
       // Ensure this account has a streaming connection
       if (!accountConnections.has(account.id) && !config.dryRun) {
         try {
@@ -280,7 +308,7 @@ async function handleTelegramMessageMulti(
       }
 
       try {
-        await handleTelegramMessage(text, messageId, source, config, account);
+        await handleTelegramMessage(text, messageId, source, config, account, signalRow, parsed);
       } catch (err) {
         console.error(`[signal] Error executing on account ${account.name}:`, err);
       }
@@ -296,34 +324,14 @@ async function handleTelegramMessage(
   source: typeof signalSources.$inferSelect,
   config: typeof signalConfigs.$inferSelect,
   account: typeof tradingAccounts.$inferSelect,
+  signalRow: typeof signals.$inferSelect,
+  parsed: ReturnType<typeof parseSignalMessage>,
 ): Promise<void> {
   const startTime = Date.now();
-  console.log(`[signal] Received message #${messageId} (${text.slice(0, 60)}...)`);
-
-  const parsed = parseSignalMessage(text);
-
-  // Store raw signal (idempotent — dedupes on sourceId + telegramMessageId)
-  const [signalRow] = await db
-    .insert(signals)
-    .values({
-      sourceId: source.id,
-      telegramMessageId: messageId,
-      rawMessage: text,
-      messageType: parsed.type,
-      parsed: parsed.type !== 'unknown',
-      signalCount: parsed.type === 'signals' ? parsed.signals.length : 0,
-      warning: parsed.type === 'signals' ? parsed.warning : undefined,
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  if (!signalRow) {
-    console.log(`[signal] Duplicate message #${messageId} — skipping`);
-    return;
-  }
+  console.log(`[signal:${account.name}] Processing message #${messageId} (${text.slice(0, 60)}...)`);
 
   if (!config.isEnabled) {
-    console.log('[signal] Pipeline disabled — stored raw message only');
+    console.log(`[signal:${account.name}] Pipeline disabled — skipping`);
     return;
   }
 
@@ -335,7 +343,9 @@ async function handleTelegramMessage(
         .update(signalConfigs)
         .set({ isEnabled: false })
         .where(eq(signalConfigs.id, config.id));
-    } catch {}
+    } catch (err) {
+      console.error(`[signal] Failed to auto-pause config ${config.id}:`, err);
+    }
     return;
   }
 
@@ -351,19 +361,28 @@ async function handleTelegramMessage(
 
       // Get live account info from MetaApi streaming terminal state
       const conn = accountConnections.get(account.id);
-      if (conn) {
+      let metaApi;
+
+      if (config.dryRun) {
+        metaApi = buildDryRunMetaApi();
+      } else if (conn) {
         try {
           const tsInfo = conn.terminalState.accountInformation;
-          if (tsInfo) {
-            accountInfo.balance = tsInfo.balance;
-            accountInfo.equity = tsInfo.equity;
+          if (!tsInfo) {
+            console.error(`[signal:${account.name}] Terminal state not synchronized — cannot execute live. Skipping.`);
+            return;
           }
+          accountInfo.balance = tsInfo.balance;
+          accountInfo.equity = tsInfo.equity;
         } catch (err) {
-          console.warn(`[signal:${account.name}] Could not fetch live account info, using cached`);
+          console.error(`[signal:${account.name}] Failed to read terminal state — cannot execute live. Skipping.`);
+          return;
         }
+        metaApi = buildMetaApiInterface(conn);
+      } else {
+        console.error(`[signal:${account.name}] No connection for live account — skipping.`);
+        return;
       }
-
-      const metaApi = conn ? buildMetaApiInterface(conn) : buildDryRunMetaApi();
 
       const results = await executePipeline(
         text,
@@ -429,10 +448,15 @@ async function handleTelegramMessage(
       }
 
       // Link TP1↔TP2 split pairs by updating linkedExecutionId with real DB IDs
+      // Match by tradeNumber + instrument + chunkIndex to correctly pair chunked splits
       const tp1Execs = insertedExecutionIds.filter((e) => e.splitIndex === 1);
       const tp2Execs = insertedExecutionIds.filter((e) => e.splitIndex === 2);
       for (const tp1 of tp1Execs) {
-        const tp2 = tp2Execs.find((e) => e.tradeNumber === tp1.tradeNumber && e.instrument === tp1.instrument);
+        const tp2 = tp2Execs.find((e) =>
+          e.tradeNumber === tp1.tradeNumber &&
+          e.instrument === tp1.instrument &&
+          e.chunkIndex === tp1.chunkIndex
+        );
         if (tp2) {
           await db.update(signalExecutions).set({ linkedExecutionId: tp2.id }).where(eq(signalExecutions.id, tp1.id));
           await db.update(signalExecutions).set({ linkedExecutionId: tp1.id }).where(eq(signalExecutions.id, tp2.id));
@@ -623,6 +647,9 @@ function buildDryRunMetaApi(): MetaApiTradeInterface {
 }
 
 // ─── Main Loop ────────────────────────────────────────
+// Intentionally monolithic: Telegram streaming + MetaApi connections + signal execution
+// all run in one process. BullMQ/Redis job queues were considered but add infra complexity
+// without clear benefit for this single-user, low-throughput pipeline.
 
 async function main(): Promise<void> {
   console.log('[worker] Signal listener starting...');
@@ -630,21 +657,16 @@ async function main(): Promise<void> {
   // Load the latest offset from DB
   await loadLastOffset();
 
-  // Find all configs to determine which source/accounts to connect
-  const allConfigs = await db.query.signalConfigs.findMany();
+  // Poll for configs if none exist yet (non-recursive loop)
+  let allConfigs = await db.query.signalConfigs.findMany();
 
-  if (allConfigs.length === 0) {
+  while (allConfigs.length === 0 && !isShuttingDown) {
     console.log('[worker] No signal configs found. Waiting for configuration...');
-    while (!isShuttingDown) {
-      await sleep(30_000);
-      const newConfigs = await db.query.signalConfigs.findMany();
-      if (newConfigs.length > 0) {
-        console.log('[worker] Config found — restarting...');
-        return main();
-      }
-    }
-    return;
+    await sleep(30_000);
+    allConfigs = await db.query.signalConfigs.findMany();
   }
+
+  if (isShuttingDown) return;
 
   // Get unique sources (typically one Telegram channel)
   const sourceIds = [...new Set(allConfigs.map((c) => c.sourceId))];
@@ -704,7 +726,7 @@ async function main(): Promise<void> {
       if (telegramClient) {
         await telegramClient.disconnect().catch(() => {});
       }
-      for (const [id, conn] of accountConnections) {
+      for (const conn of accountConnections.values()) {
         try { await conn.close(); } catch {}
       }
       accountConnections.clear();

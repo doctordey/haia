@@ -124,6 +124,22 @@ Size: Medium`;
     expect(result.signals[0].tradeNumber).toBe(1);
   });
 
+  it('parses signals with Telegram bold markdown formatting', () => {
+    const msg = `🔴 **SHORT NQ @ 23,809**
+TP1: 23,763
+TP2: 23,700
+SL: 23,849
+Size: Small`;
+
+    const result = parseSignalMessage(msg);
+    expect(result.type).toBe('signals');
+    if (result.type !== 'signals') return;
+    expect(result.signals[0].direction).toBe('SHORT');
+    expect(result.signals[0].instrument).toBe('NQ');
+    expect(result.signals[0].entryPrice).toBe(23809);
+    expect(result.signals[0].stopLoss).toBe(23849);
+  });
+
   it('parses decimal prices', () => {
     const msg = `Trade 1
 🟢 LONG ES @ 6,606.50

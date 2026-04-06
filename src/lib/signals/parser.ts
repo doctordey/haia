@@ -49,7 +49,23 @@ const WARNING_RE = /⚠️\s*(.*?)(?:\n|$)/i;
 
 // ─── MAIN PARSER ─────────────────────────────────────
 
-export function parseSignalMessage(text: string): ParsedMessage {
+/**
+ * Strip Telegram markdown/HTML formatting so the regex can match clean text.
+ * Handles: **bold**, *bold*, __italic__, _italic_, ~strikethrough~, `code`, ```code blocks```
+ */
+function stripFormatting(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')   // **bold**
+    .replace(/__(.+?)__/g, '$1')         // __italic__
+    .replace(/~~(.+?)~~/g, '$1')         // ~~strikethrough~~
+    .replace(/```[\s\S]*?```/g, '')      // ```code blocks```
+    .replace(/`(.+?)`/g, '$1')           // `inline code`
+    .replace(/\*(.+?)\*/g, '$1')         // *bold* (single)
+    .replace(/_(.+?)_/g, '$1');           // _italic_ (single)
+}
+
+export function parseSignalMessage(rawText: string): ParsedMessage {
+  const text = stripFormatting(rawText);
   // 1. Check for cancellations (highest priority)
   if (CANCEL_ALL_RE.test(text)) {
     const reasonMatch = text.match(/CANCELLED\s*\n?(.*)/i);

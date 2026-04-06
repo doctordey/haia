@@ -4,12 +4,8 @@ import { decode } from '@auth/core/jwt';
 
 const publicPaths = ['/', '/login', '/register', '/api/auth', '/api/health', '/api/signals/offset/webhook'];
 
-// Routes that require specific roles
+// Routes that require specific roles (admin only — signals and journal are open to all authenticated users)
 const ROLE_ROUTES: Record<string, string> = {
-  '/signals': 'signals',
-  '/api/signals': 'signals',
-  '/journal': 'journal',
-  '/api/journal': 'journal',
   '/settings/admin': 'admin',
   '/api/admin': 'admin',
 };

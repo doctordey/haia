@@ -899,8 +899,9 @@ function AccountAccessWarning({
       toast('Account upgraded to trading access', 'success');
       setShowUpgrade(false);
       setPassword('');
-      // Reload the page to refresh account data
-      window.location.reload();
+      // Update account in parent state from PATCH response
+      const updated = await res.json();
+      account!.accessMode = updated.accessMode ?? 'trading';
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Upgrade failed', 'error');
     } finally {

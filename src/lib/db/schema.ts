@@ -230,7 +230,9 @@ export const signalSources = pgTable('signal_sources', {
   isActive:             boolean('is_active').notNull().default(true),
   createdAt:            timestamp('created_at').notNull().defaultNow(),
   updatedAt:            timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index('signal_sources_user_id_idx').on(table.userId),
+]);
 
 export const signalSourcesRelations = relations(signalSources, ({ one, many }) => ({
   user:    one(users, { fields: [signalSources.userId], references: [users.id] }),
@@ -402,6 +404,7 @@ export const signalExecutions = pgTable('signal_executions', {
   index('signal_executions_account_id_idx').on(table.accountId),
   index('signal_executions_status_idx').on(table.status),
   index('signal_executions_instrument_idx').on(table.instrument),
+  index('signal_executions_linked_execution_id_idx').on(table.linkedExecutionId),
 ]);
 
 export const signalExecutionsRelations = relations(signalExecutions, ({ one }) => ({
@@ -459,6 +462,7 @@ export const tradeJournal = pgTable('trade_journal', {
 }, (table) => [
   index('trade_journal_user_id_idx').on(table.userId),
   index('trade_journal_setup_type_idx').on(table.setupType),
+  index('trade_journal_entry_time_idx').on(table.entryTime),
 ]);
 
 export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({

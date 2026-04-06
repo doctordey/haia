@@ -43,6 +43,13 @@
       "when": 1775508602413,
       "tag": "0005_black_mad_thinker",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1775510585757,
+      "tag": "0006_powerful_karnak",
+      "breakpoints": true
     }
   ]
 }

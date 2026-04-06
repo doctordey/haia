@@ -318,6 +318,7 @@ function TelegramSection({
   const [loading, setLoading] = useState(false);
   const [newSourceName, setNewSourceName] = useState('');
   const [channelId, setChannelId] = useState('');
+  const [showAddSource, setShowAddSource] = useState(sources.length === 0);
 
   const activeSource = sources.find((s) => s.id === form.sourceId);
 
@@ -341,6 +342,7 @@ function TelegramSection({
       setField('sourceId', source.id);
       setNewSourceName('');
       setChannelId('');
+      setShowAddSource(false);
       toast('Source created', 'success');
     } catch {
       toast('Failed to create source', 'error');
@@ -422,8 +424,8 @@ function TelegramSection({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Source selector / creator */}
-        {sources.length > 0 ? (
+        {/* Source selector */}
+        {sources.length > 0 && (
           <Select
             label="Signal Source"
             value={form.sourceId}
@@ -433,9 +435,20 @@ function TelegramSection({
               ...sources.map((s) => ({ value: s.id, label: `${s.name}${s.telegramStatus === 'connected' ? ' (connected)' : ''}` })),
             ]}
           />
-        ) : (
-          <div className="space-y-3">
-            <p className="text-xs text-text-tertiary">No signal sources yet. Create one to get started.</p>
+        )}
+
+        {/* Add new source */}
+        {!showAddSource && (
+          <button
+            onClick={() => setShowAddSource(true)}
+            className="text-xs text-accent-primary hover:underline cursor-pointer"
+          >
+            + Add new signal source
+          </button>
+        )}
+        {showAddSource && (
+          <div className="space-y-3 border border-border-primary rounded-[var(--radius-md)] p-3">
+            <p className="text-xs text-text-secondary font-medium">New Signal Source</p>
             <div className="flex gap-2">
               <Input
                 placeholder="Source name (e.g. NQ/ES Signals)"
@@ -448,7 +461,10 @@ function TelegramSection({
                 onChange={(e) => setChannelId(e.target.value)}
               />
             </div>
-            <Button size="sm" onClick={handleCreateSource} loading={loading}>Create Source</Button>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleCreateSource} loading={loading}>Create Source</Button>
+              <Button size="sm" variant="ghost" onClick={() => setShowAddSource(false)}>Cancel</Button>
+            </div>
           </div>
         )}
 

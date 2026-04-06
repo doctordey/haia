@@ -266,8 +266,15 @@ async function handleTelegramMessageMulti(
         try {
           await startPriceStreaming(account.id, account.metaApiId);
         } catch (err) {
-          console.error(`[signal] Failed to connect account ${account.name}:`, err);
+          console.error(`[signal] Failed to connect account ${account.name} — skipping live execution:`, err);
+          return; // Do not fall through to dry-run for a live config
         }
+      }
+
+      // Safety: reject live execution if connection is missing (shouldn't happen after above)
+      if (!config.dryRun && !accountConnections.has(account.id)) {
+        console.error(`[signal] No connection for live account ${account.name} — skipping`);
+        return;
       }
 
       try {
@@ -293,7 +300,7 @@ async function handleTelegramMessage(
 
   const parsed = parseSignalMessage(text);
 
-  // Store raw signal
+  // Store raw signal (idempotent — dedupes on sourceId + telegramMessageId)
   const [signalRow] = await db
     .insert(signals)
     .values({
@@ -305,7 +312,13 @@ async function handleTelegramMessage(
       signalCount: parsed.type === 'signals' ? parsed.signals.length : 0,
       warning: parsed.type === 'signals' ? parsed.warning : undefined,
     })
+    .onConflictDoNothing()
     .returning();
+
+  if (!signalRow) {
+    console.log(`[signal] Duplicate message #${messageId} — skipping`);
+    return;
+  }
 
   if (!config.isEnabled) {
     console.log('[signal] Pipeline disabled — stored raw message only');
@@ -359,8 +372,8 @@ async function handleTelegramMessage(
         metaApi,
       );
 
-      // Persist execution results and collect IDs
-      const insertedExecutionIds: { id: string; instrument: string; direction: string; fusionSymbol: string; splitIndex: number | null; chunkIndex: number | null; signalReceivedAt: Date | null }[] = [];
+      // Persist execution results and collect IDs (linkedExecutionId set to null initially)
+      const insertedExecutionIds: { id: string; instrument: string; direction: string; fusionSymbol: string; splitIndex: number | null; chunkIndex: number | null; signalReceivedAt: Date | null; tradeNumber: number }[] = [];
       for (const result of results) {
         const [inserted] = await db.insert(signalExecutions).values({
           signalId: signalRow.id,
@@ -368,7 +381,7 @@ async function handleTelegramMessage(
           accountId: account.id,
           tradeNumber: result.tradeNumber,
           splitIndex: result.splitIndex,
-          linkedExecutionId: result.linkedExecutionId,
+          linkedExecutionId: null, // Will be linked after all inserts
           chunkIndex: result.chunkIndex,
           totalChunks: result.totalChunks,
           instrument: result.instrument,
@@ -409,7 +422,19 @@ async function handleTelegramMessage(
           splitIndex: result.splitIndex,
           chunkIndex: result.chunkIndex,
           signalReceivedAt: result.signalReceivedAt,
+          tradeNumber: result.tradeNumber,
         });
+      }
+
+      // Link TP1↔TP2 split pairs by updating linkedExecutionId with real DB IDs
+      const tp1Execs = insertedExecutionIds.filter((e) => e.splitIndex === 1);
+      const tp2Execs = insertedExecutionIds.filter((e) => e.splitIndex === 2);
+      for (const tp1 of tp1Execs) {
+        const tp2 = tp2Execs.find((e) => e.tradeNumber === tp1.tradeNumber && e.instrument === tp1.instrument);
+        if (tp2) {
+          await db.update(signalExecutions).set({ linkedExecutionId: tp2.id }).where(eq(signalExecutions.id, tp1.id));
+          await db.update(signalExecutions).set({ linkedExecutionId: tp1.id }).where(eq(signalExecutions.id, tp2.id));
+        }
       }
 
       // Auto-create journal entries for primary executions (not chunks/TP2)

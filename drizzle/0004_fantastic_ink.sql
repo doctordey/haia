@@ -1,0 +1,1 @@
+ALTER TABLE "signals" ADD CONSTRAINT "signals_source_message_uniq" UNIQUE("source_id","telegram_message_id");

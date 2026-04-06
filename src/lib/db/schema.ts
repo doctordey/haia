@@ -326,6 +326,7 @@ export const signals = pgTable('signals', {
 }, (table) => [
   index('signals_source_id_idx').on(table.sourceId),
   index('signals_received_at_idx').on(table.receivedAt),
+  unique('signals_source_message_uniq').on(table.sourceId, table.telegramMessageId),
 ]);
 
 export const signalsRelations = relations(signals, ({ one, many }) => ({

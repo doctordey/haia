@@ -6,6 +6,10 @@ export function determineOrderType(
   currentMarketPrice: number,
   threshold: number = 5.0,
 ): OrderDecision {
+  if (direction !== 'LONG' && direction !== 'SHORT') {
+    throw new Error(`Invalid direction: ${direction}. Expected 'LONG' or 'SHORT'.`);
+  }
+
   const diff = currentMarketPrice - adjustedEntryPrice;
   const absDiff = Math.abs(diff);
 

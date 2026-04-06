@@ -520,19 +520,21 @@ function TelegramSection({
           </div>
         )}
 
-        {/* Account selector */}
-        <Select
-          label="Trading Account"
-          value={form.accountId}
-          onChange={(e) => setField('accountId', e.target.value)}
-          options={[
-            { value: '', label: 'Select account...' },
-            ...accounts.map((a) => ({
-              value: a.id,
-              label: `${a.name} (${a.platform}) — ${a.accessMode === 'trading' ? 'Trading' : 'Read-Only'}`,
-            })),
-          ]}
-        />
+        {/* Account info — selected via the top-level account switcher */}
+        {accounts.length <= 1 && (
+          <Select
+            label="Trading Account"
+            value={form.accountId}
+            onChange={(e) => setField('accountId', e.target.value)}
+            options={[
+              { value: '', label: 'Select account...' },
+              ...accounts.map((a) => ({
+                value: a.id,
+                label: `${a.name} (${a.platform}) — ${a.accessMode === 'trading' ? 'Trading' : 'Read-Only'}`,
+              })),
+            ]}
+          />
+        )}
         <AccountAccessWarning
           account={accounts.find((a) => a.id === form.accountId)}
           toast={toast}

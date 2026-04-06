@@ -80,6 +80,34 @@ interface SignalConfig {
   dryRun: boolean;
 }
 
+// ─── CSV Export ───────────────────────────────────────
+
+function exportCsv(executions: Execution[]) {
+  if (executions.length === 0) return;
+  const headers = ['Timestamp', 'Instrument', 'Direction', 'Signal Price', 'Adjusted Price', 'Order Type', 'Fill Price', 'Lot Size', 'Slippage', 'Latency (ms)', 'Status'];
+  const rows = executions.map((e) => [
+    e.createdAt,
+    e.fusionSymbol,
+    e.direction,
+    e.signalEntry,
+    e.adjustedEntry ?? '',
+    e.orderType ?? '',
+    e.fillPrice ?? '',
+    e.lotSize,
+    e.slippage ?? '',
+    e.totalLatencyMs ?? '',
+    e.status,
+  ]);
+  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `signal-executions-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ─── Dashboard Page ───────────────────────────────────
 
 export default function SignalDashboardPage() {
@@ -133,9 +161,12 @@ export default function SignalDashboardPage() {
     <div className="p-4 max-w-7xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Signal Dashboard</h1>
-        <Link href="/signals/settings">
-          <Button variant="secondary" size="sm">Settings</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={() => exportCsv(executions)}>Export CSV</Button>
+          <Link href="/signals/settings">
+            <Button variant="secondary" size="sm">Settings</Button>
+          </Link>
+        </div>
       </div>
 
       {/* Summary cards */}

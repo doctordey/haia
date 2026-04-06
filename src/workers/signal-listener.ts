@@ -36,6 +36,7 @@ const priceCache = new PriceCache();
 let telegramClient: TelegramSignalClient | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let streamingConnection: any = null;
+let metaApiConnected = false;
 let isShuttingDown = false;
 
 // ─── MetaApi Price Streaming ──────────────────────────
@@ -61,10 +62,17 @@ async function startPriceStreaming(metaApiId: string): Promise<void> {
       }
     },
     // Required listener methods (no-op)
-    onConnected() { console.log('[metaapi] Streaming connected'); },
-    onDisconnected() { console.log('[metaapi] Streaming disconnected — will auto-reconnect'); },
+    onConnected() {
+      console.log('[metaapi] Streaming connected');
+      metaApiConnected = true;
+    },
+    onDisconnected() {
+      console.log('[metaapi] Streaming disconnected — will auto-reconnect');
+      metaApiConnected = false;
+    },
     onBrokerConnectionStatusChanged(_i: string, connected: boolean) {
       console.log(`[metaapi] Broker connection: ${connected ? 'connected' : 'disconnected'}`);
+      metaApiConnected = connected;
     },
     // Position closed listener — for breakeven monitoring
     onDealAdded(_instanceIndex: string, deal: { positionId?: string; type?: string; entryType?: string; profit?: number }) {
@@ -213,13 +221,25 @@ async function handleTelegramMessage(
     return;
   }
 
+  // Contract roll detection — auto-pause
+  if (priceCache.contractRollDetected) {
+    console.error(`[signal] CONTRACT ROLL DETECTED — pipeline auto-paused: ${priceCache.contractRollMessage}`);
+    try {
+      await db
+        .update(signalConfigs)
+        .set({ isEnabled: false })
+        .where(eq(signalConfigs.id, config.id));
+    } catch {}
+    return;
+  }
+
   switch (parsed.type) {
     case 'signals': {
       console.log(`[signal] Parsed ${parsed.signals.length} signals${parsed.warning ? ` (warning: ${parsed.warning})` : ''}`);
 
       const signalConfig = buildSignalConfig(config);
       const accountInfo = {
-        balance: account.leverage ? 10000 : 10000, // Will be fetched from MetaApi
+        balance: 10000,
         equity: 10000,
       };
 
@@ -378,34 +398,59 @@ function buildSignalConfig(row: typeof signalConfigs.$inferSelect): SignalConfig
 function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
   return {
     async createOrder(params) {
-      const result = await connection.createOrder({
-        symbol: params.symbol,
-        type: params.type,
-        volume: params.volume,
-        openPrice: params.openPrice,
-        stopLoss: params.stopLoss,
-        takeProfit: params.takeProfit,
-        comment: params.comment,
-        slippage: params.slippage,
-      });
-      return { orderId: result.orderId };
+      try {
+        const result = await connection.createOrder({
+          symbol: params.symbol,
+          type: params.type,
+          volume: params.volume,
+          openPrice: params.openPrice,
+          stopLoss: params.stopLoss,
+          takeProfit: params.takeProfit,
+          comment: params.comment,
+          slippage: params.slippage,
+        });
+        return { orderId: result.orderId };
+      } catch (error) {
+        console.error(`[metaapi] createOrder failed for ${params.symbol}:`, error);
+        throw new Error(`MetaApi createOrder failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
     async cancelOrder(orderId) {
-      await connection.cancelOrder(orderId);
+      try {
+        await connection.cancelOrder(orderId);
+      } catch (error) {
+        console.error(`[metaapi] cancelOrder failed for ${orderId}:`, error);
+        throw new Error(`MetaApi cancelOrder failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
     async modifyPosition(positionId, params) {
-      await connection.modifyPosition(positionId, params);
+      try {
+        await connection.modifyPosition(positionId, params);
+      } catch (error) {
+        console.error(`[metaapi] modifyPosition failed for ${positionId}:`, error);
+        throw new Error(`MetaApi modifyPosition failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
     async calculateMargin(params) {
-      const result = await connection.calculateMargin({
-        symbol: params.symbol,
-        volume: params.volume,
-        type: params.type,
-      });
-      return { margin: result.margin };
+      try {
+        const result = await connection.calculateMargin({
+          symbol: params.symbol,
+          volume: params.volume,
+          type: params.type,
+        });
+        return { margin: result.margin };
+      } catch (error) {
+        console.error(`[metaapi] calculateMargin failed:`, error);
+        throw new Error(`MetaApi calculateMargin failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
     async getAccountInformation() {
-      return connection.getAccountInformation();
+      try {
+        return await connection.getAccountInformation();
+      } catch (error) {
+        console.error(`[metaapi] getAccountInformation failed:`, error);
+        throw new Error(`MetaApi getAccountInformation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   };
 }

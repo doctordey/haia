@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { offsetHistory } from '@/lib/db/schema';
+import { desc } from 'drizzle-orm';
 
 /**
  * POST /api/signals/offset/webhook
@@ -52,6 +53,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing or invalid price data' }, { status: 400 });
   }
 
+  // Contract roll detection — check previous offset
+  const [previous] = await db
+    .select()
+    .from(offsetHistory)
+    .orderBy(desc(offsetHistory.receivedAt))
+    .limit(1);
+
+  let contractRollWarning: string | null = null;
+  if (previous) {
+    const nqJump = Math.abs(nqOffset - previous.nqOffset);
+    const esJump = Math.abs(esOffset - previous.esOffset);
+    if (nqJump > 100) {
+      contractRollWarning = `NQ offset jumped ${nqJump.toFixed(1)}pts (${previous.nqOffset.toFixed(1)} → ${nqOffset.toFixed(1)}). Possible contract roll.`;
+    }
+    if (esJump > 30) {
+      contractRollWarning = `ES offset jumped ${esJump.toFixed(1)}pts (${previous.esOffset.toFixed(1)} → ${esOffset.toFixed(1)}). Possible contract roll.`;
+    }
+  }
+
+  if (contractRollWarning) {
+    console.warn(`[offset-webhook] CONTRACT ROLL: ${contractRollWarning}`);
+  }
+
   // Persist to offsetHistory
   await db.insert(offsetHistory).values({
     nqOffset,
@@ -91,5 +115,5 @@ export async function POST(request: NextRequest) {
     `(NQ futures=${nqFuturesPrice}, ES futures=${esFuturesPrice})`,
   );
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, contractRollWarning });
 }

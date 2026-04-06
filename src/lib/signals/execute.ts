@@ -108,7 +108,7 @@ async function executeSignal(
   // 3. Get current Fusion price for order type decision
   const currentPrice = priceCache.getFusionPrice(fusionSymbol);
   if (currentPrice == null && !config.dryRun) {
-    return [makeErrorResult(baseResult, config, `No current price for ${fusionSymbol}`)];
+    return [makeErrorResult(baseResult, config, `No current price for ${fusionSymbol} — MetaApi price stream may be stale (>10s) or disconnected. Execution blocked.`)];
   }
 
   // 4. Determine order type

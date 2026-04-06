@@ -62,9 +62,18 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
   const connection = account.getStreamingConnection();
 
   connection.addSynchronizationListener({
+    // Single symbol price update
     onSymbolPriceUpdated(_instanceIndex: string, price: { symbol: string; bid: number; ask: number }) {
       if (price.symbol === 'NAS100' || price.symbol === 'US500') {
         priceCache.setPrice(price.symbol, price.bid, price.ask);
+      }
+    },
+    // Batch symbol prices update (required by SDK)
+    onSymbolPricesUpdated(_instanceIndex: string, prices: { symbol: string; bid: number; ask: number }[]) {
+      for (const price of prices) {
+        if (price.symbol === 'NAS100' || price.symbol === 'US500') {
+          priceCache.setPrice(price.symbol, price.bid, price.ask);
+        }
       }
     },
     onConnected() { console.log(`[metaapi:${accountId}] Connected`); },

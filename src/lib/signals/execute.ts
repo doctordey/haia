@@ -143,7 +143,7 @@ async function executeSignal(
   // 6. Check margin for total position
   if (!config.dryRun) {
     try {
-      const marginResult = await checkMargin(metaApi, fusionSymbol, sizing.lotSize, signal.direction);
+      const marginResult = await checkMargin(metaApi, fusionSymbol, sizing.lotSize, signal.direction, adjusted.entry);
       const marginEval = evaluateMargin(marginResult, config.marginWarningThreshold, config.marginRejectThreshold);
 
       if (marginEval.action === 'reject') {

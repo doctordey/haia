@@ -264,6 +264,7 @@ export interface MetaApiTradeInterface {
     symbol: string;
     volume: number;
     type: string;
+    openPrice: number;
   }): Promise<{ margin: number }>;
 
   getAccountInformation(): Promise<{

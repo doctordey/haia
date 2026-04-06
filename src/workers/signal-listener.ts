@@ -554,6 +554,7 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
           symbol: params.symbol,
           volume: params.volume,
           type: params.type,
+          openPrice: params.openPrice,
         });
         return { margin: result.margin };
       } catch (error) {

@@ -5,6 +5,7 @@ export async function checkMargin(
   symbol: string,
   totalLots: number,
   direction: SignalDirection,
+  openPrice: number,
 ): Promise<MarginCheck> {
   const accountInfo = await account.getAccountInformation();
   const freeMargin = accountInfo.freeMargin;
@@ -13,6 +14,7 @@ export async function checkMargin(
     symbol,
     volume: totalLots,
     type: direction === 'LONG' ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL',
+    openPrice,
   });
 
   return {

@@ -178,9 +178,13 @@ async function loadLastOffset(): Promise<void> {
 async function startTelegramListener(
   source: typeof signalSources.$inferSelect,
 ): Promise<void> {
-  if (!source.telegramSession || !source.telegramChannelId) {
-    console.warn('[telegram] Source missing session or channel ID — skipping');
+  if (!source.telegramSession) {
+    console.warn('[telegram] Source missing session — skipping');
     return;
+  }
+
+  if (!source.telegramChannelId) {
+    console.log('[telegram] No channel ID set — starting in auto-detect mode (will listen to all channels)');
   }
 
   const apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
@@ -206,7 +210,18 @@ async function startTelegramListener(
 
   console.log(`[telegram] Authenticated. Listening to channel: ${source.telegramChannelName || source.telegramChannelId}`);
 
-  telegramClient.listenToChannel(source.telegramChannelId, async (text, messageId) => {
+  telegramClient.listenToChannel(source.telegramChannelId, async (text, messageId, chatId) => {
+    // Auto-update the channel ID if it was empty or different (auto-detect)
+    if (chatId && source.telegramChannelId !== chatId) {
+      console.log(`[telegram] Auto-detected channel ID: ${chatId} (was: ${source.telegramChannelId || 'empty'})`);
+      await db
+        .update(signalSources)
+        .set({ telegramChannelId: chatId })
+        .where(eq(signalSources.id, source.id))
+        .catch(() => {});
+      source.telegramChannelId = chatId;
+    }
+
     await handleTelegramMessageMulti(text, messageId, source);
   });
 

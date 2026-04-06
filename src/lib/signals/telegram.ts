@@ -140,41 +140,58 @@ export class TelegramSignalClient {
 
   /**
    * Subscribe to new messages from a specific channel.
-   * The callback receives the raw message text.
+   * If channelId is provided, only processes messages from that channel.
+   * If channelId is empty/null, listens to ALL channels (auto-detect mode).
+   * Also tracks all seen channels for auto-detection.
    */
   listenToChannel(
-    channelId: string | number,
-    callback: (text: string, messageId: number) => void,
+    channelId: string | number | null,
+    callback: (text: string, messageId: number, chatId: string) => void,
   ): void {
-    // Convert to number for GramJS — string IDs won't match
-    const numericId = typeof channelId === 'string' ? parseInt(channelId, 10) : channelId;
+    const numericId = channelId
+      ? (typeof channelId === 'string' ? parseInt(channelId, 10) : channelId)
+      : null;
 
-    // Also listen without chat filter to catch all messages for debugging
     this.client.addEventHandler(
       (event: NewMessageEvent) => {
         const message = event.message;
-        const chatId = message.chatId?.toString();
-        console.log(`[telegram] Message received in chat ${chatId}: ${message.text?.slice(0, 50) ?? '(no text)'}...`);
-        if (message.text) {
-          callback(message.text, message.id);
+        const chatId = message.chatId?.toString() ?? '';
+
+        // Track seen channels
+        if (chatId) {
+          this._seenChannels.set(chatId, {
+            chatId,
+            title: '', // We'll resolve titles separately
+            lastMessage: message.text?.slice(0, 100) ?? '',
+            lastSeen: Date.now(),
+          });
+        }
+
+        if (!message.text) return;
+
+        // If no channel filter, process all messages
+        if (!numericId) {
+          console.log(`[telegram] Message from chat ${chatId}: ${message.text.slice(0, 60)}...`);
+          callback(message.text, message.id, chatId);
+          return;
+        }
+
+        // If channel filter set, only process matching
+        if (chatId === numericId.toString()) {
+          console.log(`[telegram] Message from channel ${chatId}: ${message.text.slice(0, 60)}...`);
+          callback(message.text, message.id, chatId);
         }
       },
-      new NewMessage({ chats: [numericId] }),
+      numericId ? new NewMessage({ chats: [numericId] }) : new NewMessage({}),
     );
 
-    // Fallback: also add a catch-all handler to debug chat ID mismatches
-    this.client.addEventHandler(
-      (event: NewMessageEvent) => {
-        const message = event.message;
-        const chatId = message.chatId;
-        if (chatId && chatId.toString() !== numericId.toString()) {
-          console.log(`[telegram] Message from UNMATCHED chat ${chatId} (expected ${numericId}): ${message.text?.slice(0, 80) ?? '(no text)'}`);
-        }
-      },
-      new NewMessage({}),
-    );
+    console.log(`[telegram] Listening to ${numericId ? `channel ${numericId}` : 'ALL channels (auto-detect mode)'}`);
+  }
 
-    console.log(`[telegram] Listening to channel: ${channelId} (numeric: ${numericId})`);
+  private _seenChannels = new Map<string, { chatId: string; title: string; lastMessage: string; lastSeen: number }>();
+
+  getSeenChannels(): { chatId: string; title: string; lastMessage: string; lastSeen: number }[] {
+    return [...this._seenChannels.values()].sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
   /**

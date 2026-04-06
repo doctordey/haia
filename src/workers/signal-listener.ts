@@ -570,7 +570,12 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
     },
     async getAccountInformation() {
       try {
-        return await connection.getAccountInformation();
+        // Streaming connection uses terminalState for account info (not an async method)
+        const info = connection.terminalState.accountInformation;
+        if (info) {
+          return { balance: info.balance, equity: info.equity, freeMargin: info.freeMargin };
+        }
+        throw new Error('Account information not yet synchronized');
       } catch (error) {
         console.error(`[metaapi] getAccountInformation failed:`, error);
         throw new Error(`MetaApi getAccountInformation failed: ${error instanceof Error ? error.message : String(error)}`);

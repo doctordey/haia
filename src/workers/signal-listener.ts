@@ -35,7 +35,7 @@ import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 const priceCache = new PriceCache();
 let telegramClient: TelegramSignalClient | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const accountConnections = new Map<string, any>(); // accountId → streaming connection
+const accountConnections = new Map<string, { streaming: any; rpc: any }>(); // accountId → connections
 let isShuttingDown = false;
 
 // ─── MetaApi Price Streaming ──────────────────────────
@@ -101,7 +101,7 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
     onDealAdded(_instanceIndex: string, deal: { positionId?: string; type?: string; entryType?: string; profit?: number }) {
       if (deal.entryType === 'DEAL_ENTRY_OUT' && deal.positionId) {
         const wasTPHit = (deal.profit ?? 0) > 0;
-        handlePositionClosed(deal.positionId, wasTPHit, connection);
+        handlePositionClosed(deal.positionId, wasTPHit, accountId);
       }
     },
   });
@@ -114,20 +114,26 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
     await connection.subscribeToMarketData('US500');
     console.log(`[worker] Streaming active for account ${accountId}`);
   } catch (error) {
-    console.warn(`[metaapi:${accountId}] Market data subscription failed — will retry on next signal:`, error instanceof Error ? error.message : error);
+    console.warn(`[metaapi:${accountId}] Market data subscription failed:`, error instanceof Error ? error.message : error);
   }
 
-  accountConnections.set(accountId, connection);
+  // Also create an RPC connection for trading operations
+  const rpcConnection = account.getRPCConnection();
+  await rpcConnection.connect();
+  await rpcConnection.waitSynchronized();
+  console.log(`[metaapi:${accountId}] RPC connection ready`);
 
-  console.log('[worker] Price streaming active for NAS100 + US500');
+  accountConnections.set(accountId, { streaming: connection, rpc: rpcConnection });
+
+  console.log(`[worker] Connections ready for account ${accountId}`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function handlePositionClosed(positionId: string, wasTPHit: boolean, connection?: any): Promise<void> {
-  if (!connection) return;
+async function handlePositionClosed(positionId: string, wasTPHit: boolean, accountId: string): Promise<void> {
+  const conns = accountConnections.get(accountId);
+  if (!conns?.rpc) return;
 
   try {
-    const metaApi = buildMetaApiInterface(connection);
+    const metaApi = buildMetaApiInterface(conns.rpc);
     const result = await onPositionClosed(positionId, wasTPHit, metaApi);
     if (result?.action === 'breakeven_moved') {
       console.log(`[breakeven] Moved TP2 SL to entry for position ${positionId}`);
@@ -334,19 +340,27 @@ async function handleTelegramMessage(
         equity: 10000,
       };
 
-      // Get live account info from MetaApi (account-specific connection)
-      const connection = accountConnections.get(account.id);
-      if (connection) {
+      // Get live account info from MetaApi (account-specific connections)
+      const conns = accountConnections.get(account.id);
+      if (conns?.rpc) {
         try {
-          const info = await connection.getAccountInformation();
+          const info = await conns.rpc.getAccountInformation();
           accountInfo.balance = info.balance;
           accountInfo.equity = info.equity;
         } catch (err) {
+          // Fall back to streaming terminal state
+          try {
+            const tsInfo = conns.streaming.terminalState.accountInformation;
+            if (tsInfo) {
+              accountInfo.balance = tsInfo.balance;
+              accountInfo.equity = tsInfo.equity;
+            }
+          } catch {}
           console.warn(`[signal:${account.name}] Could not fetch live account info, using cached`);
         }
       }
 
-      const metaApi = connection ? buildMetaApiInterface(connection) : buildDryRunMetaApi();
+      const metaApi = conns?.rpc ? buildMetaApiInterface(conns.rpc) : buildDryRunMetaApi();
 
       const results = await executePipeline(
         text,
@@ -357,9 +371,10 @@ async function handleTelegramMessage(
         metaApi,
       );
 
-      // Persist execution results
+      // Persist execution results and collect IDs
+      const insertedExecutionIds: { id: string; instrument: string; direction: string; fusionSymbol: string; splitIndex: number | null; chunkIndex: number | null; signalReceivedAt: Date | null }[] = [];
       for (const result of results) {
-        await db.insert(signalExecutions).values({
+        const [inserted] = await db.insert(signalExecutions).values({
           signalId: signalRow.id,
           configId: config.id,
           accountId: account.id,
@@ -397,22 +412,31 @@ async function handleTelegramMessage(
           orderFilledAt: result.orderFilledAt,
           totalLatencyMs: result.totalLatencyMs,
           isDryRun: result.isDryRun,
+        }).returning();
+        insertedExecutionIds.push({
+          id: inserted.id,
+          instrument: result.instrument,
+          direction: result.direction,
+          fusionSymbol: result.fusionSymbol,
+          splitIndex: result.splitIndex,
+          chunkIndex: result.chunkIndex,
+          signalReceivedAt: result.signalReceivedAt,
         });
       }
 
       // Auto-create journal entries for primary executions (not chunks/TP2)
-      const primaryResults = results.filter(
-        (r) => (r.splitIndex === null || r.splitIndex === 1) && (r.chunkIndex === null || r.chunkIndex === 1),
+      const primaryExecs = insertedExecutionIds.filter(
+        (e) => (e.splitIndex === null || e.splitIndex === 1) && (e.chunkIndex === null || e.chunkIndex === 1),
       );
-      for (const result of primaryResults) {
+      for (const exec of primaryExecs) {
         try {
           await db.insert(tradeJournal).values({
             userId: source.userId,
-            signalExecutionId: result.signalId, // Will be updated with actual execution ID
+            signalExecutionId: exec.id,
             setupType: 'signal_copy',
-            symbol: result.fusionSymbol,
-            direction: result.direction,
-            entryTime: result.signalReceivedAt,
+            symbol: exec.fusionSymbol,
+            direction: exec.direction,
+            entryTime: exec.signalReceivedAt,
           });
         } catch (err) {
           console.warn('[journal] Failed to auto-create journal entry:', err);
@@ -427,9 +451,9 @@ async function handleTelegramMessage(
 
     case 'cancellation': {
       console.log(`[signal:${account.name}] Cancellation: ${parsed.cancellation.type}`);
-      const conn = accountConnections.get(account.id);
-      if (conn) {
-        const metaApi = buildMetaApiInterface(conn);
+      const cancelConns = accountConnections.get(account.id);
+      if (cancelConns?.rpc) {
+        const metaApi = buildMetaApiInterface(cancelConns.rpc);
         const results = await handleCancellation(parsed, config.id, metaApi);
         console.log(`[signal:${account.name}] Cancellation results: ${results.map((r) => `${r.executionId}=${r.status}`).join(', ')}`);
       }
@@ -640,8 +664,9 @@ async function main(): Promise<void> {
       if (telegramClient) {
         await telegramClient.disconnect().catch(() => {});
       }
-      for (const [id, conn] of accountConnections) {
-        try { await conn.close(); } catch {}
+      for (const [id, { streaming, rpc }] of accountConnections) {
+        try { await streaming.close(); } catch {}
+        try { await rpc.close(); } catch {}
       }
       accountConnections.clear();
 

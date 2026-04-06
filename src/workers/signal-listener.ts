@@ -19,6 +19,7 @@ import {
   signalExecutions,
   tradingAccounts,
   offsetHistory,
+  tradeJournal,
 } from '../lib/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
 import { TelegramSignalClient } from '../lib/signals/telegram';
@@ -285,6 +286,25 @@ async function handleTelegramMessage(
           totalLatencyMs: result.totalLatencyMs,
           isDryRun: result.isDryRun,
         });
+      }
+
+      // Auto-create journal entries for primary executions (not chunks/TP2)
+      const primaryResults = results.filter(
+        (r) => (r.splitIndex === null || r.splitIndex === 1) && (r.chunkIndex === null || r.chunkIndex === 1),
+      );
+      for (const result of primaryResults) {
+        try {
+          await db.insert(tradeJournal).values({
+            userId: source.userId,
+            signalExecutionId: result.signalId, // Will be updated with actual execution ID
+            setupType: 'signal_copy',
+            symbol: result.fusionSymbol,
+            direction: result.direction,
+            entryTime: result.signalReceivedAt,
+          });
+        } catch (err) {
+          console.warn('[journal] Failed to auto-create journal entry:', err);
+        }
       }
 
       const latency = Date.now() - startTime;

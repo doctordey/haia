@@ -146,17 +146,35 @@ export class TelegramSignalClient {
     channelId: string | number,
     callback: (text: string, messageId: number) => void,
   ): void {
+    // Convert to number for GramJS — string IDs won't match
+    const numericId = typeof channelId === 'string' ? parseInt(channelId, 10) : channelId;
+
+    // Also listen without chat filter to catch all messages for debugging
     this.client.addEventHandler(
       (event: NewMessageEvent) => {
         const message = event.message;
+        const chatId = message.chatId?.toString();
+        console.log(`[telegram] Message received in chat ${chatId}: ${message.text?.slice(0, 50) ?? '(no text)'}...`);
         if (message.text) {
           callback(message.text, message.id);
         }
       },
-      new NewMessage({ chats: [channelId] }),
+      new NewMessage({ chats: [numericId] }),
     );
 
-    console.log(`[telegram] Listening to channel: ${channelId}`);
+    // Fallback: also add a catch-all handler to debug chat ID mismatches
+    this.client.addEventHandler(
+      (event: NewMessageEvent) => {
+        const message = event.message;
+        const chatId = message.chatId;
+        if (chatId && chatId.toString() !== numericId.toString()) {
+          console.log(`[telegram] Message from UNMATCHED chat ${chatId} (expected ${numericId}): ${message.text?.slice(0, 80) ?? '(no text)'}`);
+        }
+      },
+      new NewMessage({}),
+    );
+
+    console.log(`[telegram] Listening to channel: ${channelId} (numeric: ${numericId})`);
   }
 
   /**

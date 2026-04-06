@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { auth } from '@/lib/auth';
+import { decode } from '@auth/core/jwt';
 
 const publicPaths = ['/', '/login', '/register', '/api/auth', '/api/health'];
 
@@ -23,10 +23,28 @@ function getRequiredRole(pathname: string): string | null {
   return null;
 }
 
-export default auth((request) => {
+async function getTokenPayload(request: NextRequest): Promise<Record<string, unknown> | null> {
+  const cookieName = request.cookies.has('__Secure-authjs.session-token')
+    ? '__Secure-authjs.session-token'
+    : 'authjs.session-token';
+
+  const token = request.cookies.get(cookieName)?.value;
+  if (!token) return null;
+
+  const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  if (!secret) return null;
+
+  try {
+    const payload = await decode({ token, secret, salt: cookieName });
+    return payload as Record<string, unknown> | null;
+  } catch {
+    return null;
+  }
+}
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
   const isPublic = publicPaths.some(
     (path) => pathname === path || pathname.startsWith(path + '/')
   );
@@ -35,10 +53,9 @@ export default auth((request) => {
     return NextResponse.next();
   }
 
-  // Check for authenticated user
-  const session = request.auth;
+  const token = await getTokenPayload(request);
 
-  if (!session?.user) {
+  if (!token) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('callbackUrl', pathname);
     return NextResponse.redirect(loginUrl);
@@ -47,7 +64,7 @@ export default auth((request) => {
   // Check role-based access
   const requiredRole = getRequiredRole(pathname);
   if (requiredRole) {
-    const userRoles: string[] = session.user.roles ?? [];
+    const userRoles = (token.roles as string[]) ?? [];
     if (!userRoles.includes(requiredRole)) {
       if (pathname.startsWith('/api/')) {
         return NextResponse.json(
@@ -55,13 +72,12 @@ export default auth((request) => {
           { status: 403 }
         );
       }
-      // For page routes, redirect to dashboard
       return NextResponse.redirect(new URL('/dashboard', request.url));
     }
   }
 
   return NextResponse.next();
-});
+}
 
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico|themes|fonts).*)'],

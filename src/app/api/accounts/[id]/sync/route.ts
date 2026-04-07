@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
-import { eq, and, ne, sql } from 'drizzle-orm';
-import { fetchHistoricalDeals } from '@/lib/metaapi';
+import { eq, and, ne, sql, lt, or, isNull } from 'drizzle-orm';
+import { fetchHistoricalDeals, fetchAccountInfo } from '@/lib/metaapi';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
+
+const STALE_SYNC_MS = 15 * 60 * 1000; // 15 minutes
 
 export async function POST(
   _request: Request,
@@ -18,10 +20,22 @@ export async function POST(
 
   const { id } = await params;
 
+  // Recover stale syncs that have been stuck for over 15 minutes
+  const staleThreshold = new Date(Date.now() - STALE_SYNC_MS);
+  await db
+    .update(tradingAccounts)
+    .set({ syncStatus: 'error', syncError: 'Sync timed out' })
+    .where(and(
+      eq(tradingAccounts.id, id),
+      eq(tradingAccounts.userId, session.user.id),
+      eq(tradingAccounts.syncStatus, 'syncing'),
+      or(lt(tradingAccounts.lastSyncAt, staleThreshold), isNull(tradingAccounts.lastSyncAt))
+    ));
+
   // Atomic claim: only set syncing if not already syncing
   const claimed = await db
     .update(tradingAccounts)
-    .set({ syncStatus: 'syncing' })
+    .set({ syncStatus: 'syncing', lastSyncAt: new Date() })
     .where(and(
       eq(tradingAccounts.id, id),
       eq(tradingAccounts.userId, session.user.id),
@@ -47,6 +61,9 @@ export async function POST(
   }
 
   try {
+    // Fetch the real account balance/equity from the broker
+    const brokerInfo = await fetchAccountInfo(account.metaApiId);
+
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
@@ -181,14 +198,20 @@ export async function POST(
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Seed balance from existing stats for incremental syncs
-    const existingStats = await db.query.accountStats.findFirst({
-      where: eq(accountStats.accountId, id),
-    });
+    // Use broker-reported balance as the source of truth
+    const currentBalance = brokerInfo.balance;
+    const currentEquity = brokerInfo.equity;
+
+    // Compute total PNL from all closed trades to derive historical balances
+    const totalClosedPnl = closedTrades.reduce((sum, t) => sum + t.profit, 0);
+    const totalBalanceEvents = Array.from(balanceByDate.values()).reduce((sum, v) => sum + v, 0);
+
+    // Work backwards from the current balance to find the starting balance
+    // startingBalance + balanceEvents + tradePnl = currentBalance
+    const startingBalance = currentBalance - totalClosedPnl - totalBalanceEvents;
 
     const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-    // For incremental syncs, start from the last known balance
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
+    let runningBalance = startingBalance;
 
     for (const dateKey of [...allDates].sort()) {
       // Apply balance deposits/withdrawals for this date
@@ -238,10 +261,10 @@ export async function POST(
 
     await db
       .insert(accountStats)
-      .values({ accountId: id, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
+      .values({ accountId: id, balance: currentBalance, equity: currentEquity, ...stats, lastCalculatedAt: new Date() })
       .onConflictDoUpdate({
         target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
+        set: { balance: currentBalance, equity: currentEquity, ...stats, lastCalculatedAt: new Date() },
       });
 
     await db

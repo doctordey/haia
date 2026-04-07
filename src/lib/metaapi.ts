@@ -51,6 +51,24 @@ export async function getAccountConnection(metaApiId: string) {
   return { account, connection };
 }
 
+export async function fetchAccountInfo(metaApiId: string): Promise<{ balance: number; equity: number }> {
+  const api = await getMetaApi();
+  const account = await api.metatraderAccountApi.getAccount(metaApiId);
+
+  if (account.state !== 'DEPLOYED') {
+    await account.waitDeployed();
+  }
+
+  const connection = account.getRPCConnection();
+  await connection.connect();
+  await connection.waitSynchronized();
+
+  const info = await connection.getAccountInformation();
+  await connection.close();
+
+  return { balance: info.balance || 0, equity: info.equity || 0 };
+}
+
 export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, endDate: Date) {
   const api = await getMetaApi();
   const account = await api.metatraderAccountApi.getAccount(metaApiId);

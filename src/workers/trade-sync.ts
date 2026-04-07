@@ -7,9 +7,11 @@
 
 import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, lt, or, isNull } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
 import { format } from 'date-fns';
+
+const STALE_SYNC_MS = 15 * 60 * 1000; // 15 minutes
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,10 +24,21 @@ async function syncAccount(accountId: string) {
 
   if (!account || !account.isActive) return;
 
+  // Recover stale syncs that have been stuck for over 15 minutes
+  const staleThreshold = new Date(Date.now() - STALE_SYNC_MS);
+  await db
+    .update(tradingAccounts)
+    .set({ syncStatus: 'error', syncError: 'Sync timed out' })
+    .where(and(
+      eq(tradingAccounts.id, accountId),
+      eq(tradingAccounts.syncStatus, 'syncing'),
+      or(lt(tradingAccounts.lastSyncAt, staleThreshold), isNull(tradingAccounts.lastSyncAt))
+    ));
+
   // Atomic claim
   const claimed = await db
     .update(tradingAccounts)
-    .set({ syncStatus: 'syncing' })
+    .set({ syncStatus: 'syncing', lastSyncAt: new Date() })
     .where(and(eq(tradingAccounts.id, accountId), ne(tradingAccounts.syncStatus, 'syncing')))
     .returning({ id: tradingAccounts.id });
 
@@ -51,6 +64,11 @@ async function syncAccount(accountId: string) {
     connection = metaAccount.getRPCConnection();
     await connection.connect();
     await connection.waitSynchronized();
+
+    // Fetch the real account balance/equity from the broker
+    const brokerAccountInfo = await connection.getAccountInformation();
+    const currentBalance = brokerAccountInfo.balance || 0;
+    const currentEquity = brokerAccountInfo.equity || 0;
 
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
@@ -184,27 +202,16 @@ async function syncAccount(accountId: string) {
       dailyMap.get(dateKey)!.push(trade);
     }
 
-    // Seed balance from last known stats (for incremental syncs)
-    const existingStats = await db.query.accountStats.findFirst({
-      where: eq(accountStats.accountId, accountId),
-    });
+    // Use broker-reported balance as the source of truth
+    // Work backwards from the current balance to find the starting balance
+    const totalClosedPnl = closedTrades.reduce((sum, t) => sum + t.profit, 0);
+    const totalBalanceEvents = Array.from(balanceByDate.values()).reduce((sum, v) => sum + v, 0);
+    const startingBalance = currentBalance - totalClosedPnl - totalBalanceEvents;
 
     const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
+    let runningBalance = startingBalance;
 
-    // For incremental syncs, use the existing balance as the base
-    // For initial syncs, start from 0 and let balance events build it up
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
-
-    // If this is a full rebuild (no lastSyncAt), process all dates
-    // If incremental, only process new dates but carry forward the existing balance
-    const datesToProcess = [...allDates].sort();
-
-    if (!account.lastSyncAt) {
-      // Full rebuild — process everything from scratch
-      runningBalance = 0;
-    }
-
-    for (const dateKey of datesToProcess) {
+    for (const dateKey of [...allDates].sort()) {
       const balanceChange = balanceByDate.get(dateKey) || 0;
       runningBalance += balanceChange;
 
@@ -249,10 +256,10 @@ async function syncAccount(accountId: string) {
 
     await db
       .insert(accountStats)
-      .values({ accountId, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
+      .values({ accountId, balance: currentBalance, equity: currentEquity, ...stats, lastCalculatedAt: new Date() })
       .onConflictDoUpdate({
         target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
+        set: { balance: currentBalance, equity: currentEquity, ...stats, lastCalculatedAt: new Date() },
       });
 
     await db

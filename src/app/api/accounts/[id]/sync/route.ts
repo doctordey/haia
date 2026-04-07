@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 const STALE_SYNC_MS = 15 * 60 * 1000; // 15 minutes
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -19,6 +19,8 @@ export async function POST(
   }
 
   const { id } = await params;
+  const { searchParams } = new URL(request.url);
+  const forceFullSync = searchParams.get('full') === 'true';
 
   // Recover stale syncs that have been stuck for over 15 minutes
   const staleThreshold = new Date(Date.now() - STALE_SYNC_MS);
@@ -65,7 +67,23 @@ export async function POST(
     const brokerInfo = await fetchAccountInfo(account.metaApiId);
 
     const endDate = new Date();
-    const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
+    const fullHistoryStart = new Date(Date.now() - 2 * 365 * 86400000);
+
+    // Determine if we need a full sync:
+    // 1. Explicitly requested via ?full=true
+    // 2. No lastSyncAt (first sync)
+    // 3. Account has lastSyncAt but zero trades (previous broken sync)
+    let startDate: Date;
+    if (forceFullSync || !account.lastSyncAt) {
+      startDate = fullHistoryStart;
+    } else {
+      const tradeCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(trades)
+        .where(eq(trades.accountId, id));
+      const hasTradesInDb = Number(tradeCount[0]?.count || 0) > 0;
+      startDate = hasTradesInDb ? new Date(account.lastSyncAt) : fullHistoryStart;
+    }
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 

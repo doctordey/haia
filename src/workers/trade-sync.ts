@@ -7,7 +7,7 @@
 
 import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
-import { eq, and, ne, lt, or, isNull } from 'drizzle-orm';
+import { eq, and, ne, lt, or, isNull, sql } from 'drizzle-orm';
 import { calculateAccountStats, calculatePips } from '../lib/calculations';
 import { format } from 'date-fns';
 
@@ -71,7 +71,20 @@ async function syncAccount(accountId: string) {
     const currentEquity = brokerAccountInfo.equity || 0;
 
     const endDate = new Date();
-    const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
+    const fullHistoryStart = new Date(Date.now() - 2 * 365 * 86400000);
+
+    // Auto-detect broken syncs: if lastSyncAt is set but no trades exist, do full sync
+    let startDate: Date;
+    if (!account.lastSyncAt) {
+      startDate = fullHistoryStart;
+    } else {
+      const tradeCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(trades)
+        .where(eq(trades.accountId, accountId));
+      const hasTradesInDb = Number(tradeCount[0]?.count || 0) > 0;
+      startDate = hasTradesInDb ? new Date(account.lastSyncAt) : fullHistoryStart;
+    }
 
     const dealsResponse = await connection.getDealsByTimeRange(startDate, endDate);
     // MetaAPI SDK may return { deals: [...] } or a flat array depending on version

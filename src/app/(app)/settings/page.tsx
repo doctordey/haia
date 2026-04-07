@@ -51,12 +51,13 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  async function handleSync(id: string) {
+  async function handleSync(id: string, full = false) {
     setSyncing(id);
     try {
-      const res = await fetch(`/api/accounts/${id}/sync`, { method: 'POST' });
+      const url = full ? `/api/accounts/${id}/sync?full=true` : `/api/accounts/${id}/sync`;
+      const res = await fetch(url, { method: 'POST' });
       if (res.ok) {
-        toast('Sync started successfully', 'success');
+        toast(full ? 'Full re-sync started' : 'Sync started successfully', 'success');
         onRefetch();
       } else {
         toast('Sync failed', 'error');
@@ -118,6 +119,9 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   </Badge>
                   <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id)} loading={syncing === acc.id}>
                     Re-sync
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id, true)} loading={syncing === acc.id}>
+                    Full Re-sync
                   </Button>
                   <Button variant="danger" size="sm" onClick={() => handleDelete(acc.id)} loading={deleting === acc.id}>
                     Remove

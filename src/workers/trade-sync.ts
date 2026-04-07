@@ -65,11 +65,6 @@ async function syncAccount(accountId: string) {
     await connection.connect();
     await connection.waitSynchronized();
 
-    // Fetch the real account balance/equity from the broker
-    const brokerAccountInfo = await connection.getAccountInformation();
-    const currentBalance = brokerAccountInfo.balance || 0;
-    const currentEquity = brokerAccountInfo.equity || 0;
-
     const endDate = new Date();
     const fullHistoryStart = new Date(Date.now() - 2 * 365 * 86400000);
 
@@ -86,7 +81,14 @@ async function syncAccount(accountId: string) {
       startDate = hasTradesInDb ? new Date(account.lastSyncAt) : fullHistoryStart;
     }
 
-    const dealsResponse = await connection.getDealsByTimeRange(startDate, endDate);
+    // Fetch account info and deals in parallel on the same connection
+    const [brokerAccountInfo, dealsResponse] = await Promise.all([
+      connection.getAccountInformation(),
+      connection.getDealsByTimeRange(startDate, endDate),
+    ]);
+    const currentBalance = brokerAccountInfo.balance || 0;
+    const currentEquity = brokerAccountInfo.equity || 0;
+
     // MetaAPI SDK may return { deals: [...] } or a flat array depending on version
     const deals = Array.isArray(dealsResponse) ? dealsResponse
       : (dealsResponse && Array.isArray(dealsResponse.deals)) ? dealsResponse.deals
@@ -312,11 +314,13 @@ async function runSyncCycle() {
     where: eq(tradingAccounts.isActive, true),
   });
 
-  for (const account of activeAccounts) {
+  for (let i = 0; i < activeAccounts.length; i++) {
+    // Delay between accounts to avoid MetaAPI 429 rate limits
+    if (i > 0) await sleep(3000);
     try {
-      await syncAccount(account.id);
+      await syncAccount(activeAccounts[i].id);
     } catch (error) {
-      console.error(`[sync] Failed to sync account ${account.id}:`, error);
+      console.error(`[sync] Failed to sync account ${activeAccounts[i].id}:`, error);
     }
   }
   console.log('[sync] Sync cycle complete.');

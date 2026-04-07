@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
 import { eq, and, ne, sql, lt, or, isNull } from 'drizzle-orm';
-import { fetchHistoricalDeals, fetchAccountInfo } from '@/lib/metaapi';
+import { fetchSyncData } from '@/lib/metaapi';
 import { calculateAccountStats, calculatePips } from '@/lib/calculations';
 import { format } from 'date-fns';
 
@@ -63,9 +63,6 @@ export async function POST(
   }
 
   try {
-    // Fetch the real account balance/equity from the broker
-    const brokerInfo = await fetchAccountInfo(account.metaApiId);
-
     const endDate = new Date();
     const fullHistoryStart = new Date(Date.now() - 2 * 365 * 86400000);
 
@@ -85,7 +82,8 @@ export async function POST(
       startDate = hasTradesInDb ? new Date(account.lastSyncAt) : fullHistoryStart;
     }
 
-    const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
+    // Single RPC connection for both account info and deals (avoids 429 rate limits)
+    const { balance: currentBalance, equity: currentEquity, deals } = await fetchSyncData(account.metaApiId, startDate, endDate);
 
     console.log(`[sync] Account ${account.name}: fetched ${deals.length} deals (${startDate.toISOString()} to ${endDate.toISOString()})`);
 
@@ -220,10 +218,6 @@ export async function POST(
       if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, []);
       dailyMap.get(dateKey)!.push(trade);
     }
-
-    // Use broker-reported balance as the source of truth
-    const currentBalance = brokerInfo.balance;
-    const currentEquity = brokerInfo.equity;
 
     // Compute total PNL from all closed trades to derive historical balances
     const totalClosedPnl = closedTrades.reduce((sum, t) => sum + t.profit, 0);

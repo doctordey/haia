@@ -90,6 +90,45 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   return [];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeDeals(response: any): any[] {
+  if (Array.isArray(response)) return response;
+  if (response && Array.isArray(response.deals)) return response.deals;
+  return [];
+}
+
+/**
+ * Opens a single RPC connection and fetches both account info and deals.
+ * Avoids opening multiple connections per sync (which triggers 429 rate limits).
+ */
+export async function fetchSyncData(metaApiId: string, startDate: Date, endDate: Date) {
+  const api = await getMetaApi();
+  const account = await api.metatraderAccountApi.getAccount(metaApiId);
+
+  if (account.state !== 'DEPLOYED') {
+    await account.waitDeployed();
+  }
+
+  const connection = account.getRPCConnection();
+  await connection.connect();
+  await connection.waitSynchronized();
+
+  try {
+    const [info, dealsResponse] = await Promise.all([
+      connection.getAccountInformation(),
+      connection.getDealsByTimeRange(startDate, endDate),
+    ]);
+
+    return {
+      balance: info.balance || 0,
+      equity: info.equity || 0,
+      deals: normalizeDeals(dealsResponse),
+    };
+  } finally {
+    try { await connection.close(); } catch {}
+  }
+}
+
 export async function removeMetaApiAccount(metaApiId: string) {
   const api = await getMetaApi();
   const account = await api.metatraderAccountApi.getAccount(metaApiId);

@@ -55,8 +55,17 @@ export default function FlexCardsPage() {
 
     async function fetchData() {
       try {
+        const dashParams = new URLSearchParams();
+        if (period === 'custom') {
+          if (customDateFrom) dashParams.set('from', customDateFrom);
+          if (customDateTo) dashParams.set('to', customDateTo);
+        } else {
+          dashParams.set('period', period);
+        }
+        const dashQuery = dashParams.toString();
+
         const [dashRes, calRes] = await Promise.all([
-          fetch(`/api/dashboard/${selectedAccountId}`),
+          fetch(`/api/dashboard/${selectedAccountId}${dashQuery ? `?${dashQuery}` : ''}`),
           metric === 'calendar'
             ? fetch(`/api/calendar/${selectedAccountId}/${new Date().getFullYear()}/${new Date().getMonth() + 1}`)
             : Promise.resolve(null),

@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
 import { eq, and, ne, sql, lt, or, isNull } from 'drizzle-orm';
 import { fetchHistoricalDeals, fetchAccountInfo } from '@/lib/metaapi';
-import { calculateAccountStats } from '@/lib/calculations';
+import { calculateAccountStats, calculatePips } from '@/lib/calculations';
 import { format } from 'date-fns';
 
 const STALE_SYNC_MS = 15 * 60 * 1000; // 15 minutes
@@ -118,11 +118,14 @@ export async function POST(
           });
 
           if (existingTrade) {
+            const closePips = deal.pips ?? (deal.price && existingTrade.entryPrice
+              ? calculatePips(deal.symbol, existingTrade.direction, existingTrade.entryPrice, deal.price)
+              : null);
             await db
               .update(trades)
               .set({
                 closePrice: deal.price || null, closeTime: dealTime,
-                profit: deal.profit || 0, pips: deal.pips || null,
+                profit: deal.profit || 0, pips: closePips,
                 commission: (existingTrade.commission || 0) + (deal.commission || 0),
                 swap: deal.swap || 0, isOpen: false,
               })

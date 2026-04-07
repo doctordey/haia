@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { tradingAccounts, accountStats, trades } from '@/lib/db/schema';
 import { eq, and, sql, gte, lte, isNotNull } from 'drizzle-orm';
 import { subDays, subMonths, subYears } from 'date-fns';
+import { calculatePips } from '@/lib/calculations';
 
 export async function GET(
   request: Request,
@@ -111,7 +112,16 @@ export async function GET(
   const winningTrades = filteredTrades.filter((t) => t.profit > 0).length;
   const losingTrades = filteredTrades.filter((t) => t.profit < 0).length;
   const totalPnl = filteredTrades.reduce((sum, t) => sum + t.profit, 0);
-  const totalPips = filteredTrades.reduce((sum, t) => sum + (t.pips || 0), 0);
+
+  // Calculate pips from prices since MetaAPI doesn't return pips on deals
+  const tradePips = filteredTrades.map((t) => {
+    if (t.pips != null) return t.pips;
+    if (t.symbol && t.direction && t.entryPrice && t.closePrice) {
+      return calculatePips(t.symbol, t.direction, t.entryPrice, t.closePrice);
+    }
+    return 0;
+  });
+  const totalPips = tradePips.reduce((sum, p) => sum + p, 0);
   const totalLots = filteredTrades.reduce((sum, t) => sum + t.lots, 0);
   const totalCommission = filteredTrades.reduce((sum, t) => sum + t.commission, 0);
   const totalSwap = filteredTrades.reduce((sum, t) => sum + t.swap, 0);
@@ -128,8 +138,8 @@ export async function GET(
 
   const bestTrade = totalTrades > 0 ? Math.max(...filteredTrades.map((t) => t.profit)) : 0;
   const worstTrade = totalTrades > 0 ? Math.min(...filteredTrades.map((t) => t.profit)) : 0;
-  const bestTradePips = totalTrades > 0 ? Math.max(...filteredTrades.map((t) => t.pips || 0)) : 0;
-  const avgPipsPerTrade = totalTrades > 0 ? totalPips / totalTrades : 0;
+  const bestTradePips = tradePips.length > 0 ? Math.max(...tradePips) : 0;
+  const avgPipsPerTrade = tradePips.length > 0 ? totalPips / tradePips.length : 0;
 
   // Streaks
   let longestWinStreak = 0, longestLossStreak = 0, curWin = 0, curLoss = 0;

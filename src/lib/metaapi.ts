@@ -81,10 +81,13 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   await connection.connect();
   await connection.waitSynchronized();
 
-  const deals = await connection.getDealsByTimeRange(startDate, endDate);
+  const response = await connection.getDealsByTimeRange(startDate, endDate);
   await connection.close();
 
-  return deals;
+  // MetaAPI SDK may return { deals: [...] } or a flat array depending on version
+  if (Array.isArray(response)) return response;
+  if (response && Array.isArray(response.deals)) return response.deals;
+  return [];
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {

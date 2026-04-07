@@ -35,7 +35,7 @@ export async function POST(
   // Atomic claim: only set syncing if not already syncing
   const claimed = await db
     .update(tradingAccounts)
-    .set({ syncStatus: 'syncing', lastSyncAt: new Date() })
+    .set({ syncStatus: 'syncing' })
     .where(and(
       eq(tradingAccounts.id, id),
       eq(tradingAccounts.userId, session.user.id),
@@ -69,10 +69,12 @@ export async function POST(
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
+    console.log(`[sync] Account ${account.name}: fetched ${deals.length} deals (${startDate.toISOString()} to ${endDate.toISOString()})`);
+
     // Track balance events by date for accurate daily snapshots
     const balanceByDate = new Map<string, number>();
 
-    if (deals && Array.isArray(deals)) {
+    if (deals.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
         (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()

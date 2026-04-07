@@ -35,10 +35,10 @@ async function syncAccount(accountId: string) {
       or(lt(tradingAccounts.lastSyncAt, staleThreshold), isNull(tradingAccounts.lastSyncAt))
     ));
 
-  // Atomic claim
+  // Atomic claim — don't touch lastSyncAt here; it's used to compute the fetch window
   const claimed = await db
     .update(tradingAccounts)
-    .set({ syncStatus: 'syncing', lastSyncAt: new Date() })
+    .set({ syncStatus: 'syncing' })
     .where(and(eq(tradingAccounts.id, accountId), ne(tradingAccounts.syncStatus, 'syncing')))
     .returning({ id: tradingAccounts.id });
 
@@ -73,12 +73,18 @@ async function syncAccount(accountId: string) {
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
-    const deals = await connection.getDealsByTimeRange(startDate, endDate);
+    const dealsResponse = await connection.getDealsByTimeRange(startDate, endDate);
+    // MetaAPI SDK may return { deals: [...] } or a flat array depending on version
+    const deals = Array.isArray(dealsResponse) ? dealsResponse
+      : (dealsResponse && Array.isArray(dealsResponse.deals)) ? dealsResponse.deals
+      : [];
+
+    console.log(`[sync] Fetched ${deals.length} deals for ${account.name} (${startDate.toISOString()} to ${endDate.toISOString()})`);
 
     // Track balance events by date
     const balanceByDate = new Map<string, number>();
 
-    if (deals && Array.isArray(deals)) {
+    if (deals.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
         (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()

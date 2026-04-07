@@ -12,9 +12,10 @@ export default function ConnectPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('platform');
   const [platform, setPlatform] = useState<'mt4' | 'mt5'>('mt5');
-  const [form, setForm] = useState({ server: '', login: '', password: '', name: '' });
+  const [form, setForm] = useState({ server: '', login: '', password: '', tradingPassword: '', name: '' });
   const [error, setError] = useState('');
   const [syncStatus, setSyncStatus] = useState('');
+  const [useTrading, setUseTrading] = useState(false);
 
   function updateField(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -28,7 +29,12 @@ export default function ConnectPage() {
       const res = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, platform }),
+        body: JSON.stringify({
+          ...form,
+          platform,
+          password: useTrading ? form.tradingPassword : form.password,
+          accessMode: useTrading ? 'trading' : 'investor',
+        }),
       });
 
       if (!res.ok) {
@@ -148,19 +154,45 @@ export default function ConnectPage() {
                   onChange={(e) => updateField('login', e.target.value)}
                   required
                 />
-                <Input
-                  id="password"
-                  label="Investor (Read-Only) Password"
-                  type="password"
-                  placeholder="Your investor password"
-                  value={form.password}
-                  onChange={(e) => updateField('password', e.target.value)}
-                  required
-                />
+                {!useTrading ? (
+                  <>
+                    <Input
+                      id="password"
+                      label="Investor (Read-Only) Password"
+                      type="password"
+                      placeholder="Your investor password"
+                      value={form.password}
+                      onChange={(e) => updateField('password', e.target.value)}
+                      required
+                    />
+                    <p className="text-xs text-text-tertiary">
+                      Read-only access for analytics. Cannot execute trades.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      id="tradingPassword"
+                      label="Trading Password"
+                      type="password"
+                      placeholder="Your trading password"
+                      value={form.tradingPassword}
+                      onChange={(e) => updateField('tradingPassword', e.target.value)}
+                      required
+                    />
+                    <p className="text-xs text-text-tertiary">
+                      Full access — required for the Signal Copier to place trades on your account.
+                    </p>
+                  </>
+                )}
 
-                <p className="text-xs text-text-tertiary">
-                  We only use your investor (read-only) password. We cannot execute trades on your account.
-                </p>
+                <button
+                  type="button"
+                  onClick={() => setUseTrading(!useTrading)}
+                  className="text-xs text-accent-primary hover:underline cursor-pointer"
+                >
+                  {useTrading ? 'Use investor (read-only) password instead' : 'Use trading password (required for Signal Copier)'}
+                </button>
 
                 <div className="flex gap-3">
                   <Button variant="secondary" onClick={() => setStep('platform')} className="flex-1">
@@ -169,7 +201,7 @@ export default function ConnectPage() {
                   <Button
                     onClick={handleConnect}
                     className="flex-1"
-                    disabled={!form.server || !form.login || !form.password || !form.name}
+                    disabled={!form.server || !form.login || !(useTrading ? form.tradingPassword : form.password) || !form.name}
                   >
                     Connect
                   </Button>

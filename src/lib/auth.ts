@@ -2,8 +2,30 @@ import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { db } from '@/lib/db';
-import { users } from '@/lib/db/schema';
+import { users, userRoles } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+
+declare module 'next-auth' {
+  interface User {
+    roles?: string[];
+  }
+  interface Session {
+    user: {
+      id: string;
+      email: string;
+      name?: string | null;
+      image?: string | null;
+      roles: string[];
+    };
+  }
+}
+
+declare module '@auth/core/jwt' {
+  interface JWT {
+    id?: string;
+    roles?: string[];
+  }
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
@@ -37,11 +59,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             return null;
           }
 
+          // Fetch roles for this user
+          const roles = await db
+            .select({ role: userRoles.role })
+            .from(userRoles)
+            .where(eq(userRoles.userId, user.id));
+
           return {
             id: user.id,
             email: user.email,
             name: user.name,
             image: user.avatarUrl,
+            roles: roles.map((r) => r.role),
           };
         } catch (error) {
           console.error('Auth error:', error);
@@ -61,6 +90,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
+        token.roles = user.roles ?? [];
       }
       return token;
     },
@@ -68,6 +98,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (token?.id) {
         session.user.id = token.id as string;
       }
+      session.user.roles = (token?.roles as string[]) ?? [];
       return session;
     },
   },

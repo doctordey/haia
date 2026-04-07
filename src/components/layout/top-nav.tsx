@@ -13,6 +13,8 @@ const navLinks = [
   { href: '/calendar', label: 'Calendar' },
   { href: '/history', label: 'History' },
   { href: '/flex', label: 'Flex Cards' },
+  { href: '/signals', label: 'Signals' },
+  { href: '/journal', label: 'Journal' },
 ];
 
 export function TopNav() {

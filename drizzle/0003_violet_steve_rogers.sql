@@ -1,0 +1,1 @@
+ALTER TABLE "trading_accounts" ADD COLUMN "access_mode" text DEFAULT 'investor' NOT NULL;

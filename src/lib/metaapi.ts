@@ -6,18 +6,30 @@ export interface ConnectAccountParams {
   name: string;
 }
 
-async function getMetaApi() {
-  if (!process.env.METAAPI_TOKEN) {
-    throw new Error('METAAPI_TOKEN environment variable is not set');
+async function getMetaApi(purpose: 'signals' | 'analytics' = 'analytics') {
+  // Use separate tokens when available to avoid shared rate limits:
+  // METAAPI_TOKEN_SIGNALS — for streaming connections, trade execution, breakeven
+  // METAAPI_TOKEN_ANALYTICS — for trade sync, historical deals, account info
+  // Falls back to METAAPI_TOKEN for both if separate tokens aren't set
+  const token = purpose === 'signals'
+    ? (process.env.METAAPI_TOKEN_SIGNALS || process.env.METAAPI_TOKEN)
+    : (process.env.METAAPI_TOKEN_ANALYTICS || process.env.METAAPI_TOKEN);
+
+  if (!token) {
+    throw new Error(
+      purpose === 'signals'
+        ? 'METAAPI_TOKEN_SIGNALS (or METAAPI_TOKEN) environment variable is not set'
+        : 'METAAPI_TOKEN_ANALYTICS (or METAAPI_TOKEN) environment variable is not set'
+    );
   }
 
   // Use the CJS entry point to avoid ESM issues in Next.js server runtime
   const MetaApi = require('metaapi.cloud-sdk').default;
-  return new MetaApi(process.env.METAAPI_TOKEN);
+  return new MetaApi(token);
 }
 
 export async function connectMetaApiAccount(params: ConnectAccountParams) {
-  const api = await getMetaApi();
+  const api = await getMetaApi('signals');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const account = await api.metatraderAccountApi.createAccount({
@@ -37,7 +49,7 @@ export async function connectMetaApiAccount(params: ConnectAccountParams) {
 }
 
 export async function getAccountConnection(metaApiId: string) {
-  const api = await getMetaApi();
+  const api = await getMetaApi('signals');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {

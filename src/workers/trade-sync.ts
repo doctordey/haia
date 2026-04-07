@@ -54,7 +54,8 @@ async function syncAccount(accountId: string) {
 
   try {
     const MetaApi = require('metaapi.cloud-sdk').default;
-    const api = new MetaApi(process.env.METAAPI_TOKEN);
+    const token = process.env.METAAPI_TOKEN_ANALYTICS || process.env.METAAPI_TOKEN;
+    const api = new MetaApi(token);
     const metaAccount = await api.metatraderAccountApi.getAccount(account.metaApiId);
 
     if (metaAccount.state !== 'DEPLOYED') {

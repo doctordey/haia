@@ -6,11 +6,15 @@ export interface ConnectAccountParams {
   name: string;
 }
 
-async function getMetaApi(purpose: 'signals' | 'analytics' = 'analytics') {
-  // Use separate tokens when available to avoid shared rate limits:
-  // METAAPI_TOKEN_SIGNALS — for streaming connections, trade execution, breakeven
-  // METAAPI_TOKEN_ANALYTICS — for trade sync, historical deals, account info
-  // Falls back to METAAPI_TOKEN for both if separate tokens aren't set
+// ─── Singleton SDK Instances ─────────────────────────
+// Each new MetaApi() opens its own websocket connections (london:0, london:1).
+// Creating multiple instances rapidly triggers MetaAPI's 429 rate limit.
+// Cache one instance per token to reuse websocket connections.
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sdkCache = new Map<string, any>();
+
+function getMetaApiSync(purpose: 'signals' | 'analytics' = 'analytics') {
   const token = purpose === 'signals'
     ? (process.env.METAAPI_TOKEN_SIGNALS || process.env.METAAPI_TOKEN)
     : (process.env.METAAPI_TOKEN_ANALYTICS || process.env.METAAPI_TOKEN);
@@ -23,13 +27,16 @@ async function getMetaApi(purpose: 'signals' | 'analytics' = 'analytics') {
     );
   }
 
-  // Use the CJS entry point to avoid ESM issues in Next.js server runtime
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  return new MetaApi(token);
+  if (!sdkCache.has(token)) {
+    const MetaApi = require('metaapi.cloud-sdk').default;
+    sdkCache.set(token, new MetaApi(token));
+  }
+
+  return sdkCache.get(token)!;
 }
 
 export async function connectMetaApiAccount(params: ConnectAccountParams) {
-  const api = await getMetaApi('signals');
+  const api = getMetaApiSync('signals');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const account = await api.metatraderAccountApi.createAccount({
@@ -49,7 +56,7 @@ export async function connectMetaApiAccount(params: ConnectAccountParams) {
 }
 
 export async function getAccountConnection(metaApiId: string) {
-  const api = await getMetaApi('signals');
+  const api = getMetaApiSync('signals');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
@@ -64,7 +71,7 @@ export async function getAccountConnection(metaApiId: string) {
 }
 
 export async function fetchAccountInfo(metaApiId: string): Promise<{ balance: number; equity: number }> {
-  const api = await getMetaApi();
+  const api = getMetaApiSync('analytics');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
@@ -82,7 +89,7 @@ export async function fetchAccountInfo(metaApiId: string): Promise<{ balance: nu
 }
 
 export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, endDate: Date) {
-  const api = await getMetaApi();
+  const api = getMetaApiSync('analytics');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
@@ -114,7 +121,7 @@ function normalizeDeals(response: any): any[] {
  * Avoids opening multiple connections per sync (which triggers 429 rate limits).
  */
 export async function fetchSyncData(metaApiId: string, startDate: Date, endDate: Date) {
-  const api = await getMetaApi();
+  const api = getMetaApiSync('analytics');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
@@ -142,7 +149,15 @@ export async function fetchSyncData(metaApiId: string, startDate: Date, endDate:
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {
-  const api = await getMetaApi();
+  const api = getMetaApiSync('analytics');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
   await account.remove();
+}
+
+/**
+ * Returns the singleton MetaApi SDK instance for use in workers
+ * that manage their own connections (e.g. signal-listener, trade-sync).
+ */
+export function getMetaApiInstance(purpose: 'signals' | 'analytics' = 'analytics') {
+  return getMetaApiSync(purpose);
 }

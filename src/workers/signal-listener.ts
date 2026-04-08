@@ -45,9 +45,8 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
 
   console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId})...`);
 
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  const token = process.env.METAAPI_TOKEN_SIGNALS || process.env.METAAPI_TOKEN;
-  const api = new MetaApi(token);
+  const { getMetaApiInstance } = require('../lib/metaapi');
+  const api = getMetaApiInstance('signals');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {

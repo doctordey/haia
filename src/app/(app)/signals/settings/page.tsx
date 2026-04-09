@@ -703,15 +703,15 @@ function SizingSection({
             </div>
             <p className="text-xs text-text-secondary">NQ (NAS100) Risk Override</p>
             <div className="grid grid-cols-2 gap-3">
-              <NumberInput label="NQ Base Risk %" value={form.nqBaseRiskPercent ?? ''} onChange={(v) => setField('nqBaseRiskPercent', v || null)} step={0.1} />
-              <NumberInput label="NQ Max Risk %" value={form.nqMaxRiskPercent ?? ''} onChange={(v) => setField('nqMaxRiskPercent', v || null)} step={0.1} />
+              <NumberInput label="NQ Base Risk %" value={form.nqBaseRiskPercent ?? 0} onChange={(v) => setField('nqBaseRiskPercent', v || null)} step={0.1} />
+              <NumberInput label="NQ Max Risk %" value={form.nqMaxRiskPercent ?? 0} onChange={(v) => setField('nqMaxRiskPercent', v || null)} step={0.1} />
             </div>
             <p className="text-xs text-text-secondary">ES (US500) Risk Override</p>
             <div className="grid grid-cols-2 gap-3">
-              <NumberInput label="ES Base Risk %" value={form.esBaseRiskPercent ?? ''} onChange={(v) => setField('esBaseRiskPercent', v || null)} step={0.1} />
-              <NumberInput label="ES Max Risk %" value={form.esMaxRiskPercent ?? ''} onChange={(v) => setField('esMaxRiskPercent', v || null)} step={0.1} />
+              <NumberInput label="ES Base Risk %" value={form.esBaseRiskPercent ?? 0} onChange={(v) => setField('esBaseRiskPercent', v || null)} step={0.1} />
+              <NumberInput label="ES Max Risk %" value={form.esMaxRiskPercent ?? 0} onChange={(v) => setField('esMaxRiskPercent', v || null)} step={0.1} />
             </div>
-            <p className="text-xs text-text-tertiary">Leave blank to use the default risk above.</p>
+            <p className="text-xs text-text-tertiary">Set to 0 to use the default risk above.</p>
             <p className="text-xs text-text-secondary">Size Tier Multipliers</p>
             <div className="grid grid-cols-3 gap-3">
               <NumberInput label="Small" value={form.smallMultiplier} onChange={(v) => setField('smallMultiplier', v)} step={0.1} />

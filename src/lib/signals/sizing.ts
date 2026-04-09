@@ -67,7 +67,10 @@ export function calculateLotSize(
 
     const rawLots = riskAmount / (stopDistance * contractSpec.pipValuePerLot);
     const steppedLots = Math.floor(rawLots / contractSpec.lotStep) * contractSpec.lotStep;
-    totalLots = Math.max(contractSpec.minLotSize, Math.min(steppedLots, config.maxLotSize));
+    // Don't hard-cap totalLots — maxLotsPerOrder handles per-order chunking,
+    // and maxRiskPercent guards the total risk. maxLotSize is checked as a
+    // per-order cap via chunkLots.
+    totalLots = Math.max(contractSpec.minLotSize, steppedLots);
     reason =
       `${config.mode}: ${effectiveRisk.toFixed(1)}% of ` +
       `${config.mode === 'percent_balance' ? 'balance' : 'equity'} ` +

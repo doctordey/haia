@@ -659,8 +659,9 @@ function SizingSection({
     const base = 10000;
     const risk = base * (form.baseRiskPercent * form.mediumMultiplier / 100);
     previewLots = Math.floor((risk / (stopDist * 1.00)) * 100) / 100;
-    previewLots = Math.min(previewLots, form.maxLotSize);
-    previewReason = `${form.baseRiskPercent}% × 1.0 of $${base} = $${risk.toFixed(0)} risk / ${stopDist}pt stop = ${previewLots} lots`;
+    const numOrders = Math.ceil(previewLots / form.maxLotsPerOrder);
+    previewReason = `${form.baseRiskPercent}% × 1.0 of $${base} = $${risk.toFixed(0)} risk / ${stopDist}pt stop = ${previewLots} lots` +
+      (numOrders > 1 ? ` (${numOrders} orders × ${form.maxLotsPerOrder} max)` : '');
   }
 
   return (
@@ -718,7 +719,7 @@ function SizingSection({
               <NumberInput label="Large" value={form.largeMultiplier} onChange={(v) => setField('largeMultiplier', v)} step={0.1} />
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <NumberInput label="Max Lot Size" value={form.maxLotSize} onChange={(v) => setField('maxLotSize', v)} step={0.01} />
+              <NumberInput label="Max Lots Per Order" value={form.maxLotsPerOrder} onChange={(v) => setField('maxLotsPerOrder', v)} step={1} />
               <NumberInput label="Min Stop Distance (pts)" value={form.minStopDistance} onChange={(v) => setField('minStopDistance', v)} />
             </div>
           </div>

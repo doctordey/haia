@@ -30,6 +30,10 @@ export interface SignalConfigForm {
   executionMode: string;
   baseRiskPercent: number;
   maxRiskPercent: number;
+  nqBaseRiskPercent: number | null;
+  nqMaxRiskPercent: number | null;
+  esBaseRiskPercent: number | null;
+  esMaxRiskPercent: number | null;
   minStopDistance: number;
   maxLotSize: number;
   smallMultiplier: number;
@@ -67,6 +71,10 @@ const DEFAULTS: SignalConfigForm = {
   executionMode: 'single',
   baseRiskPercent: 1.0,
   maxRiskPercent: 5.0,
+  nqBaseRiskPercent: null,
+  nqMaxRiskPercent: null,
+  esBaseRiskPercent: null,
+  esMaxRiskPercent: null,
   minStopDistance: 10,
   maxLotSize: 0.10,
   smallMultiplier: 0.5,

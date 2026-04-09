@@ -278,6 +278,10 @@ export const signalConfigs = pgTable('signal_configs', {
   executionMode:    text('execution_mode').notNull().default('single'),     // "single" | "split_target"
   baseRiskPercent:  real('base_risk_percent').notNull().default(1.0),
   maxRiskPercent:   real('max_risk_percent').notNull().default(5.0),
+  nqBaseRiskPercent: real('nq_base_risk_percent'),
+  nqMaxRiskPercent:  real('nq_max_risk_percent'),
+  esBaseRiskPercent: real('es_base_risk_percent'),
+  esMaxRiskPercent:  real('es_max_risk_percent'),
   minStopDistance:  real('min_stop_distance').notNull().default(10),
   maxLotSize:       real('max_lot_size').notNull().default(0.10),
 

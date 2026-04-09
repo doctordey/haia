@@ -175,6 +175,10 @@ export interface SignalConfig {
   executionMode: ExecutionMode;
   baseRiskPercent: number;
   maxRiskPercent: number;
+  nqBaseRiskPercent: number | null;
+  nqMaxRiskPercent: number | null;
+  esBaseRiskPercent: number | null;
+  esMaxRiskPercent: number | null;
   minStopDistance: number;
   maxLotSize: number;
   // Multipliers

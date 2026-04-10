@@ -50,6 +50,13 @@
       "when": 1775510585757,
       "tag": "0006_powerful_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1807200000000,
+      "tag": "0007_per_instrument_risk",
+      "breakpoints": true
     }
   ]
 }

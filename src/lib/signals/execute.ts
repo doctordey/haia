@@ -382,7 +382,25 @@ async function sendOrders(
     }
   }
 
-  return Promise.all(orderPromises);
+  const results = await Promise.all(orderPromises);
+
+  // Log summary of chunk execution for debugging partial fills
+  const successCount = results.filter((r) => r.status === 'sent').length;
+  const errorCount = results.filter((r) => r.status === 'error').length;
+  const totalRequestedLots = results.reduce((sum, r) => sum + r.lotSize, 0);
+  const totalFilledLots = results
+    .filter((r) => r.status === 'sent')
+    .reduce((sum, r) => sum + r.lotSize, 0);
+
+  if (errorCount > 0 || results.length > 1) {
+    console.log(
+      `[execute] ${fusionSymbol} ${direction}: ${successCount}/${results.length} chunks succeeded ` +
+      `(${totalFilledLots.toFixed(2)}/${totalRequestedLots.toFixed(2)} lots filled)` +
+      (errorCount > 0 ? ` — ${errorCount} errors: ${[...new Set(results.filter((r) => r.status === 'error').map((r) => r.errorMessage))].join(' | ')}` : '')
+    );
+  }
+
+  return results;
 }
 
 // ─── PUBLIC API ──────────────────────────────────────

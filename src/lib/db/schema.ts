@@ -188,6 +188,13 @@ export const flexCards = pgTable('flex_cards', {
   showChart:       boolean('show_chart').notNull().default(true),
   showWinLoss:     boolean('show_win_loss').notNull().default(true),
   showBranding:    boolean('show_branding').notNull().default(true),
+  // Text styling
+  fontFamily:      text('font_family').notNull().default('inter'),
+  heroColor:       text('hero_color'),         // null = auto (green/red based on value)
+  labelColor:      text('label_color').notNull().default('#8B8D98'),
+  valueColor:      text('value_color').notNull().default('#E8E9ED'),
+  usernameColor:   text('username_color').notNull().default('#E8E9ED'),
+  brandingColor:   text('branding_color').notNull().default('#5A5C66'),
   imageUrl:        text('image_url'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
 }, (table) => [

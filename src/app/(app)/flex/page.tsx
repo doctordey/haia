@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback, type ChangeEvent } from 'reac
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData } from '@/components/flex-card/card-preview';
+import { CardPreview, type MetricType, type AspectRatio, type CardLayout, type FlexCardData, type CardStyling, DEFAULT_STYLING } from '@/components/flex-card/card-preview';
 import { themes, type ThemeId } from '@/components/flex-card/themes';
+import { fontFamilies, type FontFamilyId } from '@/components/flex-card/fonts';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
@@ -44,8 +45,31 @@ export default function FlexCardsPage() {
   const [showWinLoss, setShowWinLoss] = useState(true);
   const [showBranding, setShowBranding] = useState(true);
   const [customBgUrl, setCustomBgUrl] = useState('');
+  const [styling, setStyling] = useState<CardStyling>(DEFAULT_STYLING);
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
-  const [savedCards, setSavedCards] = useState<{ id: string; metric: string; period: string; backgroundTheme: string; createdAt: string }[]>([]);
+  interface SavedCard {
+    id: string;
+    metric: string;
+    period: string;
+    backgroundTheme: string;
+    customBgUrl: string | null;
+    showUsername: boolean;
+    showChart: boolean;
+    showWinLoss: boolean;
+    showBranding: boolean;
+    fontFamily: FontFamilyId;
+    heroColor: string | null;
+    labelColor: string;
+    valueColor: string;
+    usernameColor: string;
+    brandingColor: string;
+    createdAt: string;
+  }
+  const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
+
+  const setStyleField = <K extends keyof CardStyling>(key: K, value: CardStyling[K]) => {
+    setStyling((prev) => ({ ...prev, [key]: value }));
+  };
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -196,6 +220,12 @@ export default function FlexCardsPage() {
           showChart,
           showWinLoss,
           showBranding,
+          fontFamily: styling.fontFamily,
+          heroColor: styling.heroColor,
+          labelColor: styling.labelColor,
+          valueColor: styling.valueColor,
+          usernameColor: styling.usernameColor,
+          brandingColor: styling.brandingColor,
         }),
       });
       if (res.ok) {
@@ -207,7 +237,7 @@ export default function FlexCardsPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding]);
+  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling]);
 
   const handleDeleteCard = useCallback(async (id: string) => {
     try {
@@ -216,6 +246,25 @@ export default function FlexCardsPage() {
     } catch (err) {
       console.error('Failed to delete card:', err);
     }
+  }, []);
+
+  const handleLoadCard = useCallback((card: SavedCard) => {
+    setMetric(card.metric as MetricType);
+    setPeriod(card.period);
+    setThemeId(card.backgroundTheme as ThemeId);
+    if (card.customBgUrl) setCustomBgUrl(card.customBgUrl);
+    setShowUsername(card.showUsername);
+    setShowChart(card.showChart);
+    setShowWinLoss(card.showWinLoss);
+    setShowBranding(card.showBranding);
+    setStyling({
+      fontFamily: card.fontFamily || 'inter',
+      heroColor: card.heroColor ?? null,
+      labelColor: card.labelColor || '#8B8D98',
+      valueColor: card.valueColor || '#E8E9ED',
+      usernameColor: card.usernameColor || '#E8E9ED',
+      brandingColor: card.brandingColor || '#5A5C66',
+    });
   }, []);
 
   const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -259,6 +308,7 @@ export default function FlexCardsPage() {
                 showChart={showChart}
                 showWinLoss={showWinLoss}
                 showBranding={showBranding}
+                styling={styling}
               />
             </div>
           </CardContent>
@@ -442,6 +492,72 @@ export default function FlexCardsPage() {
             </CardContent>
           </Card>
 
+          {/* Typography */}
+          <Card>
+            <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Typography</h3></CardHeader>
+            <CardContent className="pt-0 space-y-3">
+              <div>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Font Family</p>
+                <select
+                  value={styling.fontFamily}
+                  onChange={(e) => setStyleField('fontFamily', e.target.value as FontFamilyId)}
+                  className="w-full h-8 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-xs text-text-primary cursor-pointer"
+                >
+                  {fontFamilies.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Text Colors</p>
+                <div className="space-y-2">
+                  {([
+                    { key: 'heroColor' as const, label: 'Hero / Big Number', isAuto: true },
+                    { key: 'labelColor' as const, label: 'Labels', isAuto: false },
+                    { key: 'valueColor' as const, label: 'Stat Values', isAuto: false },
+                    { key: 'usernameColor' as const, label: 'Username', isAuto: false },
+                    { key: 'brandingColor' as const, label: 'Branding', isAuto: false },
+                  ]).map(({ key, label, isAuto }) => {
+                    const current = styling[key];
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-text-secondary flex-1">{label}</span>
+                        <div className="flex items-center gap-1.5">
+                          {isAuto && (
+                            <button
+                              onClick={() => setStyleField(key, null)}
+                              className={cn(
+                                'px-2 py-1 text-[10px] rounded-[var(--radius-sm)] transition-colors cursor-pointer',
+                                current === null ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-tertiary hover:text-text-primary'
+                              )}
+                              title="Auto color (green/red based on value)"
+                            >
+                              AUTO
+                            </button>
+                          )}
+                          <input
+                            type="color"
+                            value={current || '#E8E9ED'}
+                            onChange={(e) => setStyleField(key, e.target.value)}
+                            className="w-7 h-7 rounded-[var(--radius-sm)] border border-border-primary bg-bg-tertiary cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setStyling(DEFAULT_STYLING)}
+                className="w-full px-3 py-1.5 text-xs text-text-tertiary hover:text-text-primary bg-bg-tertiary rounded-[var(--radius-sm)] transition-colors cursor-pointer"
+              >
+                Reset to Defaults
+              </button>
+            </CardContent>
+          </Card>
+
           {/* Actions */}
           <div className="flex gap-2">
             <Button className="flex-1" onClick={handleExportPng} loading={exporting}>Download PNG</Button>
@@ -457,12 +573,16 @@ export default function FlexCardsPage() {
           <h2 className="text-sm font-medium text-text-secondary mb-3">Saved Cards</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {savedCards.map((card) => (
-              <div key={card.id} className="bg-bg-secondary border border-border-primary rounded-[var(--radius-md)] p-3 group relative">
+              <div
+                key={card.id}
+                onClick={() => handleLoadCard(card)}
+                className="bg-bg-secondary border border-border-primary hover:border-accent-primary rounded-[var(--radius-md)] p-3 group relative cursor-pointer transition-colors"
+              >
                 <p className="text-xs font-medium text-text-primary capitalize">{card.metric}</p>
                 <p className="text-[10px] text-text-tertiary">{card.period} · {card.backgroundTheme}</p>
                 <p className="text-[10px] text-text-tertiary mt-1">{new Date(card.createdAt).toLocaleDateString()}</p>
                 <button
-                  onClick={() => handleDeleteCard(card.id)}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteCard(card.id); }}
                   className="absolute top-2 right-2 text-text-tertiary hover:text-loss-primary opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -57,6 +57,13 @@
       "when": 1807200000000,
       "tag": "0007_per_instrument_risk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1807300000000,
+      "tag": "0008_flex_card_styling",
+      "breakpoints": true
     }
   ]
 }

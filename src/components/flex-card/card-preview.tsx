@@ -3,12 +3,31 @@
 import { useMemo } from 'react';
 import { formatCurrency, formatNumber, formatPercent, cn } from '@/lib/utils';
 import { getThemeCss, type ThemeId } from './themes';
+import { getFontStack, type FontFamilyId } from './fonts';
 import type { CalendarDay } from '@/components/calendar/pnl-calendar';
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, startOfWeek, endOfWeek, isSameMonth } from 'date-fns';
 
 export type MetricType = 'pnl' | 'winrate' | 'profitfactor' | 'monthlyreturn' | 'sharpe' | 'pctgain' | 'pips' | 'calendar';
 export type AspectRatio = 'square' | 'landscape' | 'story';
 export type CardLayout = 'default' | 'terminal';
+
+export interface CardStyling {
+  fontFamily: FontFamilyId;
+  heroColor: string | null;      // null = auto (green/red based on value)
+  labelColor: string;
+  valueColor: string;
+  usernameColor: string;
+  brandingColor: string;
+}
+
+export const DEFAULT_STYLING: CardStyling = {
+  fontFamily: 'inter',
+  heroColor: null,
+  labelColor: '#8B8D98',
+  valueColor: '#E8E9ED',
+  usernameColor: '#E8E9ED',
+  brandingColor: '#5A5C66',
+};
 
 export interface FlexCardData {
   period: string;
@@ -50,6 +69,7 @@ interface CardPreviewProps {
   showChart: boolean;
   showWinLoss: boolean;
   showBranding: boolean;
+  styling?: CardStyling;
 }
 
 const aspectStyles: Record<AspectRatio, string> = {
@@ -69,11 +89,7 @@ const metricLabels: Record<MetricType, string> = {
   calendar: 'PNL Calendar',
 };
 
-// Monospace font stack matching terminal/Axiom aesthetic
-const MONO_FONT = "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace";
-const SANS_FONT = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
-
-function useCardData(metric: MetricType, data: FlexCardData) {
+function useCardData(metric: MetricType, data: FlexCardData, overrideHeroColor: string | null) {
   const heroNumber = useMemo(() => {
     switch (metric) {
       case 'pnl': return `${(data.totalPnl || 0) >= 0 ? '+' : ''}${formatCurrency(data.totalPnl || 0)}`;
@@ -89,6 +105,7 @@ function useCardData(metric: MetricType, data: FlexCardData) {
   }, [metric, data]);
 
   const heroColor = useMemo(() => {
+    if (overrideHeroColor) return overrideHeroColor;
     switch (metric) {
       case 'pnl': return (data.totalPnl || 0) >= 0 ? '#00DC82' : '#FF4D6A';
       case 'winrate': return '#00DC82';
@@ -99,7 +116,7 @@ function useCardData(metric: MetricType, data: FlexCardData) {
       case 'pips': return (data.totalPips || 0) >= 0 ? '#00DC82' : '#FF4D6A';
       default: return '#E8E9ED';
     }
-  }, [metric, data]);
+  }, [metric, data, overrideHeroColor]);
 
   const stats = useMemo(() => {
     switch (metric) {
@@ -153,10 +170,12 @@ export function CardPreview(props: CardPreviewProps) {
 // ─── Default Layout (Haia style) ─────────────────────
 
 function DefaultLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showWinLoss, showBranding, styling,
 }: CardPreviewProps) {
+  const style = styling ?? DEFAULT_STYLING;
+  const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
-  const { heroNumber, heroColor, stats } = useCardData(metric, data);
+  const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
 
   return (
     <div
@@ -167,29 +186,29 @@ function DefaultLayout({
       <div className="absolute inset-0 flex flex-col p-6 justify-between">
         <div className="flex items-center justify-between">
           <div className="w-7 h-7 bg-[#6C5CE7] rounded-md flex items-center justify-center">
-            <span className="text-white font-bold text-xs" style={{ fontFamily: SANS_FONT }}>H</span>
+            <span className="text-white font-bold text-xs" style={{ fontFamily: fontStack }}>H</span>
           </div>
-          <span className="text-sm font-medium" style={{ color: '#8B8D98', fontFamily: SANS_FONT }}>Haia</span>
+          <span className="text-sm font-medium" style={{ color: style.labelColor, fontFamily: fontStack }}>Haia</span>
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
           {metric !== 'calendar' ? (
             <>
-              <p className="text-sm" style={{ color: '#8B8D98', fontFamily: SANS_FONT }}>{data.period} {metricLabels[metric]}</p>
-              <p className="text-3xl font-bold" style={{ color: heroColor, fontFamily: MONO_FONT }}>{heroNumber}</p>
+              <p className="text-sm" style={{ color: style.labelColor, fontFamily: fontStack }}>{data.period} {metricLabels[metric]}</p>
+              <p className="text-3xl font-bold" style={{ color: heroColor, fontFamily: fontStack }}>{heroNumber}</p>
               {showWinLoss && (
                 <div className="space-y-1.5 mt-2 w-full max-w-[240px]">
                   {stats.map((s) => (
                     <div key={s.label} className="flex justify-between">
-                      <span className="text-xs" style={{ color: '#8B8D98', fontFamily: SANS_FONT }}>{s.label}</span>
-                      <span className="text-xs" style={{ color: '#E8E9ED', fontFamily: MONO_FONT }}>{s.value}</span>
+                      <span className="text-xs" style={{ color: style.labelColor, fontFamily: fontStack }}>{s.label}</span>
+                      <span className="text-xs" style={{ color: style.valueColor, fontFamily: fontStack }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
               )}
             </>
           ) : (
-            <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} />
+            <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} fontStack={fontStack} labelColor={style.labelColor} valueColor={style.valueColor} />
           )}
         </div>
 
@@ -199,15 +218,15 @@ function DefaultLayout({
               {data.avatarUrl ? (
                 <img src={data.avatarUrl} className="w-5 h-5 rounded-full" alt="" />
               ) : (
-                <div className="w-5 h-5 rounded-full bg-[#6C5CE7]/30 flex items-center justify-center text-[10px]" style={{ color: '#6C5CE7', fontFamily: SANS_FONT }}>
+                <div className="w-5 h-5 rounded-full bg-[#6C5CE7]/30 flex items-center justify-center text-[10px]" style={{ color: '#6C5CE7', fontFamily: fontStack }}>
                   {data.username[0]?.toUpperCase()}
                 </div>
               )}
-              <span className="text-xs" style={{ color: '#E8E9ED', fontFamily: SANS_FONT }}>@{data.username}</span>
+              <span className="text-xs" style={{ color: style.usernameColor, fontFamily: fontStack }}>@{data.username}</span>
             </div>
           )}
           {showBranding && (
-            <span className="text-[10px]" style={{ color: '#5A5C66', fontFamily: SANS_FONT }}>haia.app</span>
+            <span className="text-[10px]" style={{ color: style.brandingColor, fontFamily: fontStack }}>haia.app</span>
           )}
         </div>
       </div>
@@ -218,19 +237,21 @@ function DefaultLayout({
 // ─── Terminal Layout (Axiom/Terminal style) ───────────
 
 function TerminalLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showWinLoss, showBranding, styling,
 }: CardPreviewProps) {
+  const style = styling ?? DEFAULT_STYLING;
+  const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
-  const { heroNumber, heroColor, stats } = useCardData(metric, data);
+  const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
 
-  // Terminal style: everything monospace, left-aligned, compact rows, subtle grid lines
+  // Terminal style: left-aligned, compact rows, subtle grid lines
   return (
     <div
       id="flex-card-preview"
       className={cn('relative overflow-hidden rounded-[var(--radius-lg)] w-full', aspectStyles[aspectRatio])}
       style={{ background: bgCss }}
     >
-      <div className="absolute inset-0 flex flex-col p-5 justify-between" style={{ fontFamily: MONO_FONT }}>
+      <div className="absolute inset-0 flex flex-col p-5 justify-between" style={{ fontFamily: fontStack }}>
         {/* Terminal header bar */}
         <div className="flex items-center justify-between pb-3 mb-3" style={{ borderBottom: '1px solid rgba(42,45,58,0.8)' }}>
           <div className="flex items-center gap-2">
@@ -239,16 +260,16 @@ function TerminalLayout({
               <div className="w-2.5 h-2.5 rounded-full bg-[#FFB347]/60" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#00DC82]/60" />
             </div>
-            <span className="text-[10px] uppercase tracking-[0.15em]" style={{ color: '#5A5C66' }}>haia terminal</span>
+            <span className="text-[10px] uppercase tracking-[0.15em]" style={{ color: style.brandingColor }}>haia terminal</span>
           </div>
-          <span className="text-[10px]" style={{ color: '#5A5C66' }}>{data.period}</span>
+          <span className="text-[10px]" style={{ color: style.brandingColor }}>{data.period}</span>
         </div>
 
         {metric !== 'calendar' ? (
           <>
             {/* Metric label */}
             <div className="mb-1">
-              <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: '#5A5C66' }}>
+              <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: style.labelColor }}>
                 {metricLabels[metric]}
               </span>
             </div>
@@ -270,8 +291,8 @@ function TerminalLayout({
                       className="flex items-center justify-between py-2"
                       style={{ borderBottom: i < stats.length - 1 ? '1px solid rgba(30,33,48,0.6)' : 'none' }}
                     >
-                      <span className="text-xs uppercase tracking-wider" style={{ color: '#5A5C66' }}>{s.label}</span>
-                      <span className="text-sm font-semibold" style={{ color: '#E8E9ED' }}>{s.value}</span>
+                      <span className="text-xs uppercase tracking-wider" style={{ color: style.labelColor }}>{s.label}</span>
+                      <span className="text-sm font-semibold" style={{ color: style.valueColor }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
@@ -296,7 +317,7 @@ function TerminalLayout({
             )}
           </>
         ) : (
-          <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} />
+          <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} fontStack={fontStack} labelColor={style.labelColor} valueColor={style.valueColor} />
         )}
 
         {/* Footer */}
@@ -311,11 +332,11 @@ function TerminalLayout({
                     {data.username[0]?.toUpperCase()}
                   </div>
                 )}
-                <span className="text-[11px]" style={{ color: '#8B8D98' }}>@{data.username}</span>
+                <span className="text-[11px]" style={{ color: style.usernameColor }}>@{data.username}</span>
               </div>
             ) : <div />}
             {showBranding && (
-              <span className="text-[9px] uppercase tracking-[0.15em]" style={{ color: '#5A5C66' }}>haia.app</span>
+              <span className="text-[9px] uppercase tracking-[0.15em]" style={{ color: style.brandingColor }}>haia.app</span>
             )}
           </div>
         </div>
@@ -327,7 +348,7 @@ function TerminalLayout({
 // ─── Mini Calendar ───────────────────────────────────
 
 function MiniCalendar({
-  days, year, month, totalPnl, winDays, lossDays,
+  days, year, month, totalPnl, winDays, lossDays, fontStack, labelColor, valueColor,
 }: {
   days: CalendarDay[];
   year: number;
@@ -335,6 +356,9 @@ function MiniCalendar({
   totalPnl: number;
   winDays: number;
   lossDays: number;
+  fontStack: string;
+  labelColor: string;
+  valueColor: string;
 }) {
   const monthDate = new Date(year, month - 1, 1);
   const monthStart = startOfMonth(monthDate);
@@ -346,16 +370,16 @@ function MiniCalendar({
   const pnlColor = totalPnl >= 0 ? '#00DC82' : '#FF4D6A';
 
   return (
-    <div className="w-full max-w-[300px]" style={{ fontFamily: MONO_FONT }}>
+    <div className="w-full max-w-[300px]" style={{ fontFamily: fontStack }}>
       <div className="flex justify-between items-center mb-2">
-        <span className="text-sm font-medium" style={{ color: '#E8E9ED' }}>{format(monthDate, 'MMM yyyy')}</span>
+        <span className="text-sm font-medium" style={{ color: valueColor }}>{format(monthDate, 'MMM yyyy')}</span>
         <span className="text-sm font-bold" style={{ color: pnlColor }}>
           {totalPnl >= 0 ? '+' : ''}{formatCurrency(totalPnl)}
         </span>
       </div>
       <div className="grid grid-cols-7 gap-0.5 mb-2">
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-          <div key={i} className="text-center text-[8px]" style={{ color: '#5A5C66' }}>{d}</div>
+          <div key={i} className="text-center text-[8px]" style={{ color: labelColor }}>{d}</div>
         ))}
         {allDays.map((day) => {
           const key = format(day, 'yyyy-MM-dd');
@@ -364,10 +388,10 @@ function MiniCalendar({
           const dd = dayMap.get(key);
           const pnl = dd?.pnl || 0;
           const bg = pnl > 0 ? 'rgba(0,220,130,0.2)' : pnl < 0 ? 'rgba(255,77,106,0.2)' : 'rgba(90,92,102,0.1)';
-          const color = pnl > 0 ? '#00DC82' : pnl < 0 ? '#FF4D6A' : '#5A5C66';
+          const color = pnl > 0 ? '#00DC82' : pnl < 0 ? '#FF4D6A' : labelColor;
           return (
             <div key={key} className="aspect-square rounded-[2px] flex items-center justify-center" style={{ backgroundColor: bg }}>
-              <span className="text-[7px]" style={{ color, fontFamily: MONO_FONT }}>
+              <span className="text-[7px]" style={{ color, fontFamily: fontStack }}>
                 {pnl === 0 ? '' : pnl > 0 ? `+${Math.round(pnl)}` : Math.round(pnl)}
               </span>
             </div>

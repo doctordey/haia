@@ -25,7 +25,11 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { accountId, title, period, metric, backgroundTheme, customBgUrl, showUsername, showChart, showWinLoss, showBranding } = body;
+  const {
+    accountId, title, period, metric, backgroundTheme, customBgUrl,
+    showUsername, showChart, showWinLoss, showBranding,
+    fontFamily, heroColor, labelColor, valueColor, usernameColor, brandingColor,
+  } = body;
 
   if (!period || !metric) {
     return NextResponse.json({ error: 'Period and metric are required' }, { status: 400 });
@@ -45,6 +49,12 @@ export async function POST(request: Request) {
       showChart: showChart ?? true,
       showWinLoss: showWinLoss ?? true,
       showBranding: showBranding ?? true,
+      fontFamily: fontFamily || 'inter',
+      heroColor: heroColor ?? null,
+      labelColor: labelColor || '#8B8D98',
+      valueColor: valueColor || '#E8E9ED',
+      usernameColor: usernameColor || '#E8E9ED',
+      brandingColor: brandingColor || '#5A5C66',
     })
     .returning();
 

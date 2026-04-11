@@ -195,6 +195,10 @@ export const flexCards = pgTable('flex_cards', {
   valueColor:      text('value_color').notNull().default('#E8E9ED'),
   usernameColor:   text('username_color').notNull().default('#E8E9ED'),
   brandingColor:   text('branding_color').notNull().default('#5A5C66'),
+  // Layout + CTA
+  layout:          text('layout').notNull().default('default'),  // 'default' | 'terminal' | 'hero'
+  ctaTopLine:      text('cta_top_line'),
+  ctaBottomLine:   text('cta_bottom_line'),
   imageUrl:        text('image_url'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
 }, (table) => [

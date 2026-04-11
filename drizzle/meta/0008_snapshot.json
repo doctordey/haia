@@ -529,6 +529,25 @@
           "notNull": true,
           "default": "'#5A5C66'"
         },
+        "layout": {
+          "name": "layout",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'default'"
+        },
+        "cta_top_line": {
+          "name": "cta_top_line",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cta_bottom_line": {
+          "name": "cta_bottom_line",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "image_url": {
           "name": "image_url",
           "type": "text",

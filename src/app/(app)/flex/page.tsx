@@ -46,6 +46,8 @@ export default function FlexCardsPage() {
   const [showBranding, setShowBranding] = useState(true);
   const [customBgUrl, setCustomBgUrl] = useState('');
   const [styling, setStyling] = useState<CardStyling>(DEFAULT_STYLING);
+  const [ctaTopLine, setCtaTopLine] = useState('');
+  const [ctaBottomLine, setCtaBottomLine] = useState('');
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   interface SavedCard {
     id: string;
@@ -63,6 +65,9 @@ export default function FlexCardsPage() {
     valueColor: string;
     usernameColor: string;
     brandingColor: string;
+    layout: CardLayout;
+    ctaTopLine: string | null;
+    ctaBottomLine: string | null;
     createdAt: string;
   }
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
@@ -88,15 +93,20 @@ export default function FlexCardsPage() {
         }
         const dashQuery = dashParams.toString();
 
-        const [dashRes, calRes] = await Promise.all([
+        // Equity curve range: reuse period where possible (1D/7D/30D/90D/1Y/MAX)
+        const equityRange = period === 'custom' ? 'MAX' : period;
+
+        const [dashRes, calRes, equityRes] = await Promise.all([
           fetch(`/api/dashboard/${selectedAccountId}${dashQuery ? `?${dashQuery}` : ''}`),
           metric === 'calendar'
             ? fetch(`/api/calendar/${selectedAccountId}/${new Date().getFullYear()}/${new Date().getMonth() + 1}`)
             : Promise.resolve(null),
+          fetch(`/api/dashboard/${selectedAccountId}/equity-curve?range=${equityRange}`),
         ]);
 
         const dash = dashRes.ok ? await dashRes.json() : {};
         const calDays = calRes && calRes.ok ? await calRes.json() : [];
+        const equityCurve = equityRes.ok ? await equityRes.json() : [];
 
         const startBalance = (dash.balance || 0) - (dash.totalPnl || 0);
         const profitDays = calDays.filter((d: { pnl: number }) => d.pnl > 0);
@@ -130,6 +140,9 @@ export default function FlexCardsPage() {
           calendarMonth: new Date().getMonth() + 1,
           winDays: profitDays.length,
           lossDays: lossDays.length,
+          equityCurve,
+          ctaTopLine: ctaTopLine || undefined,
+          ctaBottomLine: ctaBottomLine || undefined,
         });
       } catch (err) {
         console.error('Failed to fetch card data:', err);
@@ -137,7 +150,7 @@ export default function FlexCardsPage() {
     }
 
     fetchData();
-  }, [selectedAccountId, period, metric, customDateFrom, customDateTo]);
+  }, [selectedAccountId, period, metric, customDateFrom, customDateTo, ctaTopLine, ctaBottomLine]);
 
   // Fetch saved cards
   useEffect(() => {
@@ -226,6 +239,9 @@ export default function FlexCardsPage() {
           valueColor: styling.valueColor,
           usernameColor: styling.usernameColor,
           brandingColor: styling.brandingColor,
+          layout: cardLayout,
+          ctaTopLine: ctaTopLine || null,
+          ctaBottomLine: ctaBottomLine || null,
         }),
       });
       if (res.ok) {
@@ -237,7 +253,7 @@ export default function FlexCardsPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling]);
+  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling, cardLayout, ctaTopLine, ctaBottomLine]);
 
   const handleDeleteCard = useCallback(async (id: string) => {
     try {
@@ -265,6 +281,9 @@ export default function FlexCardsPage() {
       usernameColor: card.usernameColor || '#E8E9ED',
       brandingColor: card.brandingColor || '#5A5C66',
     });
+    setCardLayout(card.layout || 'default');
+    setCtaTopLine(card.ctaTopLine || '');
+    setCtaBottomLine(card.ctaBottomLine || '');
   }, []);
 
   const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -427,6 +446,7 @@ export default function FlexCardsPage() {
                 {([
                   { id: 'default' as CardLayout, label: 'Haia' },
                   { id: 'terminal' as CardLayout, label: 'Terminal' },
+                  { id: 'hero' as CardLayout, label: 'Hero' },
                 ]).map((l) => (
                   <button
                     key={l.id}
@@ -491,6 +511,27 @@ export default function FlexCardsPage() {
               ))}
             </CardContent>
           </Card>
+
+          {/* CTA (Hero layout only) */}
+          {cardLayout === 'hero' && (
+            <Card>
+              <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">CTA / Promo (optional)</h3></CardHeader>
+              <CardContent className="pt-0 space-y-2">
+                <Input
+                  placeholder="Top line (e.g. Unlock 35% cashback)"
+                  value={ctaTopLine}
+                  onChange={(e) => setCtaTopLine(e.target.value)}
+                  className="h-8 text-xs"
+                />
+                <Input
+                  placeholder="Bottom line (e.g. haia.app/ref/yourcode)"
+                  value={ctaBottomLine}
+                  onChange={(e) => setCtaBottomLine(e.target.value)}
+                  className="h-8 text-xs"
+                />
+              </CardContent>
+            </Card>
+          )}
 
           {/* Typography */}
           <Card>

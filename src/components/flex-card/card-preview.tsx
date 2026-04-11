@@ -9,7 +9,7 @@ import { startOfMonth, endOfMonth, eachDayOfInterval, format, startOfWeek, endOf
 
 export type MetricType = 'pnl' | 'winrate' | 'profitfactor' | 'monthlyreturn' | 'sharpe' | 'pctgain' | 'pips' | 'calendar';
 export type AspectRatio = 'square' | 'landscape' | 'story';
-export type CardLayout = 'default' | 'terminal';
+export type CardLayout = 'default' | 'terminal' | 'hero';
 
 export interface CardStyling {
   fontFamily: FontFamilyId;
@@ -56,6 +56,9 @@ export interface FlexCardData {
   lossDays?: number;
   grossProfit?: number;
   grossLoss?: number;
+  equityCurve?: { date: string; equity: number }[];
+  ctaTopLine?: string;
+  ctaBottomLine?: string;
 }
 
 interface CardPreviewProps {
@@ -164,13 +167,60 @@ function useCardData(metric: MetricType, data: FlexCardData, overrideHeroColor: 
 
 export function CardPreview(props: CardPreviewProps) {
   if (props.layout === 'terminal') return <TerminalLayout {...props} />;
+  if (props.layout === 'hero') return <HeroLayout {...props} />;
   return <DefaultLayout {...props} />;
+}
+
+// ─── Sparkline ───────────────────────────────────────
+
+function Sparkline({
+  points,
+  color,
+  width = 220,
+  height = 50,
+  strokeWidth = 2,
+}: {
+  points: { equity: number }[];
+  color: string;
+  width?: number;
+  height?: number;
+  strokeWidth?: number;
+}) {
+  if (!points || points.length < 2) return null;
+
+  const values = points.map((p) => p.equity);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const stepX = width / (points.length - 1);
+  const coords = points.map((p, i) => {
+    const x = i * stepX;
+    const y = height - ((p.equity - min) / range) * height;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const linePath = `M ${coords.join(' L ')}`;
+  const areaPath = `${linePath} L ${width},${height} L 0,${height} Z`;
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }}>
+      <defs>
+        <linearGradient id={`spark-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#spark-${color.replace('#', '')})`} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
 }
 
 // ─── Default Layout (Haia style) ─────────────────────
 
 function DefaultLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showWinLoss, showBranding, styling,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling,
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
@@ -196,6 +246,11 @@ function DefaultLayout({
             <>
               <p className="text-sm" style={{ color: style.labelColor, fontFamily: fontStack }}>{data.period} {metricLabels[metric]}</p>
               <p className="text-3xl font-bold" style={{ color: heroColor, fontFamily: fontStack }}>{heroNumber}</p>
+              {showChart && data.equityCurve && data.equityCurve.length > 1 && (
+                <div className="opacity-80 -mt-1">
+                  <Sparkline points={data.equityCurve} color={heroColor} width={220} height={36} />
+                </div>
+              )}
               {showWinLoss && (
                 <div className="space-y-1.5 mt-2 w-full max-w-[240px]">
                   {stats.map((s) => (
@@ -237,7 +292,7 @@ function DefaultLayout({
 // ─── Terminal Layout (Axiom/Terminal style) ───────────
 
 function TerminalLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showWinLoss, showBranding, styling,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling,
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
@@ -280,6 +335,12 @@ function TerminalLayout({
                 {heroNumber}
               </span>
             </div>
+
+            {showChart && data.equityCurve && data.equityCurve.length > 1 && (
+              <div className="mb-4 opacity-80">
+                <Sparkline points={data.equityCurve} color={heroColor} width={260} height={40} />
+              </div>
+            )}
 
             {/* Stats grid — terminal rows */}
             {showWinLoss && (
@@ -340,6 +401,112 @@ function TerminalLayout({
             )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Hero Layout (big hero number, horizontal stats, Axiom-inspired) ───
+
+function HeroLayout({
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling,
+}: CardPreviewProps) {
+  const style = styling ?? DEFAULT_STYLING;
+  const fontStack = getFontStack(style.fontFamily);
+  const bgCss = getThemeCss(theme, customBgUrl);
+  const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+
+  return (
+    <div
+      id="flex-card-preview"
+      className={cn('relative overflow-hidden rounded-[var(--radius-xl)] w-full', aspectStyles[aspectRatio])}
+      style={{ background: bgCss, fontFamily: fontStack }}
+    >
+      {/* subtle dark gradient overlay for text legibility */}
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 50%, rgba(0,0,0,0.15) 100%)' }} />
+
+      <div className="absolute inset-0 flex flex-col p-6 justify-between">
+        {/* Header: logo + TERMINAL × username  (left)   |   CTA (right) */}
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-2">
+            {/* pill-capsule icon */}
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="8" width="20" height="8" rx="4" stroke={heroColor} strokeWidth="2" />
+              <line x1="12" y1="8" x2="12" y2="16" stroke={heroColor} strokeWidth="2" />
+            </svg>
+            <span className="text-base font-bold tracking-[0.2em] uppercase" style={{ color: style.valueColor }}>
+              TERMINAL
+            </span>
+            {showUsername && data.username && (
+              <>
+                <span className="text-base font-light" style={{ color: style.labelColor }}>×</span>
+                <span className="text-base font-medium" style={{ color: style.usernameColor }}>
+                  {data.username}
+                </span>
+              </>
+            )}
+          </div>
+
+          {(data.ctaTopLine || data.ctaBottomLine) && (
+            <div className="text-right">
+              {data.ctaTopLine && (
+                <p className="text-xs leading-tight" style={{ color: style.labelColor }}>
+                  {data.ctaTopLine}
+                </p>
+              )}
+              {data.ctaBottomLine && (
+                <p className="text-xs font-semibold leading-tight" style={{ color: style.usernameColor }}>
+                  {data.ctaBottomLine}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Hero: period label + big number, left-aligned, vertically centered */}
+        <div className="flex-1 flex flex-col justify-center">
+          {metric !== 'calendar' ? (
+            <>
+              <p className="text-xl font-medium mb-2" style={{ color: style.labelColor }}>
+                {data.period}
+              </p>
+              <p className="text-6xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
+                {heroNumber}
+              </p>
+
+              {showChart && data.equityCurve && data.equityCurve.length > 1 && (
+                <div className="mt-4 -ml-1 opacity-80">
+                  <Sparkline points={data.equityCurve} color={heroColor} width={280} height={48} />
+                </div>
+              )}
+            </>
+          ) : (
+            <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} fontStack={fontStack} labelColor={style.labelColor} valueColor={style.valueColor} />
+          )}
+        </div>
+
+        {/* Stats row: horizontal, left-aligned, label above value */}
+        {showWinLoss && metric !== 'calendar' && stats.length > 0 && (
+          <div className="flex gap-8">
+            {stats.map((s) => (
+              <div key={s.label} className="flex flex-col">
+                <span className="text-xs font-normal mb-0.5" style={{ color: style.labelColor }}>
+                  {s.label}
+                </span>
+                <span className="text-xl font-bold" style={{ color: style.valueColor }}>
+                  {s.value}
+                </span>
+              </div>
+            ))}
+            {showBranding && (
+              <div className="ml-auto flex items-end">
+                <span className="text-[10px] tracking-[0.15em] uppercase" style={{ color: style.brandingColor }}>
+                  haia.app
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

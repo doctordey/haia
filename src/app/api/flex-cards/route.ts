@@ -29,6 +29,7 @@ export async function POST(request: Request) {
     accountId, title, period, metric, backgroundTheme, customBgUrl,
     showUsername, showChart, showWinLoss, showBranding,
     fontFamily, heroColor, labelColor, valueColor, usernameColor, brandingColor,
+    layout, ctaTopLine, ctaBottomLine,
   } = body;
 
   if (!period || !metric) {
@@ -55,6 +56,9 @@ export async function POST(request: Request) {
       valueColor: valueColor || '#E8E9ED',
       usernameColor: usernameColor || '#E8E9ED',
       brandingColor: brandingColor || '#5A5C66',
+      layout: layout || 'default',
+      ctaTopLine: ctaTopLine || null,
+      ctaBottomLine: ctaBottomLine || null,
     })
     .returning();
 

@@ -9,7 +9,7 @@ import { startOfMonth, endOfMonth, eachDayOfInterval, format, startOfWeek, endOf
 
 export type MetricType = 'pnl' | 'winrate' | 'profitfactor' | 'monthlyreturn' | 'sharpe' | 'pctgain' | 'pips' | 'calendar';
 export type AspectRatio = 'square' | 'landscape' | 'story';
-export type CardLayout = 'default' | 'terminal' | 'hero';
+export type CardLayout = 'default' | 'terminal' | 'hero' | 'axiom';
 
 export interface CardStyling {
   fontFamily: FontFamilyId;
@@ -73,7 +73,8 @@ interface CardPreviewProps {
   showWinLoss: boolean;
   showBranding: boolean;
   styling?: CardStyling;
-  visibleStats?: [boolean, boolean, boolean]; // per-stat toggle for hero layout bottom row
+  visibleStats?: [boolean, boolean, boolean]; // per-stat toggle for bottom row
+  showHeroBox?: boolean; // colored box behind hero number
 }
 
 const aspectStyles: Record<AspectRatio, string> = {
@@ -169,6 +170,7 @@ function useCardData(metric: MetricType, data: FlexCardData, overrideHeroColor: 
 export function CardPreview(props: CardPreviewProps) {
   if (props.layout === 'terminal') return <TerminalLayout {...props} />;
   if (props.layout === 'hero') return <HeroLayout {...props} />;
+  if (props.layout === 'axiom') return <AxiomLayout {...props} />;
   return <DefaultLayout {...props} />;
 }
 
@@ -410,7 +412,7 @@ function TerminalLayout({
 // ─── Hero Layout (big hero number, horizontal stats, Axiom-inspired) ───
 
 function HeroLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling, visibleStats,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling, visibleStats, showHeroBox,
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
@@ -472,9 +474,17 @@ function HeroLayout({
               <p className="text-xl font-medium mb-2" style={{ color: style.labelColor }}>
                 {data.period}
               </p>
-              <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
-                {heroNumber}
-              </p>
+              {showHeroBox ? (
+                <div className="inline-block px-4 py-2 rounded-md" style={{ backgroundColor: heroColor }}>
+                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: '#0B0C10' }}>
+                    {heroNumber}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
+                  {heroNumber}
+                </p>
+              )}
 
               {showChart && data.equityCurve && data.equityCurve.length > 1 && (
                 <div className="mt-4 -ml-1 opacity-80">
@@ -509,6 +519,123 @@ function HeroLayout({
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Axiom Layout (vertical stats list, hero box, bottom username) ──
+
+function AxiomLayout({
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling, visibleStats, showHeroBox,
+}: CardPreviewProps) {
+  const style = styling ?? DEFAULT_STYLING;
+  const fontStack = getFontStack(style.fontFamily);
+  const bgCss = getThemeCss(theme, customBgUrl);
+  const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+
+  const vis = visibleStats ?? [true, true, true];
+  const filteredStats = stats.filter((_, i) => vis[i]);
+
+  return (
+    <div
+      id="flex-card-preview"
+      className={cn('relative overflow-hidden rounded-[var(--radius-xl)] w-full', aspectStyles[aspectRatio])}
+      style={{ background: bgCss, fontFamily: fontStack }}
+    >
+      {/* dark overlay for legibility */}
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 40%, rgba(0,0,0,0.1) 100%)' }} />
+
+      <div className="absolute inset-0 flex flex-col p-6 justify-between">
+        {/* Header: Haia logo (left) + HAIA Pro (right) */}
+        <div className="flex items-start justify-between">
+          <div className="w-8 h-8">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M16 4L4 12v8l12 8 12-8v-8L16 4z" fill="white" fillOpacity="0.9" />
+              <path d="M16 8L8 13v6l8 5 8-5v-6l-8-5z" fill="#0B0C10" />
+            </svg>
+          </div>
+          <div className="text-right">
+            <span className="text-lg font-bold tracking-wide" style={{ color: style.valueColor }}>HAIA</span>
+            <span className="text-lg font-light ml-0.5" style={{ color: style.labelColor }}>Pro</span>
+          </div>
+        </div>
+
+        {/* Middle: period label + hero number (with optional box) */}
+        <div className="flex-1 flex flex-col justify-center">
+          {metric !== 'calendar' ? (
+            <>
+              <p className="text-lg font-semibold mb-3" style={{ color: style.valueColor }}>
+                {data.period}
+              </p>
+
+              {showHeroBox ? (
+                <div className="inline-block self-start px-4 py-2 rounded-md mb-4" style={{ backgroundColor: heroColor }}>
+                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: '#0B0C10' }}>
+                    {heroNumber}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-4xl font-bold leading-none tracking-tight mb-4" style={{ color: heroColor }}>
+                  {heroNumber}
+                </p>
+              )}
+
+              {/* Vertical stats list — label left, value right */}
+              {showWinLoss && filteredStats.length > 0 && (
+                <div className="space-y-1.5">
+                  {filteredStats.map((s) => (
+                    <div key={s.label} className="flex items-center gap-6">
+                      <span className="text-sm font-medium w-24" style={{ color: style.labelColor }}>
+                        {s.label}
+                      </span>
+                      <span className="text-sm font-bold" style={{ color: style.valueColor }}>
+                        {s.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {showChart && data.equityCurve && data.equityCurve.length > 1 && (
+                <div className="mt-3 opacity-80">
+                  <Sparkline points={data.equityCurve} color={heroColor} width={240} height={36} />
+                </div>
+              )}
+            </>
+          ) : (
+            <MiniCalendar days={data.calendarDays || []} year={data.calendarYear || new Date().getFullYear()} month={data.calendarMonth || new Date().getMonth() + 1} totalPnl={data.totalPnl || 0} winDays={data.winDays || 0} lossDays={data.lossDays || 0} fontStack={fontStack} labelColor={style.labelColor} valueColor={style.valueColor} />
+          )}
+        </div>
+
+        {/* Footer: avatar + username (left), branding + CTA (right) */}
+        <div className="flex items-end justify-between">
+          <div>
+            {showUsername && data.username && (
+              <div className="flex items-center gap-2">
+                {data.avatarUrl ? (
+                  <img src={data.avatarUrl} className="w-8 h-8 rounded-lg" alt="" />
+                ) : (
+                  <div className="w-8 h-8 rounded-lg bg-[#6C5CE7] flex items-center justify-center text-sm font-bold" style={{ color: 'white' }}>
+                    {data.username[0]?.toUpperCase()}
+                  </div>
+                )}
+                <span className="text-base font-semibold" style={{ color: style.usernameColor }}>
+                  @{data.username}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="text-right">
+            {showBranding && (
+              <p className="text-xs" style={{ color: style.brandingColor }}>haia.app</p>
+            )}
+            {data.ctaTopLine && (
+              <p className="text-[10px]" style={{ color: style.labelColor }}>{data.ctaTopLine}</p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

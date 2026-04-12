@@ -49,6 +49,7 @@ export default function FlexCardsPage() {
   const [ctaTopLine, setCtaTopLine] = useState('');
   const [ctaBottomLine, setCtaBottomLine] = useState('');
   const [visibleStats, setVisibleStats] = useState<[boolean, boolean, boolean]>([true, true, true]);
+  const [showHeroBox, setShowHeroBox] = useState(false);
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   interface SavedCard {
     id: string;
@@ -330,6 +331,7 @@ export default function FlexCardsPage() {
                 showBranding={showBranding}
                 styling={styling}
                 visibleStats={visibleStats}
+                showHeroBox={showHeroBox}
               />
             </div>
           </CardContent>
@@ -449,6 +451,7 @@ export default function FlexCardsPage() {
                   { id: 'default' as CardLayout, label: 'Haia' },
                   { id: 'terminal' as CardLayout, label: 'Terminal' },
                   { id: 'hero' as CardLayout, label: 'Hero' },
+                  { id: 'axiom' as CardLayout, label: 'Axiom' },
                 ]).map((l) => (
                   <button
                     key={l.id}
@@ -512,8 +515,29 @@ export default function FlexCardsPage() {
                 </div>
               ))}
 
-              {/* Per-stat toggles for Hero layout bottom row */}
-              {cardLayout === 'hero' && showWinLoss && (
+              {/* Hero Box toggle for Hero + Axiom layouts */}
+              {(cardLayout === 'hero' || cardLayout === 'axiom') && (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-text-secondary">Hero Box</span>
+                  <button
+                    role="switch"
+                    aria-checked={showHeroBox}
+                    onClick={() => setShowHeroBox(!showHeroBox)}
+                    className={cn(
+                      'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
+                      showHeroBox ? 'bg-accent-primary' : 'bg-bg-tertiary'
+                    )}
+                  >
+                    <div className={cn(
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                      showHeroBox ? 'translate-x-4' : 'translate-x-0.5'
+                    )} />
+                  </button>
+                </div>
+              )}
+
+              {/* Per-stat toggles for Hero/Axiom layout stat rows */}
+              {(cardLayout === 'hero' || cardLayout === 'axiom') && showWinLoss && (
                 <>
                   <div className="border-t border-border-primary pt-2 mt-2">
                     <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-2">Bottom Row Stats</p>

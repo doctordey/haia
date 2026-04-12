@@ -90,7 +90,6 @@ export default function FlexCardsPage() {
       try {
         const dashParams = new URLSearchParams();
         if (period === 'custom') {
-        if (period === 'custom') {
           if (customDateFrom) dashParams.set('from', customDateFrom);
           if (customDateTo) dashParams.set('to', customDateTo);
         } else {

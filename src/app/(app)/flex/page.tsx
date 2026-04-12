@@ -48,6 +48,7 @@ export default function FlexCardsPage() {
   const [styling, setStyling] = useState<CardStyling>(DEFAULT_STYLING);
   const [ctaTopLine, setCtaTopLine] = useState('');
   const [ctaBottomLine, setCtaBottomLine] = useState('');
+  const [visibleStats, setVisibleStats] = useState<[boolean, boolean, boolean]>([true, true, true]);
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   interface SavedCard {
     id: string;
@@ -328,6 +329,7 @@ export default function FlexCardsPage() {
                 showWinLoss={showWinLoss}
                 showBranding={showBranding}
                 styling={styling}
+                visibleStats={visibleStats}
               />
             </div>
           </CardContent>
@@ -509,6 +511,50 @@ export default function FlexCardsPage() {
                   </button>
                 </div>
               ))}
+
+              {/* Per-stat toggles for Hero layout bottom row */}
+              {cardLayout === 'hero' && showWinLoss && (
+                <>
+                  <div className="border-t border-border-primary pt-2 mt-2">
+                    <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-2">Bottom Row Stats</p>
+                  </div>
+                  {(() => {
+                    const statLabels: Record<string, string[]> = {
+                      pnl: ['PNL %', 'Win Rate', 'Trades'],
+                      winrate: ['Wins / Losses', 'Profit Factor', 'Trades'],
+                      profitfactor: ['Gross Profit', 'Gross Loss', 'Trades'],
+                      monthlyreturn: ['Start Balance', 'End Balance', 'PNL'],
+                      sharpe: ['Mean Return', 'Std Dev', 'Trades'],
+                      pctgain: ['Start Balance', 'End Balance', 'Difference'],
+                      pips: ['Avg/Trade', 'Best Trade', 'Trades'],
+                    };
+                    const labels = statLabels[metric] || ['Stat 1', 'Stat 2', 'Stat 3'];
+                    return labels.map((label, i) => (
+                      <div key={label} className="flex items-center justify-between">
+                        <span className="text-xs text-text-secondary">{label}</span>
+                        <button
+                          role="switch"
+                          aria-checked={visibleStats[i]}
+                          onClick={() => {
+                            const next: [boolean, boolean, boolean] = [...visibleStats] as [boolean, boolean, boolean];
+                            next[i] = !next[i];
+                            setVisibleStats(next);
+                          }}
+                          className={cn(
+                            'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
+                            visibleStats[i] ? 'bg-accent-primary' : 'bg-bg-tertiary'
+                          )}
+                        >
+                          <div className={cn(
+                            'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                            visibleStats[i] ? 'translate-x-4' : 'translate-x-0.5'
+                          )} />
+                        </button>
+                      </div>
+                    ));
+                  })()}
+                </>
+              )}
             </CardContent>
           </Card>
 

@@ -73,6 +73,7 @@ interface CardPreviewProps {
   showWinLoss: boolean;
   showBranding: boolean;
   styling?: CardStyling;
+  visibleStats?: [boolean, boolean, boolean]; // per-stat toggle for hero layout bottom row
 }
 
 const aspectStyles: Record<AspectRatio, string> = {
@@ -409,12 +410,15 @@ function TerminalLayout({
 // ─── Hero Layout (big hero number, horizontal stats, Axiom-inspired) ───
 
 function HeroLayout({
-  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling,
+  metric, data, theme, customBgUrl, aspectRatio, showUsername, showChart, showWinLoss, showBranding, styling, visibleStats,
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+
+  const vis = visibleStats ?? [true, true, true];
+  const filteredStats = stats.filter((_, i) => vis[i]);
 
   return (
     <div
@@ -426,16 +430,14 @@ function HeroLayout({
       <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 50%, rgba(0,0,0,0.15) 100%)' }} />
 
       <div className="absolute inset-0 flex flex-col p-6 justify-between">
-        {/* Header: logo + TERMINAL × username  (left)   |   CTA (right) */}
+        {/* Header: logo + HAIA × username  (left)   |   CTA (right) */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            {/* pill-capsule icon */}
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="8" width="20" height="8" rx="4" stroke={heroColor} strokeWidth="2" />
-              <line x1="12" y1="8" x2="12" y2="16" stroke={heroColor} strokeWidth="2" />
-            </svg>
+            <div className="w-7 h-7 bg-[#6C5CE7] rounded-md flex items-center justify-center">
+              <span className="text-white font-bold text-xs" style={{ fontFamily: fontStack }}>H</span>
+            </div>
             <span className="text-base font-bold tracking-[0.2em] uppercase" style={{ color: style.valueColor }}>
-              TERMINAL
+              HAIA
             </span>
             {showUsername && data.username && (
               <>
@@ -470,7 +472,7 @@ function HeroLayout({
               <p className="text-xl font-medium mb-2" style={{ color: style.labelColor }}>
                 {data.period}
               </p>
-              <p className="text-6xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
+              <p className="text-5xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
                 {heroNumber}
               </p>
 
@@ -485,10 +487,10 @@ function HeroLayout({
           )}
         </div>
 
-        {/* Stats row: horizontal, left-aligned, label above value */}
-        {showWinLoss && metric !== 'calendar' && stats.length > 0 && (
+        {/* Stats row: horizontal, left-aligned, individually toggleable */}
+        {showWinLoss && metric !== 'calendar' && filteredStats.length > 0 && (
           <div className="flex gap-8">
-            {stats.map((s) => (
+            {filteredStats.map((s) => (
               <div key={s.label} className="flex flex-col">
                 <span className="text-xs font-normal mb-0.5" style={{ color: style.labelColor }}>
                   {s.label}

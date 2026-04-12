@@ -472,7 +472,7 @@ function HeroLayout({
               <p className="text-xl font-medium mb-2" style={{ color: style.labelColor }}>
                 {data.period}
               </p>
-              <p className="text-5xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
+              <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
                 {heroNumber}
               </p>
 

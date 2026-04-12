@@ -83,7 +83,7 @@ interface CardPreviewProps {
 
 const aspectStyles: Record<AspectRatio, string> = {
   square: 'aspect-square',
-  landscape: 'aspect-[1200/630]',
+  landscape: 'aspect-[16/9]',
   story: 'aspect-[1080/1920]',
 };
 

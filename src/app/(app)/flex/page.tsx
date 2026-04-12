@@ -67,6 +67,8 @@ export default function FlexCardsPage() {
     valueColor: string;
     usernameColor: string;
     brandingColor: string;
+    heroBoxColor: string | null;
+    heroBoxTextColor: string;
     layout: CardLayout;
     ctaTopLine: string | null;
     ctaBottomLine: string | null;
@@ -282,6 +284,8 @@ export default function FlexCardsPage() {
       valueColor: card.valueColor || '#E8E9ED',
       usernameColor: card.usernameColor || '#E8E9ED',
       brandingColor: card.brandingColor || '#5A5C66',
+      heroBoxColor: card.heroBoxColor ?? null,
+      heroBoxTextColor: card.heroBoxTextColor || '#0B0C10',
     });
     setCardLayout(card.layout || 'default');
     setCtaTopLine(card.ctaTopLine || '');

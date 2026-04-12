@@ -629,6 +629,10 @@ export default function FlexCardsPage() {
                     { key: 'valueColor' as const, label: 'Stat Values', isAuto: false },
                     { key: 'usernameColor' as const, label: 'Username', isAuto: false },
                     { key: 'brandingColor' as const, label: 'Branding', isAuto: false },
+                    ...(showHeroBox ? [
+                      { key: 'heroBoxColor' as const, label: 'Hero Box Fill', isAuto: true },
+                      { key: 'heroBoxTextColor' as const, label: 'Hero Box Text', isAuto: false },
+                    ] : []),
                   ]).map(({ key, label, isAuto }) => {
                     const current = styling[key];
                     return (

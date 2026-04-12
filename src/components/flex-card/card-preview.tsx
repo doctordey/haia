@@ -18,6 +18,8 @@ export interface CardStyling {
   valueColor: string;
   usernameColor: string;
   brandingColor: string;
+  heroBoxColor: string | null;   // null = match heroColor
+  heroBoxTextColor: string;
 }
 
 export const DEFAULT_STYLING: CardStyling = {
@@ -27,6 +29,8 @@ export const DEFAULT_STYLING: CardStyling = {
   valueColor: '#E8E9ED',
   usernameColor: '#E8E9ED',
   brandingColor: '#5A5C66',
+  heroBoxColor: null,
+  heroBoxTextColor: '#0B0C10',
 };
 
 export interface FlexCardData {
@@ -475,8 +479,8 @@ function HeroLayout({
                 {data.period}
               </p>
               {showHeroBox ? (
-                <div className="inline-block px-4 py-2 rounded-md" style={{ backgroundColor: heroColor }}>
-                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: '#0B0C10' }}>
+                <div className="inline-block px-4 py-2 rounded-md" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
+                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: style.heroBoxTextColor }}>
                     {heroNumber}
                   </p>
                 </div>
@@ -570,8 +574,8 @@ function AxiomLayout({
               </p>
 
               {showHeroBox ? (
-                <div className="inline-block self-start px-4 py-2 rounded-md mb-4" style={{ backgroundColor: heroColor }}>
-                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: '#0B0C10' }}>
+                <div className="inline-block self-start px-4 py-2 rounded-md mb-4" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
+                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: style.heroBoxTextColor }}>
                     {heroNumber}
                   </p>
                 </div>

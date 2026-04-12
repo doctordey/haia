@@ -90,6 +90,7 @@ export default function FlexCardsPage() {
       try {
         const dashParams = new URLSearchParams();
         if (period === 'custom') {
+        if (period === 'custom') {
           if (customDateFrom) dashParams.set('from', customDateFrom);
           if (customDateTo) dashParams.set('to', customDateTo);
         } else {
@@ -100,17 +101,19 @@ export default function FlexCardsPage() {
         // Equity curve range: reuse period where possible (1D/7D/30D/90D/1Y/MAX)
         const equityRange = period === 'custom' ? 'MAX' : period;
 
-        const [dashRes, calRes, equityRes] = await Promise.all([
+        const [dashRes, calRes, equityRes, profileRes] = await Promise.all([
           fetch(`/api/dashboard/${selectedAccountId}${dashQuery ? `?${dashQuery}` : ''}`),
           metric === 'calendar'
             ? fetch(`/api/calendar/${selectedAccountId}/${new Date().getFullYear()}/${new Date().getMonth() + 1}`)
             : Promise.resolve(null),
           fetch(`/api/dashboard/${selectedAccountId}/equity-curve?range=${equityRange}`),
+          fetch('/api/user/profile'),
         ]);
 
         const dash = dashRes.ok ? await dashRes.json() : {};
         const calDays = calRes && calRes.ok ? await calRes.json() : [];
         const equityCurve = equityRes.ok ? await equityRes.json() : [];
+        const profile = profileRes.ok ? await profileRes.json() : {};
 
         const startBalance = (dash.balance || 0) - (dash.totalPnl || 0);
         const profitDays = calDays.filter((d: { pnl: number }) => d.pnl > 0);
@@ -120,7 +123,7 @@ export default function FlexCardsPage() {
           period: period === 'custom' && customDateFrom
             ? customDateTo ? `${customDateFrom} – ${customDateTo}` : customDateFrom
             : period,
-          username: session?.user?.name || session?.user?.email?.split('@')[0] || 'trader',
+          username: profile.username || profile.name || session?.user?.name || session?.user?.email?.split('@')[0] || 'trader',
           totalPnl: dash.totalPnl || 0,
           pctGain: dash.pnlPercent || 0,
           tradeCount: dash.totalTrades || 0,

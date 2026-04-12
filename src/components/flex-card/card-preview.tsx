@@ -87,6 +87,28 @@ const aspectStyles: Record<AspectRatio, string> = {
   story: 'aspect-[1080/1920]',
 };
 
+// Landscape is much shorter — use tighter padding/gaps/font sizes
+function useLandscapeCompact(aspectRatio: AspectRatio) {
+  const isLandscape = aspectRatio === 'landscape';
+  return {
+    pad: isLandscape ? 'p-4' : 'p-6',
+    padTerminal: isLandscape ? 'p-3' : 'p-5',
+    gap: isLandscape ? 'gap-1' : 'gap-3',
+    heroSize: isLandscape ? 'text-2xl' : 'text-3xl',
+    heroSizeLg: isLandscape ? 'text-3xl' : 'text-4xl',
+    terminalHero: isLandscape ? 'text-3xl' : 'text-4xl',
+    statLabel: isLandscape ? 'text-[10px]' : 'text-xs',
+    statValue: isLandscape ? 'text-sm' : 'text-xl',
+    statGap: isLandscape ? 'gap-4' : 'gap-8',
+    sparkH: isLandscape ? 28 : 48,
+    sparkHSm: isLandscape ? 24 : 36,
+    sparkW: isLandscape ? 180 : 280,
+    sparkWSm: isLandscape ? 160 : 220,
+    mb: isLandscape ? 'mb-1' : 'mb-2',
+    mt: isLandscape ? 'mt-2' : 'mt-4',
+  };
+}
+
 const metricLabels: Record<MetricType, string> = {
   pnl: 'Realized PNL',
   winrate: 'Win Rate',
@@ -233,6 +255,7 @@ function DefaultLayout({
   const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+  const c = useLandscapeCompact(aspectRatio);
 
   return (
     <div
@@ -240,7 +263,7 @@ function DefaultLayout({
       className={cn('relative overflow-hidden rounded-[var(--radius-xl)] w-full', aspectStyles[aspectRatio])}
       style={{ background: bgCss }}
     >
-      <div className="absolute inset-0 flex flex-col p-6 justify-between">
+      <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
         <div className="flex items-center justify-between">
           <div className="w-7 h-7 bg-[#6C5CE7] rounded-md flex items-center justify-center">
             <span className="text-white font-bold text-xs" style={{ fontFamily: fontStack }}>H</span>
@@ -248,22 +271,22 @@ function DefaultLayout({
           <span className="text-sm font-medium" style={{ color: style.labelColor, fontFamily: fontStack }}>Haia</span>
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+        <div className={cn('flex-1 flex flex-col items-center justify-center', c.gap)}>
           {metric !== 'calendar' ? (
             <>
               <p className="text-sm" style={{ color: style.labelColor, fontFamily: fontStack }}>{data.period} {metricLabels[metric]}</p>
-              <p className="text-3xl font-bold" style={{ color: heroColor, fontFamily: fontStack }}>{heroNumber}</p>
+              <p className={cn(c.heroSize, 'font-bold')} style={{ color: heroColor, fontFamily: fontStack }}>{heroNumber}</p>
               {showChart && data.equityCurve && data.equityCurve.length > 1 && (
                 <div className="opacity-80 -mt-1">
-                  <Sparkline points={data.equityCurve} color={heroColor} width={220} height={36} />
+                  <Sparkline points={data.equityCurve} color={heroColor} width={c.sparkWSm} height={c.sparkHSm} />
                 </div>
               )}
               {showWinLoss && (
-                <div className="space-y-1.5 mt-2 w-full max-w-[240px]">
+                <div className="space-y-1 mt-1 w-full max-w-[240px]">
                   {stats.map((s) => (
                     <div key={s.label} className="flex justify-between">
-                      <span className="text-xs" style={{ color: style.labelColor, fontFamily: fontStack }}>{s.label}</span>
-                      <span className="text-xs" style={{ color: style.valueColor, fontFamily: fontStack }}>{s.value}</span>
+                      <span className={c.statLabel} style={{ color: style.labelColor, fontFamily: fontStack }}>{s.label}</span>
+                      <span className={c.statLabel} style={{ color: style.valueColor, fontFamily: fontStack }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
@@ -305,6 +328,7 @@ function TerminalLayout({
   const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+  const c = useLandscapeCompact(aspectRatio);
 
   // Terminal style: left-aligned, compact rows, subtle grid lines
   return (
@@ -313,9 +337,9 @@ function TerminalLayout({
       className={cn('relative overflow-hidden rounded-[var(--radius-lg)] w-full', aspectStyles[aspectRatio])}
       style={{ background: bgCss }}
     >
-      <div className="absolute inset-0 flex flex-col p-5 justify-between" style={{ fontFamily: fontStack }}>
+      <div className={cn('absolute inset-0 flex flex-col justify-between', c.padTerminal)} style={{ fontFamily: fontStack }}>
         {/* Terminal header bar */}
-        <div className="flex items-center justify-between pb-3 mb-3" style={{ borderBottom: '1px solid rgba(42,45,58,0.8)' }}>
+        <div className="flex items-center justify-between pb-2 mb-2" style={{ borderBottom: '1px solid rgba(42,45,58,0.8)' }}>
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
               <div className="w-2.5 h-2.5 rounded-full bg-[#FF4D6A]/60" />
@@ -330,22 +354,22 @@ function TerminalLayout({
         {metric !== 'calendar' ? (
           <>
             {/* Metric label */}
-            <div className="mb-1">
+            <div className="mb-0.5">
               <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: style.labelColor }}>
                 {metricLabels[metric]}
               </span>
             </div>
 
             {/* Hero number — large, left-aligned */}
-            <div className="mb-4">
-              <span className="text-4xl font-bold tracking-tight" style={{ color: heroColor }}>
+            <div className={c.mb}>
+              <span className={cn(c.terminalHero, 'font-bold tracking-tight')} style={{ color: heroColor }}>
                 {heroNumber}
               </span>
             </div>
 
             {showChart && data.equityCurve && data.equityCurve.length > 1 && (
-              <div className="mb-4 opacity-80">
-                <Sparkline points={data.equityCurve} color={heroColor} width={260} height={40} />
+              <div className={cn(c.mb, 'opacity-80')}>
+                <Sparkline points={data.equityCurve} color={heroColor} width={c.sparkW} height={c.sparkHSm} />
               </div>
             )}
 
@@ -356,18 +380,18 @@ function TerminalLayout({
                   {stats.map((s, i) => (
                     <div
                       key={s.label}
-                      className="flex items-center justify-between py-2"
+                      className="flex items-center justify-between py-1"
                       style={{ borderBottom: i < stats.length - 1 ? '1px solid rgba(30,33,48,0.6)' : 'none' }}
                     >
-                      <span className="text-xs uppercase tracking-wider" style={{ color: style.labelColor }}>{s.label}</span>
-                      <span className="text-sm font-semibold" style={{ color: style.valueColor }}>{s.value}</span>
+                      <span className={cn(c.statLabel, 'uppercase tracking-wider')} style={{ color: style.labelColor }}>{s.label}</span>
+                      <span className={cn(c.statLabel, 'font-semibold')} style={{ color: style.valueColor }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
 
                 {/* Win/Loss bar */}
                 {(data.winningTrades || data.losingTrades) ? (
-                  <div className="mt-3">
+                  <div className="mt-2">
                     <div className="flex justify-between text-[10px] mb-1">
                       <span style={{ color: '#00DC82' }}>{data.winningTrades || 0}W</span>
                       <span style={{ color: '#FF4D6A' }}>{data.losingTrades || 0}L</span>
@@ -422,6 +446,7 @@ function HeroLayout({
   const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+  const c = useLandscapeCompact(aspectRatio);
 
   const vis = visibleStats ?? [true, true, true];
   const filteredStats = stats.filter((_, i) => vis[i]);
@@ -435,20 +460,20 @@ function HeroLayout({
       {/* subtle dark gradient overlay for text legibility */}
       <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 50%, rgba(0,0,0,0.15) 100%)' }} />
 
-      <div className="absolute inset-0 flex flex-col p-6 justify-between">
+      <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
         {/* Header: logo + HAIA × username  (left)   |   CTA (right) */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-[#6C5CE7] rounded-md flex items-center justify-center">
-              <span className="text-white font-bold text-xs" style={{ fontFamily: fontStack }}>H</span>
+            <div className="w-6 h-6 bg-[#6C5CE7] rounded-md flex items-center justify-center">
+              <span className="text-white font-bold text-[10px]" style={{ fontFamily: fontStack }}>H</span>
             </div>
-            <span className="text-base font-bold tracking-[0.2em] uppercase" style={{ color: style.valueColor }}>
+            <span className="text-sm font-bold tracking-[0.2em] uppercase" style={{ color: style.valueColor }}>
               HAIA
             </span>
             {showUsername && data.username && (
               <>
-                <span className="text-base font-light" style={{ color: style.labelColor }}>×</span>
-                <span className="text-base font-medium" style={{ color: style.usernameColor }}>
+                <span className="text-sm font-light" style={{ color: style.labelColor }}>×</span>
+                <span className="text-sm font-medium" style={{ color: style.usernameColor }}>
                   {data.username}
                 </span>
               </>
@@ -458,12 +483,12 @@ function HeroLayout({
           {(data.ctaTopLine || data.ctaBottomLine) && (
             <div className="text-right">
               {data.ctaTopLine && (
-                <p className="text-xs leading-tight" style={{ color: style.labelColor }}>
+                <p className="text-[10px] leading-tight" style={{ color: style.labelColor }}>
                   {data.ctaTopLine}
                 </p>
               )}
               {data.ctaBottomLine && (
-                <p className="text-xs font-semibold leading-tight" style={{ color: style.usernameColor }}>
+                <p className="text-[10px] font-semibold leading-tight" style={{ color: style.usernameColor }}>
                   {data.ctaBottomLine}
                 </p>
               )}
@@ -475,24 +500,24 @@ function HeroLayout({
         <div className="flex-1 flex flex-col justify-center">
           {metric !== 'calendar' ? (
             <>
-              <p className="text-xl font-medium mb-2" style={{ color: style.labelColor }}>
+              <p className={cn('font-medium', c.mb)} style={{ color: style.labelColor }}>
                 {data.period}
               </p>
               {showHeroBox ? (
-                <div className="inline-block px-4 py-2 rounded-md" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
-                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: style.heroBoxTextColor }}>
+                <div className="inline-block self-start px-3 py-1.5 rounded-md" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
+                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor }}>
                     {heroNumber}
                   </p>
                 </div>
               ) : (
-                <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: heroColor }}>
+                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: heroColor }}>
                   {heroNumber}
                 </p>
               )}
 
               {showChart && data.equityCurve && data.equityCurve.length > 1 && (
-                <div className="mt-4 -ml-1 opacity-80">
-                  <Sparkline points={data.equityCurve} color={heroColor} width={280} height={48} />
+                <div className={cn(c.mt, '-ml-1 opacity-80')}>
+                  <Sparkline points={data.equityCurve} color={heroColor} width={c.sparkW} height={c.sparkH} />
                 </div>
               )}
             </>
@@ -503,13 +528,13 @@ function HeroLayout({
 
         {/* Stats row: horizontal, left-aligned, individually toggleable */}
         {showWinLoss && metric !== 'calendar' && filteredStats.length > 0 && (
-          <div className="flex gap-8">
+          <div className={cn('flex', c.statGap)}>
             {filteredStats.map((s) => (
               <div key={s.label} className="flex flex-col">
-                <span className="text-xs font-normal mb-0.5" style={{ color: style.labelColor }}>
+                <span className={cn(c.statLabel, 'font-normal mb-0.5')} style={{ color: style.labelColor }}>
                   {s.label}
                 </span>
-                <span className="text-xl font-bold" style={{ color: style.valueColor }}>
+                <span className={cn(c.statValue, 'font-bold')} style={{ color: style.valueColor }}>
                   {s.value}
                 </span>
               </div>
@@ -537,6 +562,7 @@ function AxiomLayout({
   const fontStack = getFontStack(style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
+  const c = useLandscapeCompact(aspectRatio);
 
   const vis = visibleStats ?? [true, true, true];
   const filteredStats = stats.filter((_, i) => vis[i]);
@@ -550,18 +576,18 @@ function AxiomLayout({
       {/* dark overlay for legibility */}
       <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 40%, rgba(0,0,0,0.1) 100%)' }} />
 
-      <div className="absolute inset-0 flex flex-col p-6 justify-between">
+      <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
         {/* Header: Haia logo (left) + HAIA Pro (right) */}
         <div className="flex items-start justify-between">
-          <div className="w-8 h-8">
+          <div className="w-7 h-7">
             <svg viewBox="0 0 32 32" fill="none">
               <path d="M16 4L4 12v8l12 8 12-8v-8L16 4z" fill="white" fillOpacity="0.9" />
               <path d="M16 8L8 13v6l8 5 8-5v-6l-8-5z" fill="#0B0C10" />
             </svg>
           </div>
           <div className="text-right">
-            <span className="text-lg font-bold tracking-wide" style={{ color: style.valueColor }}>HAIA</span>
-            <span className="text-lg font-light ml-0.5" style={{ color: style.labelColor }}>Pro</span>
+            <span className="text-sm font-bold tracking-wide" style={{ color: style.valueColor }}>HAIA</span>
+            <span className="text-sm font-light ml-0.5" style={{ color: style.labelColor }}>Pro</span>
           </div>
         </div>
 
@@ -569,31 +595,31 @@ function AxiomLayout({
         <div className="flex-1 flex flex-col justify-center">
           {metric !== 'calendar' ? (
             <>
-              <p className="text-lg font-semibold mb-3" style={{ color: style.valueColor }}>
+              <p className={cn('font-semibold', c.mb)} style={{ color: style.valueColor }}>
                 {data.period}
               </p>
 
               {showHeroBox ? (
-                <div className="inline-block self-start px-4 py-2 rounded-md mb-4" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
-                  <p className="text-4xl font-bold leading-none tracking-tight" style={{ color: style.heroBoxTextColor }}>
+                <div className={cn('inline-block self-start px-3 py-1.5 rounded-md', c.mb)} style={{ backgroundColor: style.heroBoxColor || heroColor }}>
+                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor }}>
                     {heroNumber}
                   </p>
                 </div>
               ) : (
-                <p className="text-4xl font-bold leading-none tracking-tight mb-4" style={{ color: heroColor }}>
+                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight', c.mb)} style={{ color: heroColor }}>
                   {heroNumber}
                 </p>
               )}
 
               {/* Vertical stats list — label left, value right */}
               {showWinLoss && filteredStats.length > 0 && (
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   {filteredStats.map((s) => (
                     <div key={s.label} className="flex items-center gap-6">
-                      <span className="text-sm font-medium w-24" style={{ color: style.labelColor }}>
+                      <span className={cn(c.statLabel, 'font-medium w-24')} style={{ color: style.labelColor }}>
                         {s.label}
                       </span>
-                      <span className="text-sm font-bold" style={{ color: style.valueColor }}>
+                      <span className={cn(c.statLabel, 'font-bold')} style={{ color: style.valueColor }}>
                         {s.value}
                       </span>
                     </div>

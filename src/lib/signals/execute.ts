@@ -125,6 +125,18 @@ async function executeSignal(
     contractSpec,
   );
 
+  // Debug: log the full sizing decision
+  const stopDist = Math.abs(adjusted.entry - adjusted.sl);
+  console.log(
+    `[sizing] ${signal.instrument} ${signal.direction} | mode=${sizingConfig.mode} ` +
+    `balance=$${account.balance.toFixed(0)} equity=$${account.equity.toFixed(0)} | ` +
+    `baseRisk=${sizingConfig.baseRiskPercent}% maxRisk=${sizingConfig.maxRiskPercent}% ` +
+    `size=${signal.size} mult=${sizingConfig.sizeMultipliers[signal.size]} | ` +
+    `entry=${adjusted.entry} sl=${adjusted.sl} stopDist=${stopDist.toFixed(1)}pts ` +
+    `pipValue=${contractSpec.pipValuePerLot} | ` +
+    `result: ${sizing.lotSize} lots (${sizing.chunks.length} chunks) — ${sizing.reason}`
+  );
+
   // Shared fields for all executions from this signal
   const sharedFields = {
     ...baseResult,

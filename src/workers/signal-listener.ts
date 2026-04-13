@@ -28,6 +28,7 @@ import { parseSignalMessage } from '../lib/signals/parser';
 import { executePipeline } from '../lib/signals/execute';
 import { handleCancellation } from '../lib/signals/cancel';
 import { onPositionClosed } from '../lib/signals/breakeven';
+import { getMetaApiInstance } from '../lib/metaapi';
 import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 
 // ─── Globals ──────────────────────────────────────────
@@ -45,7 +46,6 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
 
   console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId})...`);
 
-  const { getMetaApiInstance } = require('../lib/metaapi');
   const api = getMetaApiInstance('signals');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 

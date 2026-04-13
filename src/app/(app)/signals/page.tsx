@@ -144,7 +144,15 @@ export default function SignalDashboardPage() {
       if (historyRes.ok) setOffsetHistory(await historyRes.json());
       if (configRes.ok) {
         const data = await configRes.json();
-        if (data) setConfig(data);
+        // Config endpoint returns an array when no accountId specified;
+        // pick the first enabled config, or fall back to the first one
+        if (Array.isArray(data)) {
+          const enabled = data.find((c: SignalConfig) => c.isEnabled);
+          if (enabled) setConfig(enabled);
+          else if (data.length > 0) setConfig(data[0]);
+        } else if (data) {
+          setConfig(data);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch signal data:', err);

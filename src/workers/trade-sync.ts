@@ -9,6 +9,7 @@ import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
 import { eq, and, ne, lt, or, isNull, sql } from 'drizzle-orm';
 import { calculateAccountStats, calculatePips } from '../lib/calculations';
+import { getMetaApiInstance } from '../lib/metaapi';
 import { format } from 'date-fns';
 
 const STALE_SYNC_MS = 15 * 60 * 1000; // 15 minutes
@@ -53,7 +54,6 @@ async function syncAccount(accountId: string) {
   let connection: any = null;
 
   try {
-    const { getMetaApiInstance } = require('../lib/metaapi');
     const api = getMetaApiInstance('analytics');
     const metaAccount = await api.metatraderAccountApi.getAccount(account.metaApiId);
 

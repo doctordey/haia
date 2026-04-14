@@ -190,6 +190,9 @@ export const flexCards = pgTable('flex_cards', {
   showBranding:    boolean('show_branding').notNull().default(true),
   // Text styling
   fontFamily:      text('font_family').notNull().default('inter'),
+  heroFontFamily:  text('hero_font_family'),   // null = inherit from fontFamily
+  valueFontFamily: text('value_font_family'),  // null = inherit from fontFamily
+  dateFormat:      text('date_format').notNull().default('short'),  // 'short' | 'long'
   heroColor:       text('hero_color'),         // null = auto (green/red based on value)
   labelColor:      text('label_color').notNull().default('#8B8D98'),
   valueColor:      text('value_color').notNull().default('#E8E9ED'),

@@ -28,7 +28,9 @@ export async function POST(request: Request) {
   const {
     accountId, title, period, metric, backgroundTheme, customBgUrl,
     showUsername, showChart, showWinLoss, showBranding,
-    fontFamily, heroColor, labelColor, valueColor, usernameColor, brandingColor,
+    fontFamily, heroFontFamily, valueFontFamily, dateFormat,
+    heroColor, labelColor, valueColor, usernameColor, brandingColor,
+    heroBoxColor, heroBoxTextColor,
     layout, ctaTopLine, ctaBottomLine,
   } = body;
 
@@ -51,11 +53,16 @@ export async function POST(request: Request) {
       showWinLoss: showWinLoss ?? true,
       showBranding: showBranding ?? true,
       fontFamily: fontFamily || 'inter',
+      heroFontFamily: heroFontFamily ?? null,
+      valueFontFamily: valueFontFamily ?? null,
+      dateFormat: dateFormat || 'short',
       heroColor: heroColor ?? null,
       labelColor: labelColor || '#8B8D98',
       valueColor: valueColor || '#E8E9ED',
       usernameColor: usernameColor || '#E8E9ED',
       brandingColor: brandingColor || '#5A5C66',
+      heroBoxColor: heroBoxColor ?? null,
+      heroBoxTextColor: heroBoxTextColor || '#0B0C10',
       layout: layout || 'default',
       ctaTopLine: ctaTopLine || null,
       ctaBottomLine: ctaBottomLine || null,

@@ -64,6 +64,13 @@
       "when": 1807300000000,
       "tag": "0008_flex_card_styling",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1807400000000,
+      "tag": "0009_flex_card_fonts_dateformat",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,8 @@ export type CardLayout = 'default' | 'terminal' | 'hero' | 'axiom';
 
 export interface CardStyling {
   fontFamily: FontFamilyId;
+  heroFontFamily: FontFamilyId | null;   // null = inherit from fontFamily
+  valueFontFamily: FontFamilyId | null;  // null = inherit from fontFamily
   heroColor: string | null;      // null = auto (green/red based on value)
   labelColor: string;
   valueColor: string;
@@ -24,6 +26,8 @@ export interface CardStyling {
 
 export const DEFAULT_STYLING: CardStyling = {
   fontFamily: 'inter',
+  heroFontFamily: null,
+  valueFontFamily: null,
   heroColor: null,
   labelColor: '#8B8D98',
   valueColor: '#E8E9ED',
@@ -253,6 +257,8 @@ function DefaultLayout({
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
+  const heroFontStack = getFontStack(style.heroFontFamily ?? style.fontFamily);
+  const valueFontStack = getFontStack(style.valueFontFamily ?? style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
   const c = useLandscapeCompact(aspectRatio);
@@ -275,7 +281,7 @@ function DefaultLayout({
           {metric !== 'calendar' ? (
             <>
               <p className="text-sm" style={{ color: style.labelColor, fontFamily: fontStack }}>{data.period} {metricLabels[metric]}</p>
-              <p className={cn(c.heroSize, 'font-bold')} style={{ color: heroColor, fontFamily: fontStack }}>{heroNumber}</p>
+              <p className={cn(c.heroSize, 'font-bold')} style={{ color: heroColor, fontFamily: heroFontStack }}>{heroNumber}</p>
               {showChart && data.equityCurve && data.equityCurve.length > 1 && (
                 <div className="opacity-80 -mt-1">
                   <Sparkline points={data.equityCurve} color={heroColor} width={c.sparkWSm} height={c.sparkHSm} />
@@ -286,7 +292,7 @@ function DefaultLayout({
                   {stats.map((s) => (
                     <div key={s.label} className="flex justify-between">
                       <span className={c.statLabel} style={{ color: style.labelColor, fontFamily: fontStack }}>{s.label}</span>
-                      <span className={c.statLabel} style={{ color: style.valueColor, fontFamily: fontStack }}>{s.value}</span>
+                      <span className={c.statLabel} style={{ color: style.valueColor, fontFamily: valueFontStack }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
@@ -326,6 +332,8 @@ function TerminalLayout({
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
+  const heroFontStack = getFontStack(style.heroFontFamily ?? style.fontFamily);
+  const valueFontStack = getFontStack(style.valueFontFamily ?? style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
   const c = useLandscapeCompact(aspectRatio);
@@ -362,7 +370,7 @@ function TerminalLayout({
 
             {/* Hero number — large, left-aligned */}
             <div className={c.mb}>
-              <span className={cn(c.terminalHero, 'font-bold tracking-tight')} style={{ color: heroColor }}>
+              <span className={cn(c.terminalHero, 'font-bold tracking-tight')} style={{ color: heroColor, fontFamily: heroFontStack }}>
                 {heroNumber}
               </span>
             </div>
@@ -384,7 +392,7 @@ function TerminalLayout({
                       style={{ borderBottom: i < stats.length - 1 ? '1px solid rgba(30,33,48,0.6)' : 'none' }}
                     >
                       <span className={cn(c.statLabel, 'uppercase tracking-wider')} style={{ color: style.labelColor }}>{s.label}</span>
-                      <span className={cn(c.statLabel, 'font-semibold')} style={{ color: style.valueColor }}>{s.value}</span>
+                      <span className={cn(c.statLabel, 'font-semibold')} style={{ color: style.valueColor, fontFamily: valueFontStack }}>{s.value}</span>
                     </div>
                   ))}
                 </div>
@@ -444,6 +452,8 @@ function HeroLayout({
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
+  const heroFontStack = getFontStack(style.heroFontFamily ?? style.fontFamily);
+  const valueFontStack = getFontStack(style.valueFontFamily ?? style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
   const c = useLandscapeCompact(aspectRatio);
@@ -505,12 +515,12 @@ function HeroLayout({
               </p>
               {showHeroBox ? (
                 <div className="inline-block self-start px-3 py-1.5 rounded-md" style={{ backgroundColor: style.heroBoxColor || heroColor }}>
-                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor }}>
+                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor, fontFamily: heroFontStack }}>
                     {heroNumber}
                   </p>
                 </div>
               ) : (
-                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: heroColor }}>
+                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: heroColor, fontFamily: heroFontStack }}>
                   {heroNumber}
                 </p>
               )}
@@ -534,7 +544,7 @@ function HeroLayout({
                 <span className={cn(c.statLabel, 'font-normal mb-0.5')} style={{ color: style.labelColor }}>
                   {s.label}
                 </span>
-                <span className={cn(c.statValue, 'font-bold')} style={{ color: style.valueColor }}>
+                <span className={cn(c.statValue, 'font-bold')} style={{ color: style.valueColor, fontFamily: valueFontStack }}>
                   {s.value}
                 </span>
               </div>
@@ -560,6 +570,8 @@ function AxiomLayout({
 }: CardPreviewProps) {
   const style = styling ?? DEFAULT_STYLING;
   const fontStack = getFontStack(style.fontFamily);
+  const heroFontStack = getFontStack(style.heroFontFamily ?? style.fontFamily);
+  const valueFontStack = getFontStack(style.valueFontFamily ?? style.fontFamily);
   const bgCss = getThemeCss(theme, customBgUrl);
   const { heroNumber, heroColor, stats } = useCardData(metric, data, style.heroColor);
   const c = useLandscapeCompact(aspectRatio);
@@ -601,12 +613,12 @@ function AxiomLayout({
 
               {showHeroBox ? (
                 <div className={cn('inline-block self-start px-3 py-1.5 rounded-md', c.mb)} style={{ backgroundColor: style.heroBoxColor || heroColor }}>
-                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor }}>
+                  <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight')} style={{ color: style.heroBoxTextColor, fontFamily: heroFontStack }}>
                     {heroNumber}
                   </p>
                 </div>
               ) : (
-                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight', c.mb)} style={{ color: heroColor }}>
+                <p className={cn(c.heroSizeLg, 'font-bold leading-none tracking-tight', c.mb)} style={{ color: heroColor, fontFamily: heroFontStack }}>
                   {heroNumber}
                 </p>
               )}
@@ -619,7 +631,7 @@ function AxiomLayout({
                       <span className={cn(c.statLabel, 'font-medium w-24')} style={{ color: style.labelColor }}>
                         {s.label}
                       </span>
-                      <span className={cn(c.statLabel, 'font-bold')} style={{ color: style.valueColor }}>
+                      <span className={cn(c.statLabel, 'font-bold')} style={{ color: style.valueColor, fontFamily: valueFontStack }}>
                         {s.value}
                       </span>
                     </div>

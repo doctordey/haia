@@ -50,6 +50,7 @@ export default function FlexCardsPage() {
   const [ctaBottomLine, setCtaBottomLine] = useState('');
   const [visibleStats, setVisibleStats] = useState<[boolean, boolean, boolean]>([true, true, true]);
   const [showHeroBox, setShowHeroBox] = useState(false);
+  const [dateFormat, setDateFormat] = useState<'short' | 'long'>('short');
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   interface SavedCard {
     id: string;
@@ -62,6 +63,9 @@ export default function FlexCardsPage() {
     showWinLoss: boolean;
     showBranding: boolean;
     fontFamily: FontFamilyId;
+    heroFontFamily: FontFamilyId | null;
+    valueFontFamily: FontFamilyId | null;
+    dateFormat: 'short' | 'long';
     heroColor: string | null;
     labelColor: string;
     valueColor: string;
@@ -118,10 +122,19 @@ export default function FlexCardsPage() {
         const profitDays = calDays.filter((d: { pnl: number }) => d.pnl > 0);
         const lossDays = calDays.filter((d: { pnl: number }) => d.pnl < 0);
 
+        // Format ISO date (YYYY-MM-DD) into MM/DD or MM/DD/YYYY
+        const fmtDate = (iso: string): string => {
+          const [y, m, d] = iso.split('-');
+          return dateFormat === 'long' ? `${m}/${d}/${y}` : `${m}/${d}`;
+        };
+        const periodDisplay = period === 'custom' && customDateFrom
+          ? customDateTo
+            ? `${fmtDate(customDateFrom)} – ${fmtDate(customDateTo)}`
+            : fmtDate(customDateFrom)
+          : period;
+
         setCardData({
-          period: period === 'custom' && customDateFrom
-            ? customDateTo ? `${customDateFrom} – ${customDateTo}` : customDateFrom
-            : period,
+          period: periodDisplay,
           username: profile.username || profile.name || session?.user?.name || session?.user?.email?.split('@')[0] || 'trader',
           totalPnl: dash.totalPnl || 0,
           pctGain: dash.pnlPercent || 0,
@@ -156,7 +169,7 @@ export default function FlexCardsPage() {
     }
 
     fetchData();
-  }, [selectedAccountId, period, metric, customDateFrom, customDateTo, ctaTopLine, ctaBottomLine]);
+  }, [selectedAccountId, period, metric, customDateFrom, customDateTo, ctaTopLine, ctaBottomLine, dateFormat]);
 
   // Fetch saved cards
   useEffect(() => {
@@ -240,11 +253,16 @@ export default function FlexCardsPage() {
           showWinLoss,
           showBranding,
           fontFamily: styling.fontFamily,
+          heroFontFamily: styling.heroFontFamily,
+          valueFontFamily: styling.valueFontFamily,
+          dateFormat,
           heroColor: styling.heroColor,
           labelColor: styling.labelColor,
           valueColor: styling.valueColor,
           usernameColor: styling.usernameColor,
           brandingColor: styling.brandingColor,
+          heroBoxColor: styling.heroBoxColor,
+          heroBoxTextColor: styling.heroBoxTextColor,
           layout: cardLayout,
           ctaTopLine: ctaTopLine || null,
           ctaBottomLine: ctaBottomLine || null,
@@ -259,7 +277,7 @@ export default function FlexCardsPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling, cardLayout, ctaTopLine, ctaBottomLine]);
+  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling, cardLayout, ctaTopLine, ctaBottomLine, dateFormat]);
 
   const handleDeleteCard = useCallback(async (id: string) => {
     try {
@@ -281,6 +299,8 @@ export default function FlexCardsPage() {
     setShowBranding(card.showBranding);
     setStyling({
       fontFamily: card.fontFamily || 'inter',
+      heroFontFamily: card.heroFontFamily ?? null,
+      valueFontFamily: card.valueFontFamily ?? null,
       heroColor: card.heroColor ?? null,
       labelColor: card.labelColor || '#8B8D98',
       valueColor: card.valueColor || '#E8E9ED',
@@ -292,6 +312,7 @@ export default function FlexCardsPage() {
     setCardLayout(card.layout || 'default');
     setCtaTopLine(card.ctaTopLine || '');
     setCtaBottomLine(card.ctaBottomLine || '');
+    setDateFormat(card.dateFormat || 'short');
   }, []);
 
   const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -373,22 +394,44 @@ export default function FlexCardsPage() {
                 </button>
               </div>
               {period === 'custom' && (
-                <div className="flex gap-2">
-                  <Input
-                    type="date"
-                    value={customDateFrom}
-                    onChange={(e) => setCustomDateFrom(e.target.value)}
-                    className="h-8 text-xs flex-1"
-                    placeholder="From"
-                  />
-                  <Input
-                    type="date"
-                    value={customDateTo}
-                    onChange={(e) => setCustomDateTo(e.target.value)}
-                    className="h-8 text-xs flex-1"
-                    placeholder="To"
-                  />
-                </div>
+                <>
+                  <div className="flex gap-2">
+                    <Input
+                      type="date"
+                      value={customDateFrom}
+                      onChange={(e) => setCustomDateFrom(e.target.value)}
+                      className="h-8 text-xs flex-1"
+                      placeholder="From"
+                    />
+                    <Input
+                      type="date"
+                      value={customDateTo}
+                      onChange={(e) => setCustomDateTo(e.target.value)}
+                      className="h-8 text-xs flex-1"
+                      placeholder="To"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1">Date Format</p>
+                    <div className="flex gap-1.5">
+                      {([
+                        { id: 'short' as const, label: 'MM/DD' },
+                        { id: 'long' as const, label: 'MM/DD/YYYY' },
+                      ]).map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => setDateFormat(f.id)}
+                          className={cn(
+                            'flex-1 px-3 py-1.5 text-xs rounded-[var(--radius-sm)] transition-colors cursor-pointer',
+                            dateFormat === f.id ? 'bg-accent-primary text-white' : 'bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                          )}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -614,12 +657,40 @@ export default function FlexCardsPage() {
             <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Typography</h3></CardHeader>
             <CardContent className="pt-0 space-y-3">
               <div>
-                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Font Family</p>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Default Font</p>
                 <select
                   value={styling.fontFamily}
                   onChange={(e) => setStyleField('fontFamily', e.target.value as FontFamilyId)}
                   className="w-full h-8 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-xs text-text-primary cursor-pointer"
                 >
+                  {fontFamilies.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Hero Number Font</p>
+                <select
+                  value={styling.heroFontFamily ?? ''}
+                  onChange={(e) => setStyleField('heroFontFamily', (e.target.value || null) as FontFamilyId | null)}
+                  className="w-full h-8 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-xs text-text-primary cursor-pointer"
+                >
+                  <option value="">Inherit (Default Font)</option>
+                  {fontFamilies.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-text-tertiary uppercase tracking-wide mb-1.5">Stat Values Font</p>
+                <select
+                  value={styling.valueFontFamily ?? ''}
+                  onChange={(e) => setStyleField('valueFontFamily', (e.target.value || null) as FontFamilyId | null)}
+                  className="w-full h-8 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-xs text-text-primary cursor-pointer"
+                >
+                  <option value="">Inherit (Default Font)</option>
                   {fontFamilies.map((f) => (
                     <option key={f.id} value={f.id}>{f.name}</option>
                   ))}

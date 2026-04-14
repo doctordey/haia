@@ -198,8 +198,10 @@ export const flexCards = pgTable('flex_cards', {
   valueColor:      text('value_color').notNull().default('#E8E9ED'),
   usernameColor:   text('username_color').notNull().default('#E8E9ED'),
   brandingColor:   text('branding_color').notNull().default('#5A5C66'),
+  heroBoxColor:    text('hero_box_color'),       // null = match heroColor
+  heroBoxTextColor:text('hero_box_text_color').notNull().default('#0B0C10'),
   // Layout + CTA
-  layout:          text('layout').notNull().default('default'),  // 'default' | 'terminal' | 'hero'
+  layout:          text('layout').notNull().default('default'),  // 'default' | 'terminal' | 'hero' | 'axiom'
   ctaTopLine:      text('cta_top_line'),
   ctaBottomLine:   text('cta_bottom_line'),
   imageUrl:        text('image_url'),

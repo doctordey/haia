@@ -548,6 +548,19 @@
           "notNull": true,
           "default": "'#5A5C66'"
         },
+        "hero_box_color": {
+          "name": "hero_box_color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hero_box_text_color": {
+          "name": "hero_box_text_color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'#0B0C10'"
+        },
         "layout": {
           "name": "layout",
           "type": "text",

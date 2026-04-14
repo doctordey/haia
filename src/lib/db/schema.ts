@@ -204,6 +204,7 @@ export const flexCards = pgTable('flex_cards', {
   layout:          text('layout').notNull().default('default'),  // 'default' | 'terminal' | 'hero' | 'axiom'
   ctaTopLine:      text('cta_top_line'),
   ctaBottomLine:   text('cta_bottom_line'),
+  brandText:       text('brand_text'),  // custom brand text, null = layout default
   imageUrl:        text('image_url'),
   createdAt:       timestamp('created_at').notNull().defaultNow(),
 }, (table) => [

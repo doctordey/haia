@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     fontFamily, heroFontFamily, valueFontFamily, dateFormat,
     heroColor, labelColor, valueColor, usernameColor, brandingColor,
     heroBoxColor, heroBoxTextColor,
-    layout, ctaTopLine, ctaBottomLine,
+    layout, ctaTopLine, ctaBottomLine, brandText,
   } = body;
 
   if (!period || !metric) {
@@ -66,6 +66,7 @@ export async function POST(request: Request) {
       layout: layout || 'default',
       ctaTopLine: ctaTopLine || null,
       ctaBottomLine: ctaBottomLine || null,
+      brandText: brandText || null,
     })
     .returning();
 

@@ -67,6 +67,7 @@ export interface FlexCardData {
   equityCurve?: { date: string; equity: number }[];
   ctaTopLine?: string;
   ctaBottomLine?: string;
+  brandText?: string;
 }
 
 interface CardPreviewProps {
@@ -270,11 +271,10 @@ function DefaultLayout({
       style={{ background: bgCss }}
     >
       <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
-        <div className="flex items-center justify-between">
-          <div className="w-7 h-7 bg-[#6C5CE7] rounded-md flex items-center justify-center">
-            <span className="text-white font-bold text-xs" style={{ fontFamily: fontStack }}>H</span>
-          </div>
-          <span className="text-sm font-medium" style={{ color: style.labelColor, fontFamily: fontStack }}>Haia</span>
+        <div className="flex items-center justify-end">
+          <span className="text-sm font-medium" style={{ color: style.labelColor, fontFamily: fontStack }}>
+            {data.brandText ?? 'Haia'}
+          </span>
         </div>
 
         <div className={cn('flex-1 flex flex-col items-center justify-center', c.gap)}>
@@ -354,7 +354,9 @@ function TerminalLayout({
               <div className="w-2.5 h-2.5 rounded-full bg-[#FFB347]/60" />
               <div className="w-2.5 h-2.5 rounded-full bg-[#00DC82]/60" />
             </div>
-            <span className="text-[10px] uppercase tracking-[0.15em]" style={{ color: style.brandingColor }}>haia terminal</span>
+            <span className="text-[10px] uppercase tracking-[0.15em]" style={{ color: style.brandingColor }}>
+              {data.brandText ?? 'haia terminal'}
+            </span>
           </div>
           <span className="text-[10px]" style={{ color: style.brandingColor }}>{data.period}</span>
         </div>
@@ -471,14 +473,11 @@ function HeroLayout({
       <div className="absolute inset-0" style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 50%, rgba(0,0,0,0.15) 100%)' }} />
 
       <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
-        {/* Header: logo + HAIA × username  (left)   |   CTA (right) */}
+        {/* Header: brand text × username (left)  |  CTA (right) */}
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-[#6C5CE7] rounded-md flex items-center justify-center">
-              <span className="text-white font-bold text-[10px]" style={{ fontFamily: fontStack }}>H</span>
-            </div>
             <span className="text-sm font-bold tracking-[0.2em] uppercase" style={{ color: style.valueColor }}>
-              HAIA
+              {data.brandText ?? 'HAIA'}
             </span>
             {showUsername && data.username && (
               <>
@@ -589,18 +588,11 @@ function AxiomLayout({
       <div className="absolute inset-0" style={{ background: 'linear-gradient(135deg, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 40%, rgba(0,0,0,0.1) 100%)' }} />
 
       <div className={cn('absolute inset-0 flex flex-col justify-between', c.pad)}>
-        {/* Header: Haia logo (left) + HAIA Pro (right) */}
-        <div className="flex items-start justify-between">
-          <div className="w-7 h-7">
-            <svg viewBox="0 0 32 32" fill="none">
-              <path d="M16 4L4 12v8l12 8 12-8v-8L16 4z" fill="white" fillOpacity="0.9" />
-              <path d="M16 8L8 13v6l8 5 8-5v-6l-8-5z" fill="#0B0C10" />
-            </svg>
-          </div>
-          <div className="text-right">
-            <span className="text-sm font-bold tracking-wide" style={{ color: style.valueColor }}>HAIA</span>
-            <span className="text-sm font-light ml-0.5" style={{ color: style.labelColor }}>Pro</span>
-          </div>
+        {/* Header: custom brand text (right) */}
+        <div className="flex items-start justify-end">
+          <span className="text-sm font-bold tracking-wide" style={{ color: style.valueColor }}>
+            {data.brandText ?? 'HAIA Pro'}
+          </span>
         </div>
 
         {/* Middle: period label + hero number (with optional box) */}

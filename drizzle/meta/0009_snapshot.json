@@ -580,6 +580,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "brand_text": {
+          "name": "brand_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "image_url": {
           "name": "image_url",
           "type": "text",

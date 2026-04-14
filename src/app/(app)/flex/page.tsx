@@ -51,6 +51,7 @@ export default function FlexCardsPage() {
   const [visibleStats, setVisibleStats] = useState<[boolean, boolean, boolean]>([true, true, true]);
   const [showHeroBox, setShowHeroBox] = useState(false);
   const [dateFormat, setDateFormat] = useState<'short' | 'long'>('short');
+  const [brandText, setBrandText] = useState('');
   const [cardData, setCardData] = useState<FlexCardData>({ period: '30D' });
   interface SavedCard {
     id: string;
@@ -76,6 +77,7 @@ export default function FlexCardsPage() {
     layout: CardLayout;
     ctaTopLine: string | null;
     ctaBottomLine: string | null;
+    brandText: string | null;
     createdAt: string;
   }
   const [savedCards, setSavedCards] = useState<SavedCard[]>([]);
@@ -162,6 +164,7 @@ export default function FlexCardsPage() {
           equityCurve,
           ctaTopLine: ctaTopLine || undefined,
           ctaBottomLine: ctaBottomLine || undefined,
+          brandText: brandText || undefined,
         });
       } catch (err) {
         console.error('Failed to fetch card data:', err);
@@ -169,7 +172,7 @@ export default function FlexCardsPage() {
     }
 
     fetchData();
-  }, [selectedAccountId, period, metric, customDateFrom, customDateTo, ctaTopLine, ctaBottomLine, dateFormat]);
+  }, [selectedAccountId, period, metric, customDateFrom, customDateTo, ctaTopLine, ctaBottomLine, dateFormat, brandText]);
 
   // Fetch saved cards
   useEffect(() => {
@@ -266,6 +269,7 @@ export default function FlexCardsPage() {
           layout: cardLayout,
           ctaTopLine: ctaTopLine || null,
           ctaBottomLine: ctaBottomLine || null,
+          brandText: brandText || null,
         }),
       });
       if (res.ok) {
@@ -277,7 +281,7 @@ export default function FlexCardsPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling, cardLayout, ctaTopLine, ctaBottomLine, dateFormat]);
+  }, [selectedAccountId, period, metric, themeId, customBgUrl, showUsername, showChart, showWinLoss, showBranding, styling, cardLayout, ctaTopLine, ctaBottomLine, dateFormat, brandText]);
 
   const handleDeleteCard = useCallback(async (id: string) => {
     try {
@@ -313,6 +317,7 @@ export default function FlexCardsPage() {
     setCtaTopLine(card.ctaTopLine || '');
     setCtaBottomLine(card.ctaBottomLine || '');
     setDateFormat(card.dateFormat || 'short');
+    setBrandText(card.brandText || '');
   }, []);
 
   const handleCustomBg = useCallback((e: ChangeEvent<HTMLInputElement>) => {
@@ -632,6 +637,22 @@ export default function FlexCardsPage() {
           </Card>
 
           {/* CTA (Hero layout only) */}
+          {/* Brand Text */}
+          <Card>
+            <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">Brand Text</h3></CardHeader>
+            <CardContent className="pt-0 space-y-2">
+              <Input
+                placeholder="Haia"
+                value={brandText}
+                onChange={(e) => setBrandText(e.target.value)}
+                className="h-8 text-xs"
+              />
+              <p className="text-[10px] text-text-tertiary">
+                Displayed in the corner of the card. Leave blank for layout default.
+              </p>
+            </CardContent>
+          </Card>
+
           {cardLayout === 'hero' && (
             <Card>
               <CardHeader><h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">CTA / Promo (optional)</h3></CardHeader>

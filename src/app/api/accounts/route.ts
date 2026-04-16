@@ -26,10 +26,91 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { platform, server, login, password, name, accessMode } = await request.json();
+    const body = await request.json();
+    const { platform, name } = body;
 
-    if (!platform || !server || !login || !password || !name) {
-      return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
+    if (!platform || !name) {
+      return NextResponse.json({ error: 'Platform and name are required' }, { status: 400 });
+    }
+
+    // ─── Tradovate ─────────────────────────────────────
+    if (platform.toLowerCase() === 'tradovate') {
+      const { tradovateUsername, tradovatePassword, tradovateApiSecret, tradovateCid, tradovateEnvironment, tradovateAccountId } = body;
+      if (!tradovateUsername || !tradovatePassword) {
+        return NextResponse.json({ error: 'Tradovate username and password are required' }, { status: 400 });
+      }
+
+      // Verify credentials by attempting auth
+      try {
+        const authUrl = tradovateEnvironment === 'live'
+          ? 'https://live.tradovateapi.com/v1/auth/accessTokenRequest'
+          : 'https://demo.tradovateapi.com/v1/auth/accessTokenRequest';
+
+        const authRes = await fetch(authUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: tradovateUsername,
+            password: tradovatePassword,
+            appId: 'Haia',
+            appVersion: '1.0.0',
+            cid: tradovateCid || 8,
+            sec: tradovateApiSecret || '',
+          }),
+        });
+
+        if (!authRes.ok) {
+          const errText = await authRes.text();
+          return NextResponse.json({ error: `Tradovate auth failed: ${errText}` }, { status: 400 });
+        }
+
+        const authData = await authRes.json();
+
+        // If no account ID provided, fetch accounts list and use the first one
+        let resolvedAccountId = tradovateAccountId;
+        if (!resolvedAccountId) {
+          const baseUrl = tradovateEnvironment === 'live'
+            ? 'https://live.tradovateapi.com/v1'
+            : 'https://demo.tradovateapi.com/v1';
+          const acctRes = await fetch(`${baseUrl}/account/list`, {
+            headers: { 'Authorization': `Bearer ${authData.accessToken}` },
+          });
+          if (acctRes.ok) {
+            const accounts = await acctRes.json();
+            if (accounts.length > 0) resolvedAccountId = String(accounts[0].id);
+          }
+        }
+
+        const [dbAccount] = await db
+          .insert(tradingAccounts)
+          .values({
+            userId: session.user.id,
+            name,
+            platform: 'TRADOVATE',
+            currency: 'USD',
+            accessMode: 'trading',
+            syncStatus: 'synced',
+            tradovateAccountId: resolvedAccountId || null,
+            tradovateUsername,
+            tradovatePassword,
+            tradovateApiKey: body.tradovateApiKey || null,
+            tradovateApiSecret: tradovateApiSecret || null,
+            tradovateEnvironment: tradovateEnvironment || 'demo',
+            tradovateCid: tradovateCid || null,
+          })
+          .returning();
+
+        return NextResponse.json(dbAccount, { status: 201 });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Tradovate connection failed';
+        return NextResponse.json({ error: message }, { status: 500 });
+      }
+    }
+
+    // ─── MT4 / MT5 ─────────────────────────────────────
+    const { server, login, password, accessMode } = body;
+    if (!server || !login || !password) {
+      return NextResponse.json({ error: 'Server, login, and password are required' }, { status: 400 });
     }
 
     const account = await connectMetaApiAccount({

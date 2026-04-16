@@ -11,8 +11,12 @@ type Step = 'platform' | 'credentials' | 'connecting' | 'syncing' | 'success';
 export default function ConnectPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>('platform');
-  const [platform, setPlatform] = useState<'mt4' | 'mt5'>('mt5');
-  const [form, setForm] = useState({ server: '', login: '', password: '', tradingPassword: '', name: '' });
+  const [platform, setPlatform] = useState<'mt4' | 'mt5' | 'tradovate'>('mt5');
+  const [form, setForm] = useState({
+    server: '', login: '', password: '', tradingPassword: '', name: '',
+    tradovateUsername: '', tradovatePassword: '', tradovateApiSecret: '',
+    tradovateCid: '', tradovateEnvironment: 'demo',
+  });
   const [error, setError] = useState('');
   const [syncStatus, setSyncStatus] = useState('');
   const [useTrading, setUseTrading] = useState(false);
@@ -26,15 +30,27 @@ export default function ConnectPage() {
     setStep('connecting');
 
     try {
+      const payload = platform === 'tradovate'
+        ? {
+            platform: 'tradovate',
+            name: form.name,
+            tradovateUsername: form.tradovateUsername,
+            tradovatePassword: form.tradovatePassword,
+            tradovateApiSecret: form.tradovateApiSecret || undefined,
+            tradovateCid: form.tradovateCid ? parseInt(form.tradovateCid) : undefined,
+            tradovateEnvironment: form.tradovateEnvironment,
+          }
+        : {
+            ...form,
+            platform,
+            password: useTrading ? form.tradingPassword : form.password,
+            accessMode: useTrading ? 'trading' : 'investor',
+          };
+
       const res = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...form,
-          platform,
-          password: useTrading ? form.tradingPassword : form.password,
-          accessMode: useTrading ? 'trading' : 'investor',
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -45,15 +61,19 @@ export default function ConnectPage() {
       }
 
       const account = await res.json();
-      setStep('syncing');
-      setSyncStatus('Importing trade history...');
 
-      const syncRes = await fetch(`/api/accounts/${account.id}/sync`, { method: 'POST' });
-      if (syncRes.ok) {
+      if (platform === 'tradovate') {
         setStep('success');
       } else {
-        setSyncStatus('Sync started — you can check progress on the dashboard.');
-        setStep('success');
+        setStep('syncing');
+        setSyncStatus('Importing trade history...');
+        const syncRes = await fetch(`/api/accounts/${account.id}/sync`, { method: 'POST' });
+        if (syncRes.ok) {
+          setStep('success');
+        } else {
+          setSyncStatus('Sync started — you can check progress on the dashboard.');
+          setStep('success');
+        }
       }
     } catch {
       setError('Connection failed. Please check your credentials and try again.');
@@ -67,7 +87,7 @@ export default function ConnectPage() {
         <div className="text-center mb-8">
           <h1 className="text-2xl font-semibold text-text-primary">Connect Trading Account</h1>
           <p className="text-sm text-text-secondary mt-1">
-            Link your MetaTrader account to start tracking performance
+            Link your trading account to start tracking performance
           </p>
         </div>
 
@@ -100,19 +120,23 @@ export default function ConnectPage() {
             {step === 'platform' && (
               <div className="space-y-4">
                 <p className="text-sm text-text-secondary mb-4">Choose your trading platform:</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {(['mt4', 'mt5'] as const).map((p) => (
+                <div className="grid grid-cols-3 gap-3">
+                  {([
+                    { id: 'mt4' as const, label: 'MT4', desc: 'MetaTrader 4' },
+                    { id: 'mt5' as const, label: 'MT5', desc: 'MetaTrader 5' },
+                    { id: 'tradovate' as const, label: 'Tradovate', desc: 'Futures Trading' },
+                  ]).map((p) => (
                     <button
-                      key={p}
-                      onClick={() => setPlatform(p)}
+                      key={p.id}
+                      onClick={() => setPlatform(p.id)}
                       className={`p-4 rounded-[var(--radius-md)] border text-center transition-colors cursor-pointer ${
-                        platform === p
+                        platform === p.id
                           ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
                           : 'border-border-primary bg-bg-tertiary text-text-secondary hover:border-border-secondary'
                       }`}
                     >
-                      <span className="text-lg font-semibold">{p.toUpperCase()}</span>
-                      <p className="text-xs mt-1">MetaTrader {p === 'mt4' ? '4' : '5'}</p>
+                      <span className="text-lg font-semibold">{p.label}</span>
+                      <p className="text-xs mt-1">{p.desc}</p>
                     </button>
                   ))}
                 </div>
@@ -133,66 +157,123 @@ export default function ConnectPage() {
                 <Input
                   id="name"
                   label="Account Label"
-                  placeholder="e.g. Main Trading Account"
+                  placeholder={platform === 'tradovate' ? 'e.g. Tradovate Demo' : 'e.g. Main Trading Account'}
                   value={form.name}
                   onChange={(e) => updateField('name', e.target.value)}
                   required
                 />
-                <Input
-                  id="server"
-                  label="Broker Server"
-                  placeholder="e.g. ICMarketsSC-Demo"
-                  value={form.server}
-                  onChange={(e) => updateField('server', e.target.value)}
-                  required
-                />
-                <Input
-                  id="login"
-                  label="Account Login"
-                  placeholder="Your MT login number"
-                  value={form.login}
-                  onChange={(e) => updateField('login', e.target.value)}
-                  required
-                />
-                {!useTrading ? (
+
+                {platform === 'tradovate' ? (
                   <>
+                    <div className="grid grid-cols-2 gap-3">
+                      {(['demo', 'live'] as const).map((env) => (
+                        <button
+                          key={env}
+                          onClick={() => updateField('tradovateEnvironment', env)}
+                          className={`p-2 rounded-[var(--radius-sm)] border text-center text-sm transition-colors cursor-pointer capitalize ${
+                            form.tradovateEnvironment === env
+                              ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                              : 'border-border-primary bg-bg-tertiary text-text-secondary'
+                          }`}
+                        >
+                          {env}
+                        </button>
+                      ))}
+                    </div>
                     <Input
-                      id="password"
-                      label="Investor (Read-Only) Password"
-                      type="password"
-                      placeholder="Your investor password"
-                      value={form.password}
-                      onChange={(e) => updateField('password', e.target.value)}
+                      id="tradovateUsername"
+                      label="Tradovate Username"
+                      placeholder="Your Tradovate username"
+                      value={form.tradovateUsername}
+                      onChange={(e) => updateField('tradovateUsername', e.target.value)}
                       required
                     />
+                    <Input
+                      id="tradovatePassword"
+                      label="Tradovate Password"
+                      type="password"
+                      placeholder="Your Tradovate password"
+                      value={form.tradovatePassword}
+                      onChange={(e) => updateField('tradovatePassword', e.target.value)}
+                      required
+                    />
+                    <Input
+                      id="tradovateApiSecret"
+                      label="API Secret (optional)"
+                      type="password"
+                      placeholder="From Tradovate API settings"
+                      value={form.tradovateApiSecret}
+                      onChange={(e) => updateField('tradovateApiSecret', e.target.value)}
+                    />
+                    <Input
+                      id="tradovateCid"
+                      label="CID (optional)"
+                      placeholder="Client ID from Tradovate"
+                      value={form.tradovateCid}
+                      onChange={(e) => updateField('tradovateCid', e.target.value)}
+                    />
                     <p className="text-xs text-text-tertiary">
-                      Read-only access for analytics. Cannot execute trades.
+                      Tradovate accounts are used for copy trading. Your credentials are stored securely and used to monitor positions and execute trades.
                     </p>
                   </>
                 ) : (
                   <>
                     <Input
-                      id="tradingPassword"
-                      label="Trading Password"
-                      type="password"
-                      placeholder="Your trading password"
-                      value={form.tradingPassword}
-                      onChange={(e) => updateField('tradingPassword', e.target.value)}
+                      id="server"
+                      label="Broker Server"
+                      placeholder="e.g. ICMarketsSC-Demo"
+                      value={form.server}
+                      onChange={(e) => updateField('server', e.target.value)}
                       required
                     />
-                    <p className="text-xs text-text-tertiary">
-                      Full access — required for the Signal Copier to place trades on your account.
-                    </p>
+                    <Input
+                      id="login"
+                      label="Account Login"
+                      placeholder="Your MT login number"
+                      value={form.login}
+                      onChange={(e) => updateField('login', e.target.value)}
+                      required
+                    />
+                    {!useTrading ? (
+                      <>
+                        <Input
+                          id="password"
+                          label="Investor (Read-Only) Password"
+                          type="password"
+                          placeholder="Your investor password"
+                          value={form.password}
+                          onChange={(e) => updateField('password', e.target.value)}
+                          required
+                        />
+                        <p className="text-xs text-text-tertiary">
+                          Read-only access for analytics. Cannot execute trades.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Input
+                          id="tradingPassword"
+                          label="Trading Password"
+                          type="password"
+                          placeholder="Your trading password"
+                          value={form.tradingPassword}
+                          onChange={(e) => updateField('tradingPassword', e.target.value)}
+                          required
+                        />
+                        <p className="text-xs text-text-tertiary">
+                          Full access — required for the Signal Copier to place trades on your account.
+                        </p>
+                      </>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setUseTrading(!useTrading)}
+                      className="text-xs text-accent-primary hover:underline cursor-pointer"
+                    >
+                      {useTrading ? 'Use investor (read-only) password instead' : 'Use trading password (required for Signal Copier)'}
+                    </button>
                   </>
                 )}
-
-                <button
-                  type="button"
-                  onClick={() => setUseTrading(!useTrading)}
-                  className="text-xs text-accent-primary hover:underline cursor-pointer"
-                >
-                  {useTrading ? 'Use investor (read-only) password instead' : 'Use trading password (required for Signal Copier)'}
-                </button>
 
                 <div className="flex gap-3">
                   <Button variant="secondary" onClick={() => setStep('platform')} className="flex-1">
@@ -201,7 +282,11 @@ export default function ConnectPage() {
                   <Button
                     onClick={handleConnect}
                     className="flex-1"
-                    disabled={!form.server || !form.login || !(useTrading ? form.tradingPassword : form.password) || !form.name}
+                    disabled={
+                      !form.name || (platform === 'tradovate'
+                        ? !form.tradovateUsername || !form.tradovatePassword
+                        : !form.server || !form.login || !(useTrading ? form.tradingPassword : form.password))
+                    }
                   >
                     Connect
                   </Button>
@@ -213,7 +298,7 @@ export default function ConnectPage() {
               <div className="text-center py-8">
                 <div className="w-12 h-12 border-2 border-accent-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
                 <p className="text-text-primary font-medium">
-                  {step === 'connecting' ? 'Connecting to MetaTrader...' : syncStatus}
+                  {step === 'connecting' ? (platform === 'tradovate' ? 'Connecting to Tradovate...' : 'Connecting to MetaTrader...') : syncStatus}
                 </p>
                 <p className="text-xs text-text-tertiary mt-2">
                   {step === 'connecting'

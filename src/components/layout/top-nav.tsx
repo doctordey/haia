@@ -14,6 +14,7 @@ const navLinks = [
   { href: '/history', label: 'History' },
   { href: '/flex', label: 'Flex Cards' },
   { href: '/signals', label: 'Signals' },
+  { href: '/copy-trading', label: 'Copy Trading' },
   { href: '/journal', label: 'Journal' },
 ];
 

@@ -293,6 +293,10 @@ async function handleTelegramMessageMulti(
 
       // Ensure this account has a streaming connection
       if (!accountConnections.has(account.id) && !config.dryRun) {
+        if (!account.metaApiId) {
+          console.error(`[signal] Account ${account.name} has no MetaApi ID — skipping`);
+          return;
+        }
         try {
           await startPriceStreaming(account.id, account.metaApiId);
         } catch (err) {
@@ -695,7 +699,7 @@ async function main(): Promise<void> {
     const config = enabledConfigs.find((c) => c.accountId === accountId);
     console.log(`[worker] Account: ${account.name} | ${config?.dryRun ? 'DRY RUN' : 'LIVE'}`);
 
-    if (!config?.dryRun) {
+    if (!config?.dryRun && account.metaApiId) {
       try {
         await startPriceStreaming(account.id, account.metaApiId);
       } catch (error) {

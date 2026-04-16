@@ -82,6 +82,10 @@ export async function POST(
       startDate = hasTradesInDb ? new Date(account.lastSyncAt) : fullHistoryStart;
     }
 
+    if (!account.metaApiId) {
+      return NextResponse.json({ error: 'Account has no MetaApi connection' }, { status: 400 });
+    }
+
     // Single RPC connection for both account info and deals (avoids 429 rate limits)
     const { balance: currentBalance, equity: currentEquity, deals } = await fetchSyncData(account.metaApiId, startDate, endDate);
 

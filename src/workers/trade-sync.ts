@@ -54,6 +54,10 @@ async function syncAccount(accountId: string) {
   let connection: any = null;
 
   try {
+    if (!account.metaApiId) {
+      console.log(`[sync] Skipping ${account.name} — no MetaApi ID (Tradovate account?)`);
+      return;
+    }
     const api = getMetaApiInstance('analytics');
     const metaAccount = await api.metatraderAccountApi.getAccount(account.metaApiId);
 

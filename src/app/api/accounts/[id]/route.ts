@@ -52,7 +52,9 @@ export async function PATCH(
   if (body.tradingPassword) {
     try {
       // Remove old MetaApi account
-      try { await removeMetaApiAccount(account.metaApiId); } catch {}
+      if (account.metaApiId) {
+        try { await removeMetaApiAccount(account.metaApiId); } catch {}
+      }
 
       // Create new one with trading password
       const { connectMetaApiAccount } = await import('@/lib/metaapi');
@@ -100,7 +102,7 @@ export async function DELETE(
   }
 
   try {
-    await removeMetaApiAccount(account.metaApiId);
+    if (account.metaApiId) await removeMetaApiAccount(account.metaApiId);
   } catch (error) {
     console.error('Failed to remove MetaApi account:', error);
   }

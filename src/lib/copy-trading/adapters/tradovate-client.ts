@@ -1,5 +1,8 @@
 import type { TradovateCredentials, TradovateTokenResponse } from '@/types/copy-trading';
-import WebSocket from 'ws';
+
+// ws is loaded dynamically to avoid build failures when the package isn't installed yet
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let WebSocket: any;
 
 const DEMO_URL = 'https://demo.tradovateapi.com/v1';
 const LIVE_URL = 'https://live.tradovateapi.com/v1';
@@ -225,6 +228,9 @@ export class TradovateClient {
   // ─── WebSocket ───────────────────────────────────────
 
   async connectWebSocket(): Promise<void> {
+    if (!WebSocket) {
+      WebSocket = require('ws');
+    }
     const token = await this.ensureAuth();
 
     return new Promise((resolve, reject) => {

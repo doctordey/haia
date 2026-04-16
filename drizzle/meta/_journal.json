@@ -71,6 +71,13 @@
       "when": 1807400000000,
       "tag": "0009_flex_card_fonts_dateformat",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1807500000000,
+      "tag": "0010_copy_trading",
+      "breakpoints": true
     }
   ]
 }

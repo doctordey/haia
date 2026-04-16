@@ -47,18 +47,26 @@ export const tradingAccounts = pgTable('trading_accounts', {
   id:         text('id').primaryKey().$defaultFn(() => createId()),
   userId:     text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name:       text('name').notNull(),
-  platform:   text('platform').notNull(),
-  metaApiId:  text('meta_api_id').notNull().unique(),
-  server:     text('server').notNull(),
-  login:      text('login').notNull(),
+  platform:   text('platform').notNull(),                          // 'mt4' | 'mt5' | 'tradovate'
+  metaApiId:  text('meta_api_id').unique(),                        // nullable for Tradovate accounts
+  server:     text('server'),                                       // nullable for Tradovate
+  login:      text('login'),                                        // nullable for Tradovate
   broker:     text('broker'),
   leverage:   integer('leverage'),
   currency:   text('currency').notNull().default('USD'),
-  accessMode: text('access_mode').notNull().default('investor'),  // "investor" (read-only) | "trading" (full access)
+  accessMode: text('access_mode').notNull().default('investor'),   // "investor" | "trading"
   isActive:   boolean('is_active').notNull().default(true),
   lastSyncAt: timestamp('last_sync_at'),
   syncStatus: text('sync_status').notNull().default('pending'),
   syncError:  text('sync_error'),
+  // Tradovate-specific
+  tradovateAccountId:   text('tradovate_account_id'),
+  tradovateUsername:     text('tradovate_username'),
+  tradovatePassword:     text('tradovate_password'),                // encrypted in production
+  tradovateApiKey:       text('tradovate_api_key'),
+  tradovateApiSecret:    text('tradovate_api_secret'),
+  tradovateEnvironment:  text('tradovate_environment'),             // "demo" | "live"
+  tradovateCid:          integer('tradovate_cid'),
   createdAt:  timestamp('created_at').notNull().defaultNow(),
   updatedAt:  timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 }, (table) => [
@@ -490,4 +498,184 @@ export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({
   user:            one(users, { fields: [tradeJournal.userId], references: [users.id] }),
   trade:           one(trades, { fields: [tradeJournal.tradeId], references: [trades.id] }),
   signalExecution: one(signalExecutions, { fields: [tradeJournal.signalExecutionId], references: [signalExecutions.id] }),
+}));
+
+// ─── Copy Trading: Groups ────────────────────────────
+
+export const copyGroups = pgTable('copy_groups', {
+  id:              text('id').primaryKey().$defaultFn(() => createId()),
+  userId:          text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name:            text('name').notNull(),
+  masterAccountId: text('master_account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  isEnabled:       boolean('is_enabled').notNull().default(false),
+  createdAt:       timestamp('created_at').notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  index('copy_groups_user_id_idx').on(table.userId),
+  index('copy_groups_master_account_id_idx').on(table.masterAccountId),
+]);
+
+export const copyGroupsRelations = relations(copyGroups, ({ one, many }) => ({
+  user:          one(users, { fields: [copyGroups.userId], references: [users.id] }),
+  masterAccount: one(tradingAccounts, { fields: [copyGroups.masterAccountId], references: [tradingAccounts.id] }),
+  slaves:        many(copySlaves),
+  positions:     many(copyPositions),
+  events:        many(copyEvents),
+}));
+
+// ─── Copy Trading: Slave Configs ─────────────────────
+
+export const copySlaves = pgTable('copy_slaves', {
+  id:           text('id').primaryKey().$defaultFn(() => createId()),
+  groupId:      text('group_id').notNull().references(() => copyGroups.id, { onDelete: 'cascade' }),
+  accountId:    text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  isEnabled:    boolean('is_enabled').notNull().default(false),
+  dryRun:       boolean('dry_run').notNull().default(true),
+  // Sizing
+  sizingMode:        text('sizing_mode').notNull().default('fixed_multiplier'),
+  multiplier:        real('multiplier').notNull().default(1.0),
+  riskPercent:       real('risk_percent').notNull().default(1.0),
+  riskBase:          text('risk_base').notNull().default('balance'),
+  maxRiskPercent:    real('max_risk_percent').notNull().default(5.0),
+  fixedLots:         real('fixed_lots').notNull().default(0.01),
+  // Safety
+  maxLotSize:        real('max_lot_size').notNull().default(10.0),
+  maxLotsPerOrder:   real('max_lots_per_order').notNull().default(50),
+  maxSlippage:       real('max_slippage').notNull().default(5.0),
+  marginWarningPct:  real('margin_warning_pct').notNull().default(80),
+  marginRejectPct:   real('margin_reject_pct').notNull().default(95),
+  // Filters
+  directionFilter:   text('direction_filter'),       // null | "LONG" | "SHORT"
+  maxOpenPositions:  integer('max_open_positions'),
+  createdAt:         timestamp('created_at').notNull().defaultNow(),
+  updatedAt:         timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  unique('copy_slaves_group_account_uniq').on(table.groupId, table.accountId),
+  index('copy_slaves_group_id_idx').on(table.groupId),
+  index('copy_slaves_account_id_idx').on(table.accountId),
+]);
+
+export const copySlavesRelations = relations(copySlaves, ({ one, many }) => ({
+  group:      one(copyGroups, { fields: [copySlaves.groupId], references: [copyGroups.id] }),
+  account:    one(tradingAccounts, { fields: [copySlaves.accountId], references: [tradingAccounts.id] }),
+  symbolMaps: many(copySymbolMaps),
+  positions:  many(copyPositions),
+}));
+
+// ─── Copy Trading: Symbol Maps ───────────────────────
+
+export const copySymbolMaps = pgTable('copy_symbol_maps', {
+  id:              text('id').primaryKey().$defaultFn(() => createId()),
+  slaveId:         text('slave_id').notNull().references(() => copySlaves.id, { onDelete: 'cascade' }),
+  masterSymbol:    text('master_symbol').notNull(),
+  slaveSymbol:     text('slave_symbol').notNull(),
+  // Per-symbol sizing override (null = use slave defaults)
+  sizingMode:      text('sizing_mode'),
+  multiplier:      real('multiplier'),
+  riskPercent:     real('risk_percent'),
+  fixedLots:       real('fixed_lots'),
+  // Contract spec for slave symbol
+  pipValuePerLot:  real('pip_value_per_lot').notNull().default(1.0),
+  minLotSize:      real('min_lot_size').notNull().default(0.01),
+  lotStep:         real('lot_step').notNull().default(0.01),
+  // SL/TP behavior
+  copySl:          boolean('copy_sl').notNull().default(true),
+  copyTp:          boolean('copy_tp').notNull().default(true),
+  // Offset (for cross-platform futures→CFD price translation)
+  applyOffset:     boolean('apply_offset').notNull().default(false),
+  offsetInstrument: text('offset_instrument'),        // "NQ" | "ES" — which offset to use from webhook
+  isEnabled:       boolean('is_enabled').notNull().default(true),
+  createdAt:       timestamp('created_at').notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  unique('copy_symbol_maps_slave_master_uniq').on(table.slaveId, table.masterSymbol),
+  index('copy_symbol_maps_slave_id_idx').on(table.slaveId),
+]);
+
+export const copySymbolMapsRelations = relations(copySymbolMaps, ({ one }) => ({
+  slave: one(copySlaves, { fields: [copySymbolMaps.slaveId], references: [copySlaves.id] }),
+}));
+
+// ─── Copy Trading: Linked Positions ──────────────────
+
+export const copyPositions = pgTable('copy_positions', {
+  id:                  text('id').primaryKey().$defaultFn(() => createId()),
+  groupId:             text('group_id').notNull().references(() => copyGroups.id, { onDelete: 'cascade' }),
+  slaveId:             text('slave_id').notNull().references(() => copySlaves.id, { onDelete: 'cascade' }),
+  symbolMapId:         text('symbol_map_id').references(() => copySymbolMaps.id, { onDelete: 'set null' }),
+  // Master side
+  masterAccountId:     text('master_account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  masterPositionId:    text('master_position_id').notNull(),
+  masterSymbol:        text('master_symbol').notNull(),
+  masterDirection:     text('master_direction').notNull(),
+  masterLots:          real('master_lots').notNull(),
+  masterEntryPrice:    real('master_entry_price').notNull(),
+  masterSl:            real('master_sl'),
+  masterTp:            real('master_tp'),
+  // Slave side
+  slaveAccountId:      text('slave_account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  slavePositionId:     text('slave_position_id'),
+  slaveSymbol:         text('slave_symbol').notNull(),
+  slaveDirection:      text('slave_direction').notNull(),
+  slaveLots:           real('slave_lots').notNull(),
+  slaveEntryPrice:     real('slave_entry_price'),
+  slaveSl:             real('slave_sl'),
+  slaveTp:             real('slave_tp'),
+  // Sizing audit
+  sizingMode:          text('sizing_mode').notNull(),
+  sizingDetail:        text('sizing_detail'),
+  // Status
+  status:              text('status').notNull().default('pending'),
+  errorMessage:        text('error_message'),
+  // Close data
+  masterClosePrice:    real('master_close_price'),
+  slaveClosePrice:     real('slave_close_price'),
+  slaveProfit:         real('slave_profit'),
+  // Timing
+  masterOpenedAt:      timestamp('master_opened_at').notNull(),
+  slaveOpenedAt:       timestamp('slave_opened_at'),
+  masterClosedAt:      timestamp('master_closed_at'),
+  slaveClosedAt:       timestamp('slave_closed_at'),
+  openLatencyMs:       integer('open_latency_ms'),
+  closeLatencyMs:      integer('close_latency_ms'),
+  isDryRun:            boolean('is_dry_run').notNull().default(false),
+  createdAt:           timestamp('created_at').notNull().defaultNow(),
+  updatedAt:           timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  index('copy_positions_group_id_idx').on(table.groupId),
+  index('copy_positions_slave_id_idx').on(table.slaveId),
+  index('copy_positions_master_pos_idx').on(table.masterAccountId, table.masterPositionId),
+  index('copy_positions_slave_pos_idx').on(table.slaveAccountId, table.slavePositionId),
+  index('copy_positions_status_idx').on(table.status),
+]);
+
+export const copyPositionsRelations = relations(copyPositions, ({ one }) => ({
+  group:         one(copyGroups, { fields: [copyPositions.groupId], references: [copyGroups.id] }),
+  slave:         one(copySlaves, { fields: [copyPositions.slaveId], references: [copySlaves.id] }),
+  symbolMap:     one(copySymbolMaps, { fields: [copyPositions.symbolMapId], references: [copySymbolMaps.id] }),
+  masterAccount: one(tradingAccounts, { fields: [copyPositions.masterAccountId], references: [tradingAccounts.id] }),
+  slaveAccount:  one(tradingAccounts, { fields: [copyPositions.slaveAccountId], references: [tradingAccounts.id] }),
+}));
+
+// ─── Copy Trading: Event Log ─────────────────────────
+
+export const copyEvents = pgTable('copy_events', {
+  id:                text('id').primaryKey().$defaultFn(() => createId()),
+  groupId:           text('group_id').notNull().references(() => copyGroups.id, { onDelete: 'cascade' }),
+  copyPositionId:    text('copy_position_id').references(() => copyPositions.id, { onDelete: 'set null' }),
+  eventType:         text('event_type').notNull(),
+  masterAccountId:   text('master_account_id').references(() => tradingAccounts.id),
+  slaveAccountId:    text('slave_account_id').references(() => tradingAccounts.id),
+  payload:           text('payload'),                              // JSON string
+  createdAt:         timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('copy_events_group_id_idx').on(table.groupId),
+  index('copy_events_copy_position_id_idx').on(table.copyPositionId),
+  index('copy_events_event_type_idx').on(table.eventType),
+  index('copy_events_created_at_idx').on(table.createdAt),
+]);
+
+export const copyEventsRelations = relations(copyEvents, ({ one }) => ({
+  group:        one(copyGroups, { fields: [copyEvents.groupId], references: [copyGroups.id] }),
+  copyPosition: one(copyPositions, { fields: [copyEvents.copyPositionId], references: [copyPositions.id] }),
 }));

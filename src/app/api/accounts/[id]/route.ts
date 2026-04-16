@@ -56,6 +56,10 @@ export async function PATCH(
         try { await removeMetaApiAccount(account.metaApiId); } catch {}
       }
 
+      if (!account.server || !account.login) {
+        return NextResponse.json({ error: 'Account missing server/login info' }, { status: 400 });
+      }
+
       // Create new one with trading password
       const { connectMetaApiAccount } = await import('@/lib/metaapi');
       const newAccount = await connectMetaApiAccount({

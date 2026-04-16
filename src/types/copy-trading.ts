@@ -171,6 +171,7 @@ export interface ResolvedSymbolMap {
   id: string;
   masterSymbol: string;
   slaveSymbol: string;
+  isEnabled: boolean;
   sizingMode: CopySizingMode | null;
   multiplier: number | null;
   riskPercent: number | null;

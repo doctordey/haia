@@ -234,13 +234,14 @@ export class TradovateClient {
     const token = await this.ensureAuth();
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.wsUrl);
+      const ws = new WebSocket(this.wsUrl);
+      this.ws = ws;
 
-      this.ws.on('open', () => {
-        this.ws!.send(`authorize\n0\n\n${token}`);
+      ws.on('open', () => {
+        ws.send(`authorize\n0\n\n${token}`);
       });
 
-      this.ws.on('message', (raw: Buffer) => {
+      ws.on('message', (raw: Buffer) => {
         const msg = raw.toString();
         if (msg === 'o') return;
         if (msg === 'h') return;
@@ -282,12 +283,12 @@ export class TradovateClient {
         }
       });
 
-      this.ws.on('error', (err) => {
+      ws.on('error', (err: Error) => {
         console.error('[tradovate-ws] Error:', err.message);
         reject(err);
       });
 
-      this.ws.on('close', () => {
+      ws.on('close', () => {
         console.log('[tradovate-ws] Disconnected');
       });
     });

@@ -326,7 +326,7 @@ function CompoundCalculator() {
                     <Tooltip
                       contentStyle={{ background: '#12141A', border: '1px solid #1E2130', borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: '#8B8D98' }}
-                      formatter={(value: number) => [formatCurrency(value)]}
+                      formatter={(value) => [formatCurrency(typeof value === 'number' ? value : 0)]}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#00DC82" fill="#00DC82" fillOpacity={0.1} strokeWidth={2} name="Balance" />
                     <Area type="monotone" dataKey="interest" stroke="#6C5CE7" fill="#6C5CE7" fillOpacity={0.1} strokeWidth={1.5} name="Cumulative Interest" />
@@ -513,7 +513,7 @@ function PerformanceFeeCalculator() {
                     <Tooltip
                       contentStyle={{ background: '#12141A', border: '1px solid #1E2130', borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: '#8B8D98' }}
-                      formatter={(value: number) => [formatCurrency(value)]}
+                      formatter={(value) => [formatCurrency(typeof value === 'number' ? value : 0)]}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#00DC82" fill="#00DC82" fillOpacity={0.1} strokeWidth={2} name="Account Balance" />
                     <Area type="monotone" dataKey="cumulativeFees" stroke="#6C5CE7" fill="#6C5CE7" fillOpacity={0.15} strokeWidth={2} name="Cumulative Fees" />

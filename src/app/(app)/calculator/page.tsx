@@ -12,7 +12,8 @@ import {
 type CalcTab = 'compound' | 'performance-fee';
 type CompoundFreq = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semi-annually' | 'annually';
 type ContribFreq = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'annually';
-type DurationUnit = 'years' | 'months';
+type DurationUnit = 'days' | 'weeks' | 'months' | 'years';
+type RateUnit = 'daily' | 'weekly' | 'monthly' | 'annually';
 type BreakdownView = 'table' | 'chart';
 
 const freqPerYear: Record<CompoundFreq, number> = {
@@ -21,6 +22,24 @@ const freqPerYear: Record<CompoundFreq, number> = {
 const contribPerYear: Record<ContribFreq, number> = {
   daily: 365, weekly: 52, monthly: 12, quarterly: 4, annually: 1,
 };
+
+function toAnnualRate(rate: number, unit: RateUnit): number {
+  switch (unit) {
+    case 'daily': return rate * 365;
+    case 'weekly': return rate * 52;
+    case 'monthly': return rate * 12;
+    case 'annually': return rate;
+  }
+}
+
+function toDurationMonths(duration: number, unit: DurationUnit): number {
+  switch (unit) {
+    case 'days': return duration / 30.44;
+    case 'weeks': return duration / 4.345;
+    case 'months': return duration;
+    case 'years': return duration * 12;
+  }
+}
 
 interface PeriodRow {
   period: number;
@@ -175,6 +194,7 @@ export default function CalculatorPage() {
 function CompoundCalculator() {
   const [principal, setPrincipal] = useState(10000);
   const [rate, setRate] = useState(5);
+  const [rateUnit, setRateUnit] = useState<RateUnit>('annually');
   const [duration, setDuration] = useState(5);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('years');
   const [compoundFreq, setCompoundFreq] = useState<CompoundFreq>('monthly');
@@ -182,11 +202,12 @@ function CompoundCalculator() {
   const [contribFreq, setContribFreq] = useState<ContribFreq>('monthly');
   const [view, setView] = useState<BreakdownView>('chart');
 
-  const durationMonths = durationUnit === 'years' ? duration * 12 : duration;
+  const annualRate = toAnnualRate(rate, rateUnit);
+  const durationMonths = toDurationMonths(duration, durationUnit);
 
   const result = useMemo(
-    () => computeCompound(principal, rate, durationMonths, compoundFreq, contribAmount, contribFreq),
-    [principal, rate, durationMonths, compoundFreq, contribAmount, contribFreq],
+    () => computeCompound(principal, annualRate, durationMonths, compoundFreq, contribAmount, contribFreq),
+    [principal, annualRate, durationMonths, compoundFreq, contribAmount, contribFreq],
   );
 
   const chartData = useMemo(() => {
@@ -208,10 +229,25 @@ function CompoundCalculator() {
               <label className="text-xs text-text-secondary mb-1 block">Initial Investment</label>
               <Input type="number" value={principal} onChange={(e) => setPrincipal(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
             </div>
-            <div>
-              <label className="text-xs text-text-secondary mb-1 block">Annual Return Rate (%)</label>
-              <Input type="number" value={rate} step={0.1} onChange={(e) => setRate(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div>
+                <label className="text-xs text-text-secondary mb-1 block">Return Rate (%)</label>
+                <Input type="number" value={rate} step={0.1} onChange={(e) => setRate(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
+              </div>
+              <div>
+                <label className="text-xs text-text-secondary mb-1 block">Per</label>
+                <select value={rateUnit} onChange={(e) => setRateUnit(e.target.value as RateUnit)}
+                  className="w-full h-9 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-sm text-text-primary">
+                  <option value="daily">Day</option>
+                  <option value="weekly">Week</option>
+                  <option value="monthly">Month</option>
+                  <option value="annually">Year</option>
+                </select>
+              </div>
             </div>
+            {rateUnit !== 'annually' && (
+              <p className="text-[10px] text-text-tertiary">= {formatNumber(annualRate, 2)}% annualized</p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-text-secondary mb-1 block">Duration</label>
@@ -221,8 +257,10 @@ function CompoundCalculator() {
                 <label className="text-xs text-text-secondary mb-1 block">Unit</label>
                 <select value={durationUnit} onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
                   className="w-full h-9 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-sm text-text-primary">
-                  <option value="years">Years</option>
+                  <option value="days">Days</option>
+                  <option value="weeks">Weeks</option>
                   <option value="months">Months</option>
+                  <option value="years">Years</option>
                 </select>
               </div>
             </div>
@@ -373,17 +411,19 @@ function CompoundCalculator() {
 function PerformanceFeeCalculator() {
   const [startBalance, setStartBalance] = useState(100000);
   const [returnRate, setReturnRate] = useState(5);
+  const [rateUnit, setRateUnit] = useState<RateUnit>('annually');
   const [duration, setDuration] = useState(12);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('months');
   const [compoundFreq, setCompoundFreq] = useState<CompoundFreq>('monthly');
   const [feePercent, setFeePercent] = useState(20);
   const [view, setView] = useState<BreakdownView>('chart');
 
-  const durationMonths = durationUnit === 'years' ? duration * 12 : duration;
+  const annualRate = toAnnualRate(returnRate, rateUnit);
+  const durationMonths = toDurationMonths(duration, durationUnit);
 
   const result = useMemo(
-    () => computePerformanceFee(startBalance, returnRate, durationMonths, feePercent, compoundFreq),
-    [startBalance, returnRate, durationMonths, feePercent, compoundFreq],
+    () => computePerformanceFee(startBalance, annualRate, Math.max(1, Math.round(durationMonths)), feePercent, compoundFreq),
+    [startBalance, annualRate, durationMonths, feePercent, compoundFreq],
   );
 
   const chartData = useMemo(() => {
@@ -414,10 +454,25 @@ function PerformanceFeeCalculator() {
             <label className="text-xs text-text-secondary mb-1 block">Starting Capital</label>
             <Input type="number" value={startBalance} onChange={(e) => setStartBalance(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
           </div>
-          <div>
-            <label className="text-xs text-text-secondary mb-1 block">Annual Return Rate (%)</label>
-            <Input type="number" value={returnRate} step={0.1} onChange={(e) => setReturnRate(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <div>
+              <label className="text-xs text-text-secondary mb-1 block">Return Rate (%)</label>
+              <Input type="number" value={returnRate} step={0.1} onChange={(e) => setReturnRate(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
+            </div>
+            <div>
+              <label className="text-xs text-text-secondary mb-1 block">Per</label>
+              <select value={rateUnit} onChange={(e) => setRateUnit(e.target.value as RateUnit)}
+                className="w-full h-9 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-sm text-text-primary">
+                <option value="daily">Day</option>
+                <option value="weekly">Week</option>
+                <option value="monthly">Month</option>
+                <option value="annually">Year</option>
+              </select>
+            </div>
           </div>
+          {rateUnit !== 'annually' && (
+            <p className="text-[10px] text-text-tertiary">= {formatNumber(annualRate, 2)}% annualized</p>
+          )}
           <div>
             <label className="text-xs text-text-secondary mb-1 block">Performance Fee (%)</label>
             <Input type="number" value={feePercent} step={1} onChange={(e) => setFeePercent(parseFloat(e.target.value) || 0)} className="h-9 text-sm font-mono" />
@@ -431,6 +486,8 @@ function PerformanceFeeCalculator() {
               <label className="text-xs text-text-secondary mb-1 block">Unit</label>
               <select value={durationUnit} onChange={(e) => setDurationUnit(e.target.value as DurationUnit)}
                 className="w-full h-9 px-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-sm)] text-sm text-text-primary">
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
                 <option value="months">Months</option>
                 <option value="years">Years</option>
               </select>

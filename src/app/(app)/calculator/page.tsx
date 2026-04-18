@@ -15,6 +15,7 @@ type ContribFreq = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'annually';
 type DurationUnit = 'days' | 'weeks' | 'months' | 'years';
 type RateUnit = 'daily' | 'weekly' | 'monthly' | 'annually';
 type BreakdownView = 'table' | 'chart';
+type RowGranularity = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 const freqPerYear: Record<CompoundFreq, number> = {
   daily: 365, weekly: 52, monthly: 12, quarterly: 4, 'semi-annually': 2, annually: 1,
@@ -23,21 +24,30 @@ const contribPerYear: Record<ContribFreq, number> = {
   daily: 365, weekly: 52, monthly: 12, quarterly: 4, annually: 1,
 };
 
-function toAnnualRate(rate: number, unit: RateUnit): number {
+function toAnnualRate(rate: number, unit: RateUnit, skipWeekends = false): number {
   switch (unit) {
-    case 'daily': return rate * 365;
+    case 'daily': return rate * (skipWeekends ? 252 : 365);
     case 'weekly': return rate * 52;
     case 'monthly': return rate * 12;
     case 'annually': return rate;
   }
 }
 
-function toDurationMonths(duration: number, unit: DurationUnit): number {
+function toDurationDays(duration: number, unit: DurationUnit): number {
   switch (unit) {
-    case 'days': return duration / 30.44;
-    case 'weeks': return duration / 4.345;
-    case 'months': return duration;
-    case 'years': return duration * 12;
+    case 'days': return duration;
+    case 'weeks': return duration * 7;
+    case 'months': return duration * 30.44;
+    case 'years': return duration * 365;
+  }
+}
+
+function autoGranularity(unit: DurationUnit, duration: number): RowGranularity {
+  switch (unit) {
+    case 'days': return 'daily';
+    case 'weeks': return 'weekly';
+    case 'months': return duration <= 36 ? 'monthly' : 'yearly';
+    case 'years': return duration <= 3 ? 'monthly' : 'yearly';
   }
 }
 
@@ -52,102 +62,144 @@ interface PeriodRow {
 }
 
 function computeCompound(
-  principal: number, rate: number, durationMonths: number,
+  principal: number, annualRate: number, durationDays: number,
   compoundFreq: CompoundFreq, contribAmount: number, contribFreq: ContribFreq,
+  skipWeekends: boolean, granularity: RowGranularity,
 ): { finalBalance: number; totalInterest: number; totalContributions: number; rows: PeriodRow[] } {
-  const n = freqPerYear[compoundFreq];
-  const periodsPerMonth = n / 12;
-  const totalPeriods = Math.round(durationMonths * periodsPerMonth);
-  const ratePerPeriod = rate / 100 / n;
+  // Effective periods per year — daily compounding with weekend skip uses 252 trading days
+  const periodsPerYear = (compoundFreq === 'daily' && skipWeekends) ? 252 : freqPerYear[compoundFreq];
+  const ratePerPeriod = annualRate / 100 / periodsPerYear;
 
-  const contribN = contribPerYear[contribFreq];
-  const contribInterval = Math.round(n / contribN);
+  const contribN = (contribFreq === 'daily' && skipWeekends) ? 252 : contribPerYear[contribFreq];
+  const contribInterval = Math.max(1, Math.round(periodsPerYear / contribN));
+
+  // Total compounding periods over the duration
+  const totalPeriods = (compoundFreq === 'daily' && skipWeekends)
+    ? Math.max(1, Math.round(durationDays * 5 / 7))
+    : Math.max(1, Math.round((durationDays / 365) * freqPerYear[compoundFreq]));
+
+  // How many compounding periods make up one row of the requested granularity
+  // (clamped to at least 1; can't show finer rows than the compounding frequency)
+  const granularityPeriodsPerYear =
+    granularity === 'daily' ? (skipWeekends ? 252 : 365)
+    : granularity === 'weekly' ? 52
+    : granularity === 'monthly' ? 12
+    : 1;
+  const periodsPerRow = Math.max(1, Math.round(periodsPerYear / granularityPeriodsPerYear));
+
+  const labelPrefix =
+    granularity === 'daily' ? 'Day'
+    : granularity === 'weekly' ? 'Week'
+    : granularity === 'monthly' ? 'Month'
+    : 'Year';
 
   let balance = principal;
   let totalInterest = 0;
   let totalContributions = 0;
+  let rowInterest = 0;
+  let rowDeposits = 0;
+  let rowStartBalance = principal;
+  let cumInterest = 0;
+  let rowIndex = 0;
 
-  // Build monthly summary rows
-  const monthlyData: { interest: number; deposits: number; endBalance: number }[] = [];
-  let monthInterest = 0;
-  let monthDeposits = 0;
+  const rows: PeriodRow[] = [];
 
   for (let i = 1; i <= totalPeriods; i++) {
     const interest = balance * ratePerPeriod;
     balance += interest;
     totalInterest += interest;
-    monthInterest += interest;
+    rowInterest += interest;
 
-    if (contribAmount > 0 && contribInterval > 0 && i % contribInterval === 0) {
+    if (contribAmount > 0 && i % contribInterval === 0) {
       balance += contribAmount;
       totalContributions += contribAmount;
-      monthDeposits += contribAmount;
+      rowDeposits += contribAmount;
     }
 
-    const monthIndex = Math.ceil(i / periodsPerMonth);
-    if (i % Math.round(periodsPerMonth) === 0 || i === totalPeriods) {
-      monthlyData.push({ interest: monthInterest, deposits: monthDeposits, endBalance: balance });
-      monthInterest = 0;
-      monthDeposits = 0;
+    if (i % periodsPerRow === 0 || i === totalPeriods) {
+      rowIndex += 1;
+      cumInterest += rowInterest;
+      rows.push({
+        period: rowIndex,
+        label: `${labelPrefix} ${rowIndex}`,
+        startBalance: rowStartBalance,
+        deposits: rowDeposits,
+        interest: rowInterest,
+        cumulativeInterest: cumInterest,
+        endBalance: balance,
+      });
+      rowStartBalance = balance;
+      rowInterest = 0;
+      rowDeposits = 0;
     }
-  }
-
-  // Build period rows (monthly granularity for table)
-  const rows: PeriodRow[] = [];
-  let cumInterest = 0;
-  let prevBalance = principal;
-
-  for (let i = 0; i < monthlyData.length; i++) {
-    const m = monthlyData[i];
-    cumInterest += m.interest;
-    rows.push({
-      period: i + 1,
-      label: `Month ${i + 1}`,
-      startBalance: prevBalance,
-      deposits: m.deposits,
-      interest: m.interest,
-      cumulativeInterest: cumInterest,
-      endBalance: m.endBalance,
-    });
-    prevBalance = m.endBalance;
   }
 
   return { finalBalance: balance, totalInterest, totalContributions, rows };
 }
 
+interface FeePeriodRow {
+  period: number;
+  label: string;
+  balance: number;
+  profit: number;
+  fee: number;
+  net: number;
+}
+
 function computePerformanceFee(
-  startBalance: number, returnRate: number, durationMonths: number,
+  startBalance: number, annualRate: number, durationDays: number,
   feePercent: number, compoundFreq: CompoundFreq,
-): { grossProfit: number; feeAmount: number; netProfit: number; finalBalance: number; rows: { month: number; balance: number; profit: number; fee: number; net: number }[] } {
-  const n = freqPerYear[compoundFreq];
-  const periodsPerMonth = n / 12;
-  const ratePerPeriod = returnRate / 100 / n;
+  skipWeekends: boolean, granularity: RowGranularity,
+): { grossProfit: number; feeAmount: number; netProfit: number; finalBalance: number; rows: FeePeriodRow[] } {
+  const periodsPerYear = (compoundFreq === 'daily' && skipWeekends) ? 252 : freqPerYear[compoundFreq];
+  const ratePerPeriod = annualRate / 100 / periodsPerYear;
   const feeRate = feePercent / 100;
+
+  const totalPeriods = (compoundFreq === 'daily' && skipWeekends)
+    ? Math.max(1, Math.round(durationDays * 5 / 7))
+    : Math.max(1, Math.round((durationDays / 365) * freqPerYear[compoundFreq]));
+
+  // Periods per row at requested granularity (fee charged at end of each row)
+  const granularityPeriodsPerYear =
+    granularity === 'daily' ? (skipWeekends ? 252 : 365)
+    : granularity === 'weekly' ? 52
+    : granularity === 'monthly' ? 12
+    : 1;
+  const periodsPerRow = Math.max(1, Math.round(periodsPerYear / granularityPeriodsPerYear));
+
+  const labelPrefix =
+    granularity === 'daily' ? 'Day'
+    : granularity === 'weekly' ? 'Week'
+    : granularity === 'monthly' ? 'Month'
+    : 'Year';
 
   let balance = startBalance;
   let grossProfit = 0;
   let totalFees = 0;
-  const rows: { month: number; balance: number; profit: number; fee: number; net: number }[] = [];
+  let rowStart = startBalance;
+  let rowIndex = 0;
+  const rows: FeePeriodRow[] = [];
 
-  for (let month = 1; month <= durationMonths; month++) {
-    const monthStart = balance;
-    const periods = Math.round(periodsPerMonth);
-    for (let i = 0; i < periods; i++) {
-      balance += balance * ratePerPeriod;
+  for (let i = 1; i <= totalPeriods; i++) {
+    balance += balance * ratePerPeriod;
+
+    if (i % periodsPerRow === 0 || i === totalPeriods) {
+      rowIndex += 1;
+      const rowProfit = balance - rowStart;
+      const rowFee = rowProfit > 0 ? rowProfit * feeRate : 0;
+      balance -= rowFee;
+      grossProfit += rowProfit;
+      totalFees += rowFee;
+      rows.push({
+        period: rowIndex,
+        label: `${labelPrefix} ${rowIndex}`,
+        balance,
+        profit: rowProfit,
+        fee: rowFee,
+        net: rowProfit - rowFee,
+      });
+      rowStart = balance;
     }
-    const monthProfit = balance - monthStart;
-    const monthFee = monthProfit > 0 ? monthProfit * feeRate : 0;
-    balance -= monthFee;
-    grossProfit += monthProfit;
-    totalFees += monthFee;
-
-    rows.push({
-      month,
-      balance,
-      profit: monthProfit,
-      fee: monthFee,
-      net: monthProfit - monthFee,
-    });
   }
 
   return {
@@ -200,14 +252,16 @@ function CompoundCalculator() {
   const [compoundFreq, setCompoundFreq] = useState<CompoundFreq>('monthly');
   const [contribAmount, setContribAmount] = useState(0);
   const [contribFreq, setContribFreq] = useState<ContribFreq>('monthly');
+  const [skipWeekends, setSkipWeekends] = useState(false);
   const [view, setView] = useState<BreakdownView>('chart');
 
-  const annualRate = toAnnualRate(rate, rateUnit);
-  const durationMonths = toDurationMonths(duration, durationUnit);
+  const annualRate = toAnnualRate(rate, rateUnit, skipWeekends);
+  const durationDays = toDurationDays(duration, durationUnit);
+  const granularity = autoGranularity(durationUnit, duration);
 
   const result = useMemo(
-    () => computeCompound(principal, annualRate, durationMonths, compoundFreq, contribAmount, contribFreq),
-    [principal, annualRate, durationMonths, compoundFreq, contribAmount, contribFreq],
+    () => computeCompound(principal, annualRate, durationDays, compoundFreq, contribAmount, contribFreq, skipWeekends, granularity),
+    [principal, annualRate, durationDays, compoundFreq, contribAmount, contribFreq, skipWeekends, granularity],
   );
 
   const chartData = useMemo(() => {
@@ -276,6 +330,23 @@ function CompoundCalculator() {
                 <option value="annually">Annually</option>
               </select>
             </div>
+            <label className="flex items-center justify-between cursor-pointer pt-1">
+              <span className="text-xs text-text-secondary">Skip Weekends (252 trading days/year)</span>
+              <button
+                role="switch"
+                aria-checked={skipWeekends}
+                onClick={() => setSkipWeekends(!skipWeekends)}
+                className={cn(
+                  'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
+                  skipWeekends ? 'bg-accent-primary' : 'bg-bg-tertiary'
+                )}
+              >
+                <div className={cn(
+                  'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                  skipWeekends ? 'translate-x-4' : 'translate-x-0.5'
+                )} />
+              </button>
+            </label>
           </CardContent>
         </Card>
 
@@ -416,14 +487,16 @@ function PerformanceFeeCalculator() {
   const [durationUnit, setDurationUnit] = useState<DurationUnit>('months');
   const [compoundFreq, setCompoundFreq] = useState<CompoundFreq>('monthly');
   const [feePercent, setFeePercent] = useState(20);
+  const [skipWeekends, setSkipWeekends] = useState(false);
   const [view, setView] = useState<BreakdownView>('chart');
 
-  const annualRate = toAnnualRate(returnRate, rateUnit);
-  const durationMonths = toDurationMonths(duration, durationUnit);
+  const annualRate = toAnnualRate(returnRate, rateUnit, skipWeekends);
+  const durationDays = toDurationDays(duration, durationUnit);
+  const granularity = autoGranularity(durationUnit, duration);
 
   const result = useMemo(
-    () => computePerformanceFee(startBalance, annualRate, Math.max(1, Math.round(durationMonths)), feePercent, compoundFreq),
-    [startBalance, annualRate, durationMonths, feePercent, compoundFreq],
+    () => computePerformanceFee(startBalance, annualRate, durationDays, feePercent, compoundFreq, skipWeekends, granularity),
+    [startBalance, annualRate, durationDays, feePercent, compoundFreq, skipWeekends, granularity],
   );
 
   const chartData = useMemo(() => {
@@ -433,7 +506,7 @@ function PerformanceFeeCalculator() {
       cumFee += r.fee;
       cumNet += r.net;
       return {
-        name: `M${r.month}`,
+        name: r.label,
         balance: Math.round(r.balance * 100) / 100,
         cumulativeFees: Math.round(cumFee * 100) / 100,
         cumulativeNet: Math.round(cumNet * 100) / 100,
@@ -504,8 +577,25 @@ function PerformanceFeeCalculator() {
               <option value="annually">Annually</option>
             </select>
           </div>
+          <label className="flex items-center justify-between cursor-pointer pt-1">
+            <span className="text-xs text-text-secondary">Skip Weekends (252 trading days/year)</span>
+            <button
+              role="switch"
+              aria-checked={skipWeekends}
+              onClick={() => setSkipWeekends(!skipWeekends)}
+              className={cn(
+                'w-9 h-5 rounded-full transition-colors relative cursor-pointer',
+                skipWeekends ? 'bg-accent-primary' : 'bg-bg-tertiary'
+              )}
+            >
+              <div className={cn(
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform',
+                skipWeekends ? 'translate-x-4' : 'translate-x-0.5'
+              )} />
+            </button>
+          </label>
           <p className="text-[10px] text-text-tertiary">
-            Performance fee is deducted monthly from positive returns only.
+            Performance fee is deducted from positive returns only at the end of each row period.
           </p>
         </CardContent>
       </Card>
@@ -544,7 +634,7 @@ function PerformanceFeeCalculator() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">Monthly Breakdown</h3>
+              <h3 className="text-sm font-medium">Breakdown</h3>
               <div className="flex gap-1">
                 {(['chart', 'table'] as const).map((v) => (
                   <button key={v} onClick={() => setView(v)}
@@ -582,7 +672,7 @@ function PerformanceFeeCalculator() {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-bg-secondary">
                     <tr className="text-text-tertiary uppercase tracking-wide border-b border-border-primary">
-                      <th className="text-left pb-2 font-medium">Month</th>
+                      <th className="text-left pb-2 font-medium">Period</th>
                       <th className="text-right pb-2 font-medium">Balance</th>
                       <th className="text-right pb-2 font-medium">Profit</th>
                       <th className="text-right pb-2 font-medium">Fee ({feePercent}%)</th>
@@ -591,8 +681,8 @@ function PerformanceFeeCalculator() {
                   </thead>
                   <tbody>
                     {result.rows.map((r) => (
-                      <tr key={r.month} className="border-b border-border-primary/30 hover:bg-bg-tertiary/30">
-                        <td className="py-1.5">Month {r.month}</td>
+                      <tr key={r.period} className="border-b border-border-primary/30 hover:bg-bg-tertiary/30">
+                        <td className="py-1.5">{r.label}</td>
                         <td className="py-1.5 text-right font-mono">{formatCurrency(r.balance)}</td>
                         <td className="py-1.5 text-right font-mono text-profit-primary">{formatCurrency(r.profit)}</td>
                         <td className="py-1.5 text-right font-mono text-accent-primary">{formatCurrency(r.fee)}</td>

@@ -265,12 +265,23 @@ function CompoundCalculator() {
   );
 
   const chartData = useMemo(() => {
-    return result.rows.map((r) => ({
-      name: r.label,
-      balance: Math.round(r.endBalance * 100) / 100,
-      interest: Math.round(r.cumulativeInterest * 100) / 100,
-    }));
-  }, [result.rows]);
+    const today = new Date();
+    return result.rows.map((r) => {
+      const d = new Date(today);
+      if (granularity === 'daily') d.setDate(d.getDate() + r.period);
+      else if (granularity === 'weekly') d.setDate(d.getDate() + r.period * 7);
+      else if (granularity === 'monthly') d.setMonth(d.getMonth() + r.period);
+      else d.setFullYear(d.getFullYear() + r.period);
+      const label = granularity === 'yearly'
+        ? d.getFullYear().toString()
+        : `${d.getMonth() + 1}/${d.getDate()}`;
+      return {
+        name: label,
+        balance: Math.round(r.endBalance * 100) / 100,
+        interest: Math.round(r.cumulativeInterest * 100) / 100,
+      };
+    });
+  }, [result.rows, granularity]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">
@@ -500,19 +511,28 @@ function PerformanceFeeCalculator() {
   );
 
   const chartData = useMemo(() => {
+    const today = new Date();
     let cumFee = 0;
     let cumNet = 0;
     return result.rows.map((r) => {
       cumFee += r.fee;
       cumNet += r.net;
+      const d = new Date(today);
+      if (granularity === 'daily') d.setDate(d.getDate() + r.period);
+      else if (granularity === 'weekly') d.setDate(d.getDate() + r.period * 7);
+      else if (granularity === 'monthly') d.setMonth(d.getMonth() + r.period);
+      else d.setFullYear(d.getFullYear() + r.period);
+      const label = granularity === 'yearly'
+        ? d.getFullYear().toString()
+        : `${d.getMonth() + 1}/${d.getDate()}`;
       return {
-        name: r.label,
+        name: label,
         balance: Math.round(r.balance * 100) / 100,
         cumulativeFees: Math.round(cumFee * 100) / 100,
         cumulativeNet: Math.round(cumNet * 100) / 100,
       };
     });
-  }, [result.rows]);
+  }, [result.rows, granularity]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4">

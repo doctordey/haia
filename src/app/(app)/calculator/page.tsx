@@ -211,6 +211,23 @@ function computePerformanceFee(
   };
 }
 
+interface TooltipRow { label: string; value: number; color: string; }
+
+function CustomTooltip({ active, label, rows }: { active?: boolean; label?: string; rows: TooltipRow[] }) {
+  if (!active || !rows.length) return null;
+  return (
+    <div className="bg-bg-secondary border border-border-primary rounded-md px-3 py-2 text-xs" style={{ minWidth: 140 }}>
+      <p className="text-text-tertiary mb-1">{label}</p>
+      {rows.map((r) => (
+        <div key={r.label} className="flex justify-between gap-3">
+          <span style={{ color: r.color }}>{r.label}</span>
+          <span className="font-mono" style={{ color: r.color }}>{formatCurrency(r.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function CalculatorPage() {
   const [tab, setTab] = useState<CalcTab>('compound');
 
@@ -279,6 +296,7 @@ function CompoundCalculator() {
         name: label,
         balance: Math.round(r.endBalance * 100) / 100,
         interest: Math.round(r.cumulativeInterest * 100) / 100,
+        periodInterest: Math.round(r.interest * 100) / 100,
       };
     });
   }, [result.rows, granularity]);
@@ -441,12 +459,26 @@ function CompoundCalculator() {
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="name" tick={{ fill: '#5A5C66', fontSize: 10 }} interval={Math.max(1, Math.floor(chartData.length / 12))} />
+                    <XAxis dataKey="name" tick={{ fill: '#5A5C66', fontSize: 10 }} interval={0} angle={chartData.length > 14 ? -45 : 0} textAnchor={chartData.length > 14 ? 'end' : 'middle'} height={chartData.length > 14 ? 50 : 30} />
                     <YAxis tick={{ fill: '#5A5C66', fontSize: 10 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                     <Tooltip
-                      contentStyle={{ background: '#12141A', border: '1px solid #1E2130', borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ color: '#8B8D98' }}
-                      formatter={(value) => [formatCurrency(typeof value === 'number' ? value : 0)]}
+                      content={(props) => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const p = props as any;
+                        if (!p.active || !p.payload?.length) return null;
+                        const d = p.payload[0].payload;
+                        return (
+                          <CustomTooltip
+                            active
+                            label={p.label}
+                            rows={[
+                              { label: 'Balance', value: d.balance, color: '#00DC82' },
+                              { label: 'Period Interest', value: d.periodInterest, color: '#E8E9ED' },
+                              { label: 'Cumulative Interest', value: d.interest, color: '#6C5CE7' },
+                            ]}
+                          />
+                        );
+                      }}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#00DC82" fill="#00DC82" fillOpacity={0.1} strokeWidth={2} name="Balance" />
                     <Area type="monotone" dataKey="interest" stroke="#6C5CE7" fill="#6C5CE7" fillOpacity={0.1} strokeWidth={1.5} name="Cumulative Interest" />
@@ -530,6 +562,9 @@ function PerformanceFeeCalculator() {
         balance: Math.round(r.balance * 100) / 100,
         cumulativeFees: Math.round(cumFee * 100) / 100,
         cumulativeNet: Math.round(cumNet * 100) / 100,
+        periodProfit: Math.round(r.profit * 100) / 100,
+        periodFee: Math.round(r.fee * 100) / 100,
+        periodNet: Math.round(r.net * 100) / 100,
       };
     });
   }, [result.rows, granularity]);
@@ -675,12 +710,28 @@ function PerformanceFeeCalculator() {
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="name" tick={{ fill: '#5A5C66', fontSize: 10 }} interval={Math.max(1, Math.floor(chartData.length / 12))} />
+                    <XAxis dataKey="name" tick={{ fill: '#5A5C66', fontSize: 10 }} interval={0} angle={chartData.length > 14 ? -45 : 0} textAnchor={chartData.length > 14 ? 'end' : 'middle'} height={chartData.length > 14 ? 50 : 30} />
                     <YAxis tick={{ fill: '#5A5C66', fontSize: 10 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                     <Tooltip
-                      contentStyle={{ background: '#12141A', border: '1px solid #1E2130', borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ color: '#8B8D98' }}
-                      formatter={(value) => [formatCurrency(typeof value === 'number' ? value : 0)]}
+                      content={(props) => {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const p = props as any;
+                        if (!p.active || !p.payload?.length) return null;
+                        const d = p.payload[0].payload;
+                        return (
+                          <CustomTooltip
+                            active
+                            label={p.label}
+                            rows={[
+                              { label: 'Balance', value: d.balance, color: '#00DC82' },
+                              { label: 'Period Profit', value: d.periodProfit, color: '#E8E9ED' },
+                              { label: 'Period Fee', value: d.periodFee, color: '#FFB347' },
+                              { label: 'Period Net', value: d.periodNet, color: '#E8E9ED' },
+                              { label: 'Cumulative Fees', value: d.cumulativeFees, color: '#6C5CE7' },
+                            ]}
+                          />
+                        );
+                      }}
                     />
                     <Area type="monotone" dataKey="balance" stroke="#00DC82" fill="#00DC82" fillOpacity={0.1} strokeWidth={2} name="Account Balance" />
                     <Area type="monotone" dataKey="cumulativeFees" stroke="#6C5CE7" fill="#6C5CE7" fillOpacity={0.15} strokeWidth={2} name="Cumulative Fees" />

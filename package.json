@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "npx drizzle-kit migrate; npx tsx src/workers/trade-sync.ts & npx tsx src/workers/signal-listener.ts & npx tsx src/workers/copy-trading.ts & next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "start": "npx drizzle-kit migrate; npx tsx src/workers/trade-sync.ts & npx tsx src/workers/signal-listener.ts & next start -H 0.0.0.0 -p ${PORT:-3000}",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -16,6 +16,8 @@
     "db:studio": "drizzle-kit studio",
     "worker": "npx tsx src/workers/trade-sync.ts",
     "worker:signals": "npx tsx src/workers/signal-listener.ts",
+    "worker:copy": "npx tsx src/workers/copy-trading.ts",
+    "start:with-copy": "npx drizzle-kit migrate; npx tsx src/workers/trade-sync.ts & npx tsx src/workers/signal-listener.ts & npx tsx src/workers/copy-trading.ts & next start -H 0.0.0.0 -p ${PORT:-3000}",
     "db:seed": "npx tsx scripts/seed-roles.ts",
     "test": "vitest run",
     "test:watch": "vitest"

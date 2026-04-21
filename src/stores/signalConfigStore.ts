@@ -42,6 +42,8 @@ export interface SignalConfigForm {
   // Orders
   maxLotsPerOrder: number;
   marketOrderThreshold: number;
+  nqMarketOrderThreshold: number | null;
+  esMarketOrderThreshold: number | null;
   maxSlippage: number;
   marginWarningThreshold: number;
   marginRejectThreshold: number;
@@ -82,6 +84,8 @@ const DEFAULTS: SignalConfigForm = {
   largeMultiplier: 1.5,
   maxLotsPerOrder: 50,
   marketOrderThreshold: 5.0,
+  nqMarketOrderThreshold: null,
+  esMarketOrderThreshold: null,
   maxSlippage: 5.0,
   marginWarningThreshold: 80,
   marginRejectThreshold: 95,

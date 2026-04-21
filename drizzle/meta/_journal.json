@@ -78,6 +78,13 @@
       "when": 1807500000000,
       "tag": "0010_copy_trading",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1807600000000,
+      "tag": "0011_per_instrument_market_threshold",
+      "breakpoints": true
     }
   ]
 }

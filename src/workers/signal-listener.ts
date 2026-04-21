@@ -552,6 +552,8 @@ function buildSignalConfig(row: typeof signalConfigs.$inferSelect): SignalConfig
     largeMultiplier: row.largeMultiplier,
     maxLotsPerOrder: row.maxLotsPerOrder,
     marketOrderThreshold: row.marketOrderThreshold,
+    nqMarketOrderThreshold: row.nqMarketOrderThreshold,
+    esMarketOrderThreshold: row.esMarketOrderThreshold,
     maxSlippage: row.maxSlippage,
     marginWarningThreshold: row.marginWarningThreshold,
     marginRejectThreshold: row.marginRejectThreshold,

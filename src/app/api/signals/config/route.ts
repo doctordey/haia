@@ -99,6 +99,8 @@ export async function POST(request: NextRequest) {
     largeMultiplier: body.largeMultiplier ?? 1.5,
     maxLotsPerOrder: Math.min(body.maxLotsPerOrder ?? 50, 100),
     marketOrderThreshold: body.marketOrderThreshold ?? 5.0,
+    nqMarketOrderThreshold: body.nqMarketOrderThreshold ?? null,
+    esMarketOrderThreshold: body.esMarketOrderThreshold ?? null,
     maxSlippage: body.maxSlippage ?? 5.0,
     marginWarningThreshold: body.marginWarningThreshold ?? 80,
     marginRejectThreshold: body.marginRejectThreshold ?? 95,

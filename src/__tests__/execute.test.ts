@@ -33,6 +33,8 @@ function makeConfig(overrides: Partial<SignalConfig> = {}): SignalConfig {
     largeMultiplier: 1.5,
     maxLotsPerOrder: 50,
     marketOrderThreshold: 5,
+    nqMarketOrderThreshold: null,
+    esMarketOrderThreshold: null,
     maxSlippage: 5,
     marginWarningThreshold: 80,
     marginRejectThreshold: 95,

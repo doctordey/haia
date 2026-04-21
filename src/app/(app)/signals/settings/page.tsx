@@ -832,19 +832,38 @@ function OrderSection({
     <Card>
       <CardHeader><h3 className="text-sm font-medium">Order Settings</h3></CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <NumberInput
-            label="Market Order Threshold (pts)"
-            value={form.marketOrderThreshold}
-            onChange={(v) => setField('marketOrderThreshold', v)}
-            step={0.5}
-          />
-          <NumberInput
-            label="Max Slippage (pts)"
-            value={form.maxSlippage}
-            onChange={(v) => setField('maxSlippage', v)}
-            step={0.5}
-          />
+        <div className="space-y-3">
+          <p className="text-xs text-text-secondary">Default Market Order Threshold</p>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberInput
+              label="Market Order Threshold (pts)"
+              value={form.marketOrderThreshold}
+              onChange={(v) => setField('marketOrderThreshold', v)}
+              step={0.5}
+            />
+            <NumberInput
+              label="Max Slippage (pts)"
+              value={form.maxSlippage}
+              onChange={(v) => setField('maxSlippage', v)}
+              step={0.5}
+            />
+          </div>
+          <p className="text-xs text-text-secondary">Per-Instrument Override</p>
+          <div className="grid grid-cols-2 gap-3">
+            <NumberInput
+              label="NQ Threshold (pts)"
+              value={form.nqMarketOrderThreshold ?? 0}
+              onChange={(v) => setField('nqMarketOrderThreshold', v || null)}
+              step={0.5}
+            />
+            <NumberInput
+              label="ES Threshold (pts)"
+              value={form.esMarketOrderThreshold ?? 0}
+              onChange={(v) => setField('esMarketOrderThreshold', v || null)}
+              step={0.5}
+            />
+          </div>
+          <p className="text-[10px] text-text-tertiary">Set to 0 to use the default threshold above.</p>
         </div>
 
         <div>

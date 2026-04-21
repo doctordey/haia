@@ -318,6 +318,8 @@ export const signalConfigs = pgTable('signal_configs', {
   // Order settings
   maxLotsPerOrder:       real('max_lots_per_order').notNull().default(50),
   marketOrderThreshold:  real('market_order_threshold').notNull().default(5.0),
+  nqMarketOrderThreshold: real('nq_market_order_threshold'),
+  esMarketOrderThreshold: real('es_market_order_threshold'),
   maxSlippage:           real('max_slippage').notNull().default(5.0),
 
   // Margin safety

@@ -188,6 +188,8 @@ export interface SignalConfig {
   // Orders
   maxLotsPerOrder: number;
   marketOrderThreshold: number;
+  nqMarketOrderThreshold: number | null;
+  esMarketOrderThreshold: number | null;
   maxSlippage: number;
   // Margin
   marginWarningThreshold: number;

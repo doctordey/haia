@@ -314,87 +314,130 @@ async function sendOrders(
     totalChunks: number | null,
   ): Promise<ExecutionResult> {
     const sentAt = new Date();
-    try {
-      const result = await metaApi.createOrder({
-        symbol: fusionSymbol,
-        type: metaOrderType,
-        volume: lotSize,
-        openPrice: orderDecision.orderType !== 'MARKET' ? adjusted.entry : undefined,
-        stopLoss: adjusted.sl,
-        takeProfit: tp,
-        comment: `haia-${shared.tradeNumber}`,
-        slippage: config.maxSlippage,
-      });
+    const maxRetries = 3;
 
-      return {
-        ...shared,
-        lotSize,
-        splitIndex,
-        linkedExecutionId: linkedId,
-        chunkIndex: chunkIdx,
-        totalChunks,
-        status: 'sent',
-        metaapiOrderId: result.orderId,
-        fillPrice: null,
-        slippage: null,
-        errorMessage: null,
-        orderSentAt: sentAt,
-        orderFilledAt: null,
-        totalLatencyMs: Date.now() - startTime,
-        isDryRun: false,
-      } as ExecutionResult;
-    } catch (error) {
-      return {
-        ...shared,
-        lotSize,
-        splitIndex,
-        linkedExecutionId: linkedId,
-        chunkIndex: chunkIdx,
-        totalChunks,
-        status: 'error',
-        metaapiOrderId: null,
-        fillPrice: null,
-        slippage: null,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        orderSentAt: sentAt,
-        orderFilledAt: null,
-        totalLatencyMs: Date.now() - startTime,
-        isDryRun: false,
-      } as ExecutionResult;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await metaApi.createOrder({
+          symbol: fusionSymbol,
+          type: metaOrderType,
+          volume: lotSize,
+          openPrice: orderDecision.orderType !== 'MARKET' ? adjusted.entry : undefined,
+          stopLoss: adjusted.sl,
+          takeProfit: tp,
+          comment: `haia-${shared.tradeNumber}`,
+          slippage: config.maxSlippage,
+        });
+
+        return {
+          ...shared,
+          lotSize,
+          splitIndex,
+          linkedExecutionId: linkedId,
+          chunkIndex: chunkIdx,
+          totalChunks,
+          status: 'sent',
+          metaapiOrderId: result.orderId,
+          fillPrice: null,
+          slippage: null,
+          errorMessage: null,
+          orderSentAt: sentAt,
+          orderFilledAt: null,
+          totalLatencyMs: Date.now() - startTime,
+          isDryRun: false,
+        } as ExecutionResult;
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        const errObj = error as { status?: number; metadata?: { recommendedRetryTime?: string } };
+
+        // MetaAPI rate limit (429) — wait and retry
+        if (errObj.status === 429 && attempt < maxRetries) {
+          const retryTime = errObj.metadata?.recommendedRetryTime
+            ? new Date(errObj.metadata.recommendedRetryTime).getTime() - Date.now()
+            : (attempt + 1) * 1000;
+          const waitMs = Math.min(Math.max(retryTime, 500), 10000);
+          console.warn(`[execute] Rate limit hit, waiting ${waitMs}ms before retry (attempt ${attempt + 1}/${maxRetries})`);
+          await new Promise((r) => setTimeout(r, waitMs));
+          continue;
+        }
+
+        return {
+          ...shared,
+          lotSize,
+          splitIndex,
+          linkedExecutionId: linkedId,
+          chunkIndex: chunkIdx,
+          totalChunks,
+          status: 'error',
+          metaapiOrderId: null,
+          fillPrice: null,
+          slippage: null,
+          errorMessage: errMsg,
+          orderSentAt: sentAt,
+          orderFilledAt: null,
+          totalLatencyMs: Date.now() - startTime,
+          isDryRun: false,
+        } as ExecutionResult;
+      }
     }
+    // Unreachable — all paths above return
+    throw new Error('unreachable');
   }
 
-  const orderPromises: Promise<ExecutionResult>[] = [];
+  // Throttle chunk sending to avoid MetaAPI rate limits
+  // 2000 CPU credits/sec ÷ 10 per order = 200 orders/sec theoretical max.
+  // We use 50 orders per batch with 100ms delay = 500/sec peak, still safe.
+  async function sendChunksThrottled(
+    chunks: Array<() => Promise<ExecutionResult>>,
+  ): Promise<ExecutionResult[]> {
+    const BATCH_SIZE = 25;
+    const BATCH_DELAY_MS = 200;
+    const results: ExecutionResult[] = [];
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map((fn) => fn()));
+      results.push(...batchResults);
+      if (i + BATCH_SIZE < chunks.length) {
+        await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+      }
+    }
+    return results;
+  }
+
+  const chunkFactories: Array<() => Promise<ExecutionResult>> = [];
 
   if (sizing.isSplit && sizing.tp1Chunks && sizing.tp2Chunks) {
     const tp1Id = createId();
     const tp2Id = createId();
 
     for (let i = 0; i < sizing.tp1Chunks.length; i++) {
-      orderPromises.push(sendChunk(
-        sizing.tp1Chunks[i], adjusted.tp1, 1, tp2Id,
-        sizing.tp1Chunks.length > 1 ? i + 1 : null,
-        sizing.tp1Chunks.length > 1 ? sizing.tp1Chunks.length : null,
+      const idx = i;
+      chunkFactories.push(() => sendChunk(
+        sizing.tp1Chunks![idx], adjusted.tp1, 1, tp2Id,
+        sizing.tp1Chunks!.length > 1 ? idx + 1 : null,
+        sizing.tp1Chunks!.length > 1 ? sizing.tp1Chunks!.length : null,
       ));
     }
     for (let i = 0; i < sizing.tp2Chunks.length; i++) {
-      orderPromises.push(sendChunk(
-        sizing.tp2Chunks[i], adjusted.tp2, 2, tp1Id,
-        sizing.tp2Chunks.length > 1 ? i + 1 : null,
-        sizing.tp2Chunks.length > 1 ? sizing.tp2Chunks.length : null,
+      const idx = i;
+      chunkFactories.push(() => sendChunk(
+        sizing.tp2Chunks![idx], adjusted.tp2, 2, tp1Id,
+        sizing.tp2Chunks!.length > 1 ? idx + 1 : null,
+        sizing.tp2Chunks!.length > 1 ? sizing.tp2Chunks!.length : null,
       ));
     }
   } else {
     for (let i = 0; i < sizing.chunks.length; i++) {
-      orderPromises.push(sendChunk(
-        sizing.chunks[i], adjusted.tp1, null, null,
-        sizing.chunks.length > 1 ? i + 1 : null,
+      const idx = i;
+      chunkFactories.push(() => sendChunk(
+        sizing.chunks[idx], adjusted.tp1, null, null,
+        sizing.chunks.length > 1 ? idx + 1 : null,
         sizing.chunks.length > 1 ? sizing.chunks.length : null,
       ));
     }
   }
 
-  const results = await Promise.all(orderPromises);
+  const results = await sendChunksThrottled(chunkFactories);
 
   // Log summary of chunk execution for debugging partial fills
   const successCount = results.filter((r) => r.status === 'sent').length;

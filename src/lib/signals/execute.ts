@@ -67,8 +67,9 @@ async function executeSignal(
   const startTime = Date.now();
   const { config, priceCache, account, metaApi, signalId } = ctx;
   const specs = ctx.contractSpecs ?? DEFAULT_CONTRACT_SPECS;
-  const fusionSymbol = InstrumentMap[signal.instrument].fusionSymbol;
-  const contractSpec = specs[fusionSymbol] ?? DEFAULT_CONTRACT_SPECS[fusionSymbol];
+  // Use the config's per-instrument symbol (user-configurable per account) instead of hardcoded INSTRUMENT_MAP
+  const fusionSymbol = signal.instrument === 'NQ' ? config.nqSymbol : config.esSymbol;
+  const contractSpec = specs[fusionSymbol] ?? DEFAULT_CONTRACT_SPECS[InstrumentMap[signal.instrument].fusionSymbol] ?? DEFAULT_CONTRACT_SPECS['NAS100'];
 
   const baseResult: Omit<ExecutionResult, 'lotSize' | 'splitIndex' | 'linkedExecutionId' | 'chunkIndex' | 'totalChunks' | 'status' | 'metaapiOrderId' | 'fillPrice' | 'slippage' | 'errorMessage' | 'orderSentAt' | 'orderFilledAt' | 'totalLatencyMs' | 'orderType' | 'orderReason' | 'isDryRun'> = {
     signalId,

@@ -41,10 +41,10 @@ let isShuttingDown = false;
 
 // ─── MetaApi Price Streaming ──────────────────────────
 
-async function startPriceStreaming(accountId: string, metaApiId: string): Promise<void> {
+async function startPriceStreaming(accountId: string, metaApiId: string, nqSymbol = 'NAS100', esSymbol = 'US500'): Promise<void> {
   if (accountConnections.has(accountId)) return; // Already connected
 
-  console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId})...`);
+  console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId}), symbols: ${nqSymbol}/${esSymbol}...`);
 
   const api = getMetaApiInstance('signals');
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
@@ -82,13 +82,13 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
     ...noopListener,
     // Override the methods we care about
     onSymbolPriceUpdated(_instanceIndex: string, price: { symbol: string; bid: number; ask: number }) {
-      if (price.symbol === 'NAS100' || price.symbol === 'US500') {
+      if (price.symbol === nqSymbol || price.symbol === esSymbol) {
         priceCache.setPrice(price.symbol, price.bid, price.ask);
       }
     },
     onSymbolPricesUpdated(_instanceIndex: string, prices: { symbol: string; bid: number; ask: number }[]) {
       for (const price of prices) {
-        if (price.symbol === 'NAS100' || price.symbol === 'US500') {
+        if (price.symbol === nqSymbol || price.symbol === esSymbol) {
           priceCache.setPrice(price.symbol, price.bid, price.ask);
         }
       }
@@ -112,8 +112,8 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
   await connection.waitSynchronized({ timeoutInSeconds: 120 });
 
   try {
-    await connection.subscribeToMarketData('NAS100');
-    await connection.subscribeToMarketData('US500');
+    await connection.subscribeToMarketData(nqSymbol);
+    await connection.subscribeToMarketData(esSymbol);
     console.log(`[worker] Streaming active for account ${accountId}`);
   } catch (error) {
     console.warn(`[metaapi:${accountId}] Market data subscription failed:`, error instanceof Error ? error.message : error);
@@ -298,7 +298,7 @@ async function handleTelegramMessageMulti(
           return;
         }
         try {
-          await startPriceStreaming(account.id, account.metaApiId);
+          await startPriceStreaming(account.id, account.metaApiId, config.nqSymbol, config.esSymbol);
         } catch (err) {
           console.error(`[signal] Failed to connect account ${account.name} — skipping live execution:`, err);
           return; // Do not fall through to dry-run for a live config
@@ -703,7 +703,7 @@ async function main(): Promise<void> {
 
     if (!config?.dryRun && account.metaApiId) {
       try {
-        await startPriceStreaming(account.id, account.metaApiId);
+        await startPriceStreaming(account.id, account.metaApiId, config?.nqSymbol, config?.esSymbol);
       } catch (error) {
         console.error(`[worker] Failed to start streaming for ${account.name}:`, error);
       }

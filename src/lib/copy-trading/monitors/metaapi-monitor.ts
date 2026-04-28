@@ -8,6 +8,7 @@ export class MetaApiMasterMonitor implements MasterMonitor {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private connection: any = null;
   private knownPositions = new Map<string, { sl?: number; tp?: number }>();
+  private isSynchronized = false;
 
   onPositionOpen: ((event: MasterPositionEvent) => void) | null = null;
   onPositionClose: ((event: MasterPositionEvent) => void) | null = null;
@@ -50,7 +51,10 @@ export class MetaApiMasterMonitor implements MasterMonitor {
         volume?: number; price?: number; profit?: number; reason?: string;
         stopLoss?: number; takeProfit?: number;
       }) => {
-        console.log(`[copy-monitor:${this.accountId}] Deal received: symbol=${deal.symbol} type=${deal.type} entry=${deal.entryType} posId=${deal.positionId} vol=${deal.volume} price=${deal.price}`);
+        // Skip historical deals replayed during initial sync
+        if (!this.isSynchronized) return;
+
+        console.log(`[copy-monitor:${this.accountId}] Deal: symbol=${deal.symbol} type=${deal.type} entry=${deal.entryType} posId=${deal.positionId} vol=${deal.volume} price=${deal.price}`);
 
         if (!deal.positionId || !deal.symbol) return;
         if (deal.type === 'DEAL_TYPE_BALANCE') return;
@@ -91,6 +95,7 @@ export class MetaApiMasterMonitor implements MasterMonitor {
         id?: string; symbol?: string; type?: string;
         volume?: number; openPrice?: number; stopLoss?: number; takeProfit?: number;
       }) => {
+        if (!this.isSynchronized) return;
         if (!position.id || !position.symbol) return;
         const posId = String(position.id);
         const known = this.knownPositions.get(posId);
@@ -131,7 +136,8 @@ export class MetaApiMasterMonitor implements MasterMonitor {
         console.log(`[copy-master:${this.accountId}] Broker: ${connected ? 'connected' : 'disconnected'}`);
       },
       onDealsSynchronized: () => {
-        console.log(`[copy-master:${this.accountId}] Deals synchronized — ready to monitor new trades`);
+        this.isSynchronized = true;
+        console.log(`[copy-master:${this.accountId}] Deals synchronized — now monitoring for new trades only`);
       },
     });
 

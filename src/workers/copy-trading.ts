@@ -162,12 +162,13 @@ async function connectSlaveTradovate(
 
 function createMasterMonitor(group: ResolvedCopyGroup): MasterMonitor | null {
   const { masterAccount } = group;
+  const platform = masterAccount.platform.toLowerCase();
 
-  if ((masterAccount.platform === 'mt4' || masterAccount.platform === 'mt5') && masterAccount.metaApiId) {
-    return new MetaApiMasterMonitor(masterAccount.id, masterAccount.metaApiId, masterAccount.platform);
+  if ((platform === 'mt4' || platform === 'mt5') && masterAccount.metaApiId) {
+    return new MetaApiMasterMonitor(masterAccount.id, masterAccount.metaApiId, platform as 'mt4' | 'mt5');
   }
 
-  if (masterAccount.platform === 'tradovate' && masterAccount.tradovateAccountId) {
+  if (platform === 'tradovate' && masterAccount.tradovateAccountId) {
     // Load credentials from the account record
     // Note: in production, credentials should be fetched from DB at this point
     return null; // Tradovate monitor requires credentials — loaded separately
@@ -251,9 +252,10 @@ async function startGroup(group: ResolvedCopyGroup): Promise<void> {
     }
 
     try {
-      if ((slave.account.platform === 'mt4' || slave.account.platform === 'mt5') && slave.account.metaApiId) {
-        await connectSlaveMetaApi(slave.accountId, slave.account.metaApiId, slave.account.platform);
-      } else if (slave.account.platform === 'tradovate' && slave.account.tradovateAccountId) {
+      const slavePlatform = slave.account.platform.toLowerCase();
+      if ((slavePlatform === 'mt4' || slavePlatform === 'mt5') && slave.account.metaApiId) {
+        await connectSlaveMetaApi(slave.accountId, slave.account.metaApiId, slavePlatform as 'mt4' | 'mt5');
+      } else if (slavePlatform === 'tradovate' && slave.account.tradovateAccountId) {
         const acct = await db.query.tradingAccounts.findFirst({
           where: eq(tradingAccounts.id, slave.accountId),
         });

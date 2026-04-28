@@ -50,7 +50,10 @@ export class MetaApiMasterMonitor implements MasterMonitor {
         volume?: number; price?: number; profit?: number; reason?: string;
         stopLoss?: number; takeProfit?: number;
       }) => {
+        console.log(`[copy-monitor:${this.accountId}] Deal received: symbol=${deal.symbol} type=${deal.type} entry=${deal.entryType} posId=${deal.positionId} vol=${deal.volume} price=${deal.price}`);
+
         if (!deal.positionId || !deal.symbol) return;
+        if (deal.type === 'DEAL_TYPE_BALANCE') return;
         const posId = String(deal.positionId);
         const direction: 'BUY' | 'SELL' = deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL';
 
@@ -123,6 +126,12 @@ export class MetaApiMasterMonitor implements MasterMonitor {
       },
       onDisconnected: () => {
         console.log(`[copy-master:${this.accountId}] Disconnected — auto-reconnecting`);
+      },
+      onBrokerConnectionStatusChanged: (_i: string, connected: boolean) => {
+        console.log(`[copy-master:${this.accountId}] Broker: ${connected ? 'connected' : 'disconnected'}`);
+      },
+      onDealsSynchronized: () => {
+        console.log(`[copy-master:${this.accountId}] Deals synchronized — ready to monitor new trades`);
       },
     });
 

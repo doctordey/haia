@@ -226,11 +226,11 @@ function wireMonitorEvents(monitor: MasterMonitor, group: ResolvedCopyGroup): vo
 // ─── Startup ──────────────────────────────────────────
 
 async function startGroup(group: ResolvedCopyGroup): Promise<void> {
-  console.log(`[copy] Starting group "${group.name}" (master: ${group.masterAccount.platform})`);
+  console.log(`[copy] Starting group "${group.name}" (master: ${group.masterAccount.platform}, metaApiId: ${group.masterAccount.metaApiId || 'none'})`);
 
   // Create and start master monitor
   let monitor: MasterMonitor | null;
-  if (group.masterAccount.platform === 'tradovate') {
+  if (group.masterAccount.platform.toLowerCase() === 'tradovate') {
     monitor = await createTradovateMasterMonitor(group);
   } else {
     monitor = createMasterMonitor(group);

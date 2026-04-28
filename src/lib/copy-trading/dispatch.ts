@@ -50,8 +50,22 @@ export async function dispatchOpen(
       }
     }
 
-    // Symbol mapping
-    const symbolMap = slave.symbolMaps.get(event.symbol);
+    // Symbol mapping — try exact match first, then case-insensitive
+    let symbolMap = slave.symbolMaps.get(event.symbol);
+    if (!symbolMap) {
+      // Try case-insensitive lookup
+      for (const [key, map] of slave.symbolMaps) {
+        if (key.toLowerCase() === event.symbol.toLowerCase()) {
+          symbolMap = map;
+          break;
+        }
+      }
+    }
+
+    console.log(
+      `[copy] Symbol lookup: master="${event.symbol}" → ${symbolMap ? `slave="${symbolMap.slaveSymbol}"` : 'NOT FOUND'} ` +
+      `(available maps: ${[...slave.symbolMaps.keys()].join(', ')})`
+    );
     if (!symbolMap || !symbolMap.isEnabled) {
       await logEvent(group.id, 'symbol_unmapped', null, group.masterAccountId, slave.accountId, { masterSymbol: event.symbol });
       continue;

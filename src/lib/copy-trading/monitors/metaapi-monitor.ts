@@ -24,8 +24,14 @@ export class MetaApiMasterMonitor implements MasterMonitor {
     const api = getMetaApiInstance('signals');
     const account = await api.metatraderAccountApi.getAccount(this.metaApiId);
 
-    if (account.state !== 'DEPLOYED') await account.waitDeployed();
-    if (account.connectionStatus !== 'CONNECTED') await account.waitConnected();
+    if (account.state !== 'DEPLOYED') {
+      console.log(`[copy-master:${this.accountId}] Waiting for deployment...`);
+      await account.waitDeployed();
+    }
+    if (account.connectionStatus !== 'CONNECTED') {
+      console.log(`[copy-master:${this.accountId}] Waiting for broker connection...`);
+      await account.waitConnected();
+    }
 
     this.connection = account.getStreamingConnection();
 

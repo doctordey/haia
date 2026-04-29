@@ -279,14 +279,25 @@ async function startGroup(group: ResolvedCopyGroup): Promise<void> {
     await sleep(1000);
   }
 
-  // Start the monitor
-  try {
-    await monitor.start();
-    activeMonitors.set(group.id, monitor);
-    console.log(`[copy] Group "${group.name}" active — monitoring master, ${enabledSlaves.length} slave(s)`);
-  } catch (err) {
-    console.error(`[copy] Failed to start monitor for group "${group.name}":`, err);
+  // Start the monitor with retry
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      await monitor.start();
+      activeMonitors.set(group.id, monitor);
+      console.log(`[copy] Group "${group.name}" active — monitoring master, ${enabledSlaves.length} slave(s)`);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[copy] Monitor start attempt ${attempt}/${MAX_RETRIES} failed for "${group.name}": ${msg}`);
+      if (attempt < MAX_RETRIES) {
+        const delay = attempt * 10000;
+        console.log(`[copy] Retrying in ${delay / 1000}s...`);
+        await sleep(delay);
+      }
+    }
   }
+  console.error(`[copy] All ${MAX_RETRIES} attempts failed for group "${group.name}"`);
 }
 
 // ─── Main Loop ────────────────────────────────────────

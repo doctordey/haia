@@ -176,13 +176,18 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
     while ((signalMatch = sigReB.exec(text)) !== null) {
       // Parse size — can be Small/Medium/Large or "N contract(s)"
       const rawSize = (signalMatch[7] || '').trim();
+      const instrument = signalMatch[1].toUpperCase();
       let size: SignalSize = 'Medium';
       if (/^small$/i.test(rawSize)) size = 'Small';
       else if (/^large$/i.test(rawSize)) size = 'Large';
       else if (/^medium$/i.test(rawSize)) size = 'Medium';
       else if (/(\d+)\s*contract/i.test(rawSize)) {
         const contracts = parseInt(rawSize.match(/(\d+)/)?.[1] || '1');
-        size = contracts <= 1 ? 'Small' : contracts <= 3 ? 'Medium' : 'Large';
+        if (instrument === 'NQ') {
+          size = contracts >= 2 ? 'Large' : 'Medium';
+        } else {
+          size = contracts >= 3 ? 'Large' : 'Medium';
+        }
       }
 
       signals.push({

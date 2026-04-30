@@ -13,7 +13,7 @@ function cleanPrice(s: string): number {
 
 // ─── REGEX PATTERNS ──────────────────────────────────
 
-// Single instrument signal block:
+// Single instrument signal block (format A — original):
 //   🟢 LONG NQ @ 24,060
 //   TP1: 24,088
 //   TP2: 24,160
@@ -28,6 +28,26 @@ const SIGNAL_BLOCK_RE = new RegExp(
   '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
   '\\s*SL:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
   '\\s*Size:\\s*(Small|Medium|Large)',
+  'gi'
+);
+
+// Single instrument signal block (format B — new format):
+//   🟢 **Trade 1 — NQ LONG**
+//   📈 Entry: 27,155
+//   SL: 27,050
+//   TP1: 27,255
+//   TP2: 27,355
+//   Size: Small
+const SIGNAL_BLOCK_B_RE = new RegExp(
+  '(?:🟢|🔴)\\s*' +
+  '(?:Trade\\s+\\d+\\s*[—–-]\\s*)?' +
+  '(NQ|ES)\\s+(LONG|SHORT)' +
+  '[\\s\\S]*?' +
+  '(?:📈\\s*)?Entry:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
+  '\\s*SL:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
+  '\\s*TP1:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
+  '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)' +
+  '(?:\\s*\\n\\s*Size:\\s*(Small|Medium|Large))?',
   'gi'
 );
 
@@ -109,10 +129,9 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
     return { type: 'tp_hit', hits: tpHits };
   }
 
-  // 3. Parse signal blocks
+  // 3. Parse signal blocks — try format A (original), then format B (new)
   const signals: ParsedSignal[] = [];
   let signalMatch;
-  const sigRe = new RegExp(SIGNAL_BLOCK_RE.source, SIGNAL_BLOCK_RE.flags);
 
   // Build trade number index from "Trade N" headers
   const tradeHeaders: { tradeNum: number; startIndex: number }[] = [];
@@ -125,17 +144,21 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
     });
   }
 
-  while ((signalMatch = sigRe.exec(text)) !== null) {
-    // Determine trade number from nearest preceding header
+  function findTradeNumber(matchIndex: number): number {
     let tradeNumber = 1;
     for (const header of tradeHeaders) {
-      if (signalMatch.index >= header.startIndex) {
+      if (matchIndex >= header.startIndex) {
         tradeNumber = header.tradeNum;
       }
     }
+    return tradeNumber;
+  }
 
+  // Format A: 🟢 LONG NQ @ 24,060 / TP1 / TP2 / SL / Size
+  const sigRe = new RegExp(SIGNAL_BLOCK_RE.source, SIGNAL_BLOCK_RE.flags);
+  while ((signalMatch = sigRe.exec(text)) !== null) {
     signals.push({
-      tradeNumber,
+      tradeNumber: findTradeNumber(signalMatch.index),
       instrument: signalMatch[2].toUpperCase() as Instrument,
       direction: signalMatch[1].toUpperCase() as SignalDirection,
       entryPrice: cleanPrice(signalMatch[3]),
@@ -144,6 +167,23 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
       stopLoss: cleanPrice(signalMatch[6]),
       size: signalMatch[7] as SignalSize,
     });
+  }
+
+  // Format B: 🟢 Trade 1 — NQ LONG / Entry: / SL: / TP1: / TP2: / Size:
+  if (signals.length === 0) {
+    const sigReB = new RegExp(SIGNAL_BLOCK_B_RE.source, SIGNAL_BLOCK_B_RE.flags);
+    while ((signalMatch = sigReB.exec(text)) !== null) {
+      signals.push({
+        tradeNumber: findTradeNumber(signalMatch.index),
+        instrument: signalMatch[1].toUpperCase() as Instrument,
+        direction: signalMatch[2].toUpperCase() as SignalDirection,
+        entryPrice: cleanPrice(signalMatch[3]),
+        stopLoss: cleanPrice(signalMatch[4]),
+        tp1: cleanPrice(signalMatch[5]),
+        tp2: cleanPrice(signalMatch[6]),
+        size: (signalMatch[7] as SignalSize) || 'Medium',
+      });
+    }
   }
 
   if (signals.length > 0) {

@@ -32,12 +32,13 @@ const SIGNAL_BLOCK_RE = new RegExp(
 );
 
 // Single instrument signal block (format B — new format):
-//   🟢 **Trade 1 — NQ LONG**
+//   🟢 Trade 1 — NQ LONG
+//
 //   📈 Entry: 27,155
 //   SL: 27,050
-//   TP1: 27,255
-//   TP2: 27,355
-//   Size: Small
+//   TP1: 27,260 ( $2,100)
+//   TP2: 27,400 ( $4,900)
+//   Size: 1 contract
 const SIGNAL_BLOCK_B_RE = new RegExp(
   '(?:🟢|🔴)\\s*' +
   '(?:Trade\\s+\\d+\\s*[—–-]\\s*)?' +
@@ -45,10 +46,10 @@ const SIGNAL_BLOCK_B_RE = new RegExp(
   '[\\s\\S]*?' +
   '(?:📈\\s*)?Entry:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
   '\\s*SL:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
-  '\\s*TP1:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
-  '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)' +
-  '(?:\\s*\\n\\s*Size:\\s*(Small|Medium|Large))?',
-  'gi'
+  '\\s*TP1:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?\\s*\\n' +
+  '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?' +
+  '(?:\\s*\\n\\s*Size:\\s*(.+?))?\\s*$',
+  'gim'
 );
 
 const TRADE_HEADER_RE = /Trade\s+(\d+)/gi;
@@ -173,6 +174,17 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
   if (signals.length === 0) {
     const sigReB = new RegExp(SIGNAL_BLOCK_B_RE.source, SIGNAL_BLOCK_B_RE.flags);
     while ((signalMatch = sigReB.exec(text)) !== null) {
+      // Parse size — can be Small/Medium/Large or "N contract(s)"
+      const rawSize = (signalMatch[7] || '').trim();
+      let size: SignalSize = 'Medium';
+      if (/^small$/i.test(rawSize)) size = 'Small';
+      else if (/^large$/i.test(rawSize)) size = 'Large';
+      else if (/^medium$/i.test(rawSize)) size = 'Medium';
+      else if (/(\d+)\s*contract/i.test(rawSize)) {
+        const contracts = parseInt(rawSize.match(/(\d+)/)?.[1] || '1');
+        size = contracts <= 1 ? 'Small' : contracts <= 3 ? 'Medium' : 'Large';
+      }
+
       signals.push({
         tradeNumber: findTradeNumber(signalMatch.index),
         instrument: signalMatch[1].toUpperCase() as Instrument,
@@ -181,7 +193,7 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
         stopLoss: cleanPrice(signalMatch[4]),
         tp1: cleanPrice(signalMatch[5]),
         tp2: cleanPrice(signalMatch[6]),
-        size: (signalMatch[7] as SignalSize) || 'Medium',
+        size,
       });
     }
   }

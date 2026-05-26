@@ -31,7 +31,7 @@ const SIGNAL_BLOCK_RE = new RegExp(
   'gi'
 );
 
-// Single instrument signal block (format B — new format):
+// Single instrument signal block (format B — trade format):
 //   🟢 Trade 1 — NQ LONG
 //
 //   📈 Entry: 27,155
@@ -45,6 +45,29 @@ const SIGNAL_BLOCK_B_RE = new RegExp(
   '(NQ|ES)\\s+(LONG|SHORT)' +
   '[\\s\\S]*?' +
   '(?:📈\\s*)?Entry:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
+  '\\s*SL:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
+  '\\s*TP1:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?\\s*\\n' +
+  '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?' +
+  '(?:\\s*\\n\\s*Size:\\s*(.+?))?\\s*$',
+  'gim'
+);
+
+// Single instrument signal block (format C — $OPUS format):
+//   📈 NQ LONG
+//   Entry: 29,895 - 29,905
+//   SL: 29,800
+//   TP1: 29,960
+//   TP2: 30,000
+//   Size: 1 contract
+//
+// Also handles: 📈 ES LONG #2
+//               Entry: 7,512 - 7,515 (limit)
+const SIGNAL_BLOCK_C_RE = new RegExp(
+  '📈\\s*' +
+  '(NQ|ES)\\s+(LONG|SHORT)' +
+  '(?:\\s*#(\\d+))?' +
+  '\\s*\\n' +
+  '\\s*Entry:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*-\\s*([\\d,]+(?:\\.\\d+)?))?(?:\\s*\\(limit\\))?\\s*\\n' +
   '\\s*SL:\\s*([\\d,]+(?:\\.\\d+)?)\\s*\\n' +
   '\\s*TP1:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?\\s*\\n' +
   '\\s*TP2:\\s*([\\d,]+(?:\\.\\d+)?)(?:\\s*\\([^)]*\\))?' +
@@ -67,6 +90,21 @@ const TP_HIT_RE = new RegExp(
 );
 
 const WARNING_RE = /⚠️\s*(.*?)(?:\n|$)/i;
+
+// ─── SIZE HELPERS ────────────────────────────────────
+
+function parseContractSize(raw: string | undefined, instrument: string): SignalSize {
+  const s = (raw || '').trim();
+  if (/^small$/i.test(s)) return 'Small';
+  if (/^large$/i.test(s)) return 'Large';
+  if (/^medium$/i.test(s)) return 'Medium';
+  if (/(\d+)\s*contract/i.test(s)) {
+    const contracts = parseInt(s.match(/(\d+)/)?.[1] || '1');
+    if (instrument === 'NQ') return contracts >= 2 ? 'Large' : 'Medium';
+    return contracts >= 3 ? 'Large' : 'Medium';
+  }
+  return 'Medium';
+}
 
 // ─── MAIN PARSER ─────────────────────────────────────
 
@@ -174,22 +212,6 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
   if (signals.length === 0) {
     const sigReB = new RegExp(SIGNAL_BLOCK_B_RE.source, SIGNAL_BLOCK_B_RE.flags);
     while ((signalMatch = sigReB.exec(text)) !== null) {
-      // Parse size — can be Small/Medium/Large or "N contract(s)"
-      const rawSize = (signalMatch[7] || '').trim();
-      const instrument = signalMatch[1].toUpperCase();
-      let size: SignalSize = 'Medium';
-      if (/^small$/i.test(rawSize)) size = 'Small';
-      else if (/^large$/i.test(rawSize)) size = 'Large';
-      else if (/^medium$/i.test(rawSize)) size = 'Medium';
-      else if (/(\d+)\s*contract/i.test(rawSize)) {
-        const contracts = parseInt(rawSize.match(/(\d+)/)?.[1] || '1');
-        if (instrument === 'NQ') {
-          size = contracts >= 2 ? 'Large' : 'Medium';
-        } else {
-          size = contracts >= 3 ? 'Large' : 'Medium';
-        }
-      }
-
       signals.push({
         tradeNumber: findTradeNumber(signalMatch.index),
         instrument: signalMatch[1].toUpperCase() as Instrument,
@@ -198,7 +220,29 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
         stopLoss: cleanPrice(signalMatch[4]),
         tp1: cleanPrice(signalMatch[5]),
         tp2: cleanPrice(signalMatch[6]),
-        size,
+        size: parseContractSize(signalMatch[7], signalMatch[1].toUpperCase()),
+      });
+    }
+  }
+
+  // Format C: 📈 NQ LONG / Entry: 29,895 - 29,905 / SL / TP1 / TP2 / Size
+  if (signals.length === 0) {
+    const sigReC = new RegExp(SIGNAL_BLOCK_C_RE.source, SIGNAL_BLOCK_C_RE.flags);
+    while ((signalMatch = sigReC.exec(text)) !== null) {
+      // Entry can be a range (29,895 - 29,905) — use midpoint
+      const entryLow = cleanPrice(signalMatch[4]);
+      const entryHigh = signalMatch[5] ? cleanPrice(signalMatch[5]) : entryLow;
+      const entry = (entryLow + entryHigh) / 2;
+
+      signals.push({
+        tradeNumber: signalMatch[3] ? parseInt(signalMatch[3]) : findTradeNumber(signalMatch.index),
+        instrument: signalMatch[1].toUpperCase() as Instrument,
+        direction: signalMatch[2].toUpperCase() as SignalDirection,
+        entryPrice: entry,
+        stopLoss: cleanPrice(signalMatch[6]),
+        tp1: cleanPrice(signalMatch[7]),
+        tp2: cleanPrice(signalMatch[8]),
+        size: parseContractSize(signalMatch[9], signalMatch[1].toUpperCase()),
       });
     }
   }

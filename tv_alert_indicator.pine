@@ -1,0 +1,103 @@
+// ============================================================================
+// Haia TradingView Alert → FusionMarkets Webhook
+// ============================================================================
+// Companion indicator that piggybacks on your signal indicator's LONG/SHORT
+// outputs and shapes the alert payload Haia's /api/signals/tradingview/webhook
+// endpoint expects.
+//
+// SETUP:
+//   1. Open the chart of an instrument wired up in Haia (e.g. XBRUSD or
+//      UK10YBG). Make sure your signal indicator is on the chart too.
+//   2. Add this indicator on top of it.
+//   3. Replace the `long_signal` / `short_signal` placeholders below with the
+//      plot/series exposed by your real signal indicator (TradingView Pine
+//      supports `input.source(...)` so you can wire it up via the indicator
+//      settings — keep that approach if you don't want to edit code).
+//   4. Set the symbol input to match the chart's ticker (XBRUSD or UK10YBG).
+//   5. Create TWO alerts on this indicator:
+//        - Condition: "Haia TV Alert" → "LONG entry"
+//        - Condition: "Haia TV Alert" → "SHORT entry"
+//      For each:
+//        - Webhook URL: https://YOUR_HAIA_URL/api/signals/tradingview/webhook
+//        - Expiration: Open-ended
+//        - Message: leave default — the indicator sets `alert_msg` automatically
+//
+// IMPORTANT — UK10YBG users:
+//   UK10YBG on TradingView is NOT FusionMarkets' UKGILT. Set
+//   `fusion_proxy` to FUSIONMARKETS:UKGILT so the alert payload carries the
+//   live UKGILT price; Haia computes the offset on receipt. XBRUSD on
+//   TradingView IS already a FusionMarkets feed — leave `fusion_proxy` blank.
+// ============================================================================
+
+//@version=6
+indicator("Haia TV Alert", overlay=true)
+
+// ── INPUTS ──────────────────────────────────────────────────────────────────
+
+tv_symbol      = input.string("XBRUSD",    "TradingView Symbol",
+                    options=["XBRUSD", "UK10YBG"],
+                    tooltip="Must match the chart this indicator is added to.")
+fusion_proxy   = input.symbol("",          "FusionMarkets Proxy Symbol",
+                    tooltip="Leave blank for XBRUSD (already a Fusion feed). For UK10YBG set to FUSIONMARKETS:UKGILT.")
+webhook_secret = input.string("CHANGE_ME", "Webhook Secret",
+                    tooltip="Must match TRADINGVIEW_WEBHOOK_SECRET in your Haia env vars.")
+account_id     = input.string("",          "Override Account ID (optional)",
+                    tooltip="If you have multiple Fusion accounts in Haia, set this. Otherwise the first enabled config wins.")
+
+// Wire these to your real signal indicator's plot via the indicator settings.
+// They should be 1 when the signal fires on this bar, 0 otherwise.
+long_signal_src  = input.source(close, "LONG Signal Source")
+short_signal_src = input.source(close, "SHORT Signal Source")
+long_threshold   = input.float(0.5,   "LONG Trigger Threshold",
+                    tooltip="Signal fires when LONG source crosses above this.")
+short_threshold  = input.float(0.5,   "SHORT Trigger Threshold",
+                    tooltip="Signal fires when SHORT source crosses above this.")
+
+// ── PRICES ──────────────────────────────────────────────────────────────────
+
+// Previous CLOSED 5-min candle on the chart symbol — [1] indexes the bar
+// before the current one (i.e. the most recently closed one).
+prev_5m_high = request.security(syminfo.tickerid, "5", high)[1]
+prev_5m_low  = request.security(syminfo.tickerid, "5", low)[1]
+
+// Live FusionMarkets proxy price (only meaningful when symbols diverge).
+fusion_price = fusion_proxy == "" ? close : request.security(fusion_proxy, timeframe.period, close)
+
+// ── TRIGGERS ────────────────────────────────────────────────────────────────
+
+long_fire  = ta.crossover(long_signal_src,  long_threshold)
+short_fire = ta.crossover(short_signal_src, short_threshold)
+
+// ── ALERT PAYLOADS ──────────────────────────────────────────────────────────
+
+build_payload(string direction) =>
+    '{' +
+      '"secret":"'       + webhook_secret + '",' +
+      '"tv_symbol":"'    + tv_symbol      + '",' +
+      '"direction":"'    + direction      + '",' +
+      '"tv_price":'      + str.tostring(close,        "#.######") + ',' +
+      '"fusion_price":'  + str.tostring(fusion_price, "#.######") + ',' +
+      '"prev_5m_high":'  + str.tostring(prev_5m_high, "#.######") + ',' +
+      '"prev_5m_low":'   + str.tostring(prev_5m_low,  "#.######") + ',' +
+      '"timestamp":"{{timenow}}"' +
+      (account_id == "" ? "" : ',"account_id":"' + account_id + '"') +
+    '}'
+
+// ── ALERTS ──────────────────────────────────────────────────────────────────
+
+alertcondition(long_fire,  title="LONG entry",  message='{{strategy.order.alert_message}}')
+alertcondition(short_fire, title="SHORT entry", message='{{strategy.order.alert_message}}')
+
+// Use alert() so the message is computed at fire time (alertcondition messages
+// are constant strings — alert() can carry per-bar dynamic payloads).
+if long_fire  and barstate.isconfirmed
+    alert(build_payload("LONG"),  alert.freq_once_per_bar_close)
+if short_fire and barstate.isconfirmed
+    alert(build_payload("SHORT"), alert.freq_once_per_bar_close)
+
+// ── PLOTTING ────────────────────────────────────────────────────────────────
+
+plotshape(long_fire,  title="LONG",  location=location.belowbar, style=shape.triangleup,   color=color.lime,  size=size.small)
+plotshape(short_fire, title="SHORT", location=location.abovebar, style=shape.triangledown, color=color.red,   size=size.small)
+plot(prev_5m_high, "Prev 5m High", color=color.new(color.gray, 70))
+plot(prev_5m_low,  "Prev 5m Low",  color=color.new(color.gray, 70))

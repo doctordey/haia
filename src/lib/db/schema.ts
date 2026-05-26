@@ -465,6 +465,123 @@ export const tradeJournal = pgTable('trade_journal', {
   index('trade_journal_entry_time_idx').on(table.entryTime),
 ]);
 
+// ─── TradingView Alert Configs ────────────────────
+// Per-instrument settings for the TradingView indicator → FusionMarkets webhook.
+// One row per (user, account, tvSymbol) — e.g. (alice, fusion-live, XBRUSD).
+
+export const tvAlertConfigs = pgTable('tv_alert_configs', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  userId:    text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accountId: text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+
+  // Symbol mapping
+  tvSymbol:     text('tv_symbol').notNull(),      // TradingView ticker (XBRUSD, UK10YBG)
+  fusionSymbol: text('fusion_symbol').notNull(),  // FusionMarkets ticker (XBRUSD, UKGILT)
+
+  // Master controls
+  isEnabled: boolean('is_enabled').notNull().default(false),
+  dryRun:    boolean('dry_run').notNull().default(true),
+
+  // Trade parameters
+  riskPercent:       real('risk_percent').notNull().default(5.0),
+  rewardRiskRatio:   real('reward_risk_ratio').notNull().default(2.0),
+  slPipOffset:       real('sl_pip_offset').notNull().default(2.0),    // pips beyond candle high/low
+  pipSize:           real('pip_size').notNull().default(0.01),         // 1 pip in price units
+  pipValuePerLot:    real('pip_value_per_lot').notNull().default(0.10), // $ per pip per 1 lot
+
+  // Sizing safeguards
+  sizingMode:        text('sizing_mode').notNull().default('percent_equity'),  // "percent_equity" | "percent_balance" | "strict"
+  strictLots:        real('strict_lots').notNull().default(0.01),
+  minLotSize:        real('min_lot_size').notNull().default(0.01),
+  lotStep:           real('lot_step').notNull().default(0.01),
+  maxLotSize:        real('max_lot_size').notNull().default(100),
+  maxLotsPerOrder:   real('max_lots_per_order').notNull().default(50),
+  minStopDistancePips: real('min_stop_distance_pips').notNull().default(5),
+  maxRiskPercent:    real('max_risk_percent').notNull().default(10.0),
+  maxSlippage:       real('max_slippage').notNull().default(5.0),
+
+  // Margin safety
+  marginWarningThreshold: real('margin_warning_threshold').notNull().default(80),
+  marginRejectThreshold:  real('margin_reject_threshold').notNull().default(95),
+
+  // Offset bounds (UK10YBG vs UKGILT can sit in a small band; outside this we reject)
+  maxOffsetAbs: real('max_offset_abs').notNull().default(10),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  unique('tv_alert_configs_user_account_symbol_uniq').on(table.userId, table.accountId, table.tvSymbol),
+  index('tv_alert_configs_user_id_idx').on(table.userId),
+  index('tv_alert_configs_account_id_idx').on(table.accountId),
+  index('tv_alert_configs_tv_symbol_idx').on(table.tvSymbol),
+]);
+
+export const tvAlertConfigsRelations = relations(tvAlertConfigs, ({ one, many }) => ({
+  user:    one(users, { fields: [tvAlertConfigs.userId], references: [users.id] }),
+  account: one(tradingAccounts, { fields: [tvAlertConfigs.accountId], references: [tradingAccounts.id] }),
+  alerts:  many(tvAlerts),
+}));
+
+// ─── TradingView Alerts ───────────────────────────
+// One row per inbound webhook fire — captures raw payload, computed trade
+// parameters, and execution result. Equivalent to (signals + signalExecutions)
+// for the simpler TV-alert flow where one alert always becomes one order.
+
+export const tvAlerts = pgTable('tv_alerts', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  configId:  text('config_id').references(() => tvAlertConfigs.id, { onDelete: 'set null' }),
+  accountId: text('account_id').references(() => tradingAccounts.id, { onDelete: 'set null' }),
+
+  // Raw payload
+  rawPayload: text('raw_payload').notNull(),
+  receivedAt: timestamp('received_at').notNull().defaultNow(),
+
+  // Parsed signal
+  tvSymbol:     text('tv_symbol').notNull(),
+  fusionSymbol: text('fusion_symbol'),
+  direction:    text('direction').notNull(),        // "LONG" | "SHORT"
+  tvPrice:      real('tv_price'),                    // current TradingView price at alert time
+  fusionPrice:  real('fusion_price'),                // FusionMarkets price (for offset calc)
+  offsetApplied: real('offset_applied'),             // tv - fusion (0 for native feeds)
+
+  // 5-min candle context
+  prevCandleHigh:         real('prev_candle_high'),
+  prevCandleLow:          real('prev_candle_low'),
+  prevCandleHighAdjusted: real('prev_candle_high_adjusted'),
+  prevCandleLowAdjusted:  real('prev_candle_low_adjusted'),
+
+  // Computed trade parameters (in FusionMarkets price space)
+  entryPrice: real('entry_price'),
+  stopLoss:   real('stop_loss'),
+  takeProfit: real('take_profit'),
+  lotSize:    real('lot_size'),
+  riskAmount: real('risk_amount'),
+  rewardRiskRatio: real('reward_risk_ratio'),
+  computeReason:   text('compute_reason'),
+
+  // Execution result
+  status:         text('status').notNull(),  // "pending" | "sent" | "rejected" | "error" | "dry_run" | "duplicate"
+  metaapiOrderId: text('metaapi_order_id'),
+  errorMessage:   text('error_message'),
+
+  // Timing
+  orderSentAt:    timestamp('order_sent_at'),
+  totalLatencyMs: integer('total_latency_ms'),
+  isDryRun:       boolean('is_dry_run').notNull().default(false),
+
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('tv_alerts_config_id_idx').on(table.configId),
+  index('tv_alerts_received_at_idx').on(table.receivedAt),
+  index('tv_alerts_status_idx').on(table.status),
+  index('tv_alerts_tv_symbol_idx').on(table.tvSymbol),
+]);
+
+export const tvAlertsRelations = relations(tvAlerts, ({ one }) => ({
+  config:  one(tvAlertConfigs, { fields: [tvAlerts.configId], references: [tvAlertConfigs.id] }),
+  account: one(tradingAccounts, { fields: [tvAlerts.accountId], references: [tradingAccounts.id] }),
+}));
+
 export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({
   user:            one(users, { fields: [tradeJournal.userId], references: [users.id] }),
   trade:           one(trades, { fields: [tradeJournal.tradeId], references: [trades.id] }),

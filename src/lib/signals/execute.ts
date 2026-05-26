@@ -112,13 +112,18 @@ async function executeSignal(
     return [makeErrorResult(baseResult, config, `No current price for ${fusionSymbol} — MetaApi price stream may be stale (>10s) or disconnected. Execution blocked.`)];
   }
 
-  // 4. Determine order type (per-instrument threshold)
-  const instrumentThreshold = signal.instrument === 'NQ'
-    ? (config.nqMarketOrderThreshold ?? config.marketOrderThreshold)
-    : (config.esMarketOrderThreshold ?? config.marketOrderThreshold);
-  const orderDecision = currentPrice != null
-    ? determineOrderType(signal.direction, adjusted.entry, currentPrice, instrumentThreshold)
-    : { orderType: 'MARKET' as const, reason: 'No live price — defaulting to MARKET (dry run)' };
+  // 4. Determine order type (per-instrument threshold, or forced by parser)
+  let orderDecision: { orderType: string; reason: string };
+  if (signal.forceOrderType) {
+    orderDecision = { orderType: signal.forceOrderType, reason: `Forced ${signal.forceOrderType} by signal format` };
+  } else {
+    const instrumentThreshold = signal.instrument === 'NQ'
+      ? (config.nqMarketOrderThreshold ?? config.marketOrderThreshold)
+      : (config.esMarketOrderThreshold ?? config.marketOrderThreshold);
+    orderDecision = currentPrice != null
+      ? determineOrderType(signal.direction, adjusted.entry, currentPrice, instrumentThreshold)
+      : { orderType: 'MARKET' as const, reason: 'No live price — defaulting to MARKET (dry run)' };
+  }
 
   // 5. Calculate lot size
   const sizingConfig = buildSizingConfig(config, signal.instrument);

@@ -229,20 +229,35 @@ export function parseSignalMessage(rawText: string): ParsedMessage {
   if (signals.length === 0) {
     const sigReC = new RegExp(SIGNAL_BLOCK_C_RE.source, SIGNAL_BLOCK_C_RE.flags);
     while ((signalMatch = sigReC.exec(text)) !== null) {
-      // Entry can be a range (29,895 - 29,905) — use midpoint
+      const direction = signalMatch[2].toUpperCase() as SignalDirection;
       const entryLow = cleanPrice(signalMatch[4]);
       const entryHigh = signalMatch[5] ? cleanPrice(signalMatch[5]) : entryLow;
-      const entry = (entryLow + entryHigh) / 2;
+      const isRange = !!signalMatch[5];
+      const isLimit = /\(limit\)/i.test(text.slice(signalMatch.index, signalMatch.index + 200));
+
+      let entryPrice: number;
+      let forceOrderType: 'MARKET' | 'LIMIT' | undefined;
+
+      if (isRange && isLimit) {
+        // Limit order: high of range for longs, low for shorts
+        entryPrice = direction === 'LONG' ? entryHigh : entryLow;
+        forceOrderType = 'LIMIT';
+      } else {
+        // Market order: enter immediately, use midpoint for offset calc
+        entryPrice = isRange ? (entryLow + entryHigh) / 2 : entryLow;
+        forceOrderType = 'MARKET';
+      }
 
       signals.push({
         tradeNumber: signalMatch[3] ? parseInt(signalMatch[3]) : findTradeNumber(signalMatch.index),
         instrument: signalMatch[1].toUpperCase() as Instrument,
-        direction: signalMatch[2].toUpperCase() as SignalDirection,
-        entryPrice: entry,
+        direction,
+        entryPrice,
         stopLoss: cleanPrice(signalMatch[6]),
         tp1: cleanPrice(signalMatch[7]),
         tp2: cleanPrice(signalMatch[8]),
         size: parseContractSize(signalMatch[9], signalMatch[1].toUpperCase()),
+        forceOrderType,
       });
     }
   }

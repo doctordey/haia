@@ -20,6 +20,7 @@ export interface ParsedSignal {
   tp2: number;
   stopLoss: number;
   size: SignalSize;
+  forceOrderType?: 'MARKET' | 'LIMIT';
 }
 
 export interface ParsedCancellation {

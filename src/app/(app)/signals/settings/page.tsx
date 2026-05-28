@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -157,7 +158,15 @@ export default function SignalSettingsPage() {
   return (
     <div className="p-4 max-w-4xl mx-auto space-y-4 pb-24">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Signal Settings</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Signal Settings</h1>
+          <p className="text-xs text-text-tertiary mt-1">
+            Telegram signal pipeline (NQ/ES).{' '}
+            <Link href="/signals/settings/tradingview" className="text-accent-primary hover:underline">
+              TradingView alerts (XBRUSD, UK10YBG) →
+            </Link>
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           {dirty && <span className="text-xs text-warning">Unsaved changes</span>}
           <Button onClick={handleSave} loading={saving} disabled={!dirty} size="sm">

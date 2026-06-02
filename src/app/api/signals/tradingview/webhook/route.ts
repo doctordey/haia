@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tvAlertConfigs, tvAlerts, tvPositions, tradingAccounts } from '@/lib/db/schema';
 import { computeTradeParams, validatePayload } from '@/lib/signals/tv-alert';
+import { getBreakerContext } from '@/lib/signals/breaker-context';
 import {
   findOpenPositionForSymbol,
   applyTargetReached,
@@ -186,6 +187,22 @@ async function handleActivation(
     watermarkNote = m.reason;
   }
 
+  // If the payload didn't carry breaker H/L, fall back to the latest value
+  // published by the companion breaker-context indicator.
+  let breakerNote = '';
+  const hasBreakerInPayload =
+    Number.isFinite(payload.breaker_high) && Number.isFinite(payload.breaker_low);
+  if (!hasBreakerInPayload) {
+    const ctx = await getBreakerContext(payload.tv_symbol, config.accountId);
+    if (ctx) {
+      payload.breaker_high = ctx.breakerHigh;
+      payload.breaker_low = ctx.breakerLow;
+      breakerNote = `breaker from publisher (${Math.round(ctx.ageMs / 1000)}s old)`;
+    }
+  } else {
+    breakerNote = 'breaker from payload';
+  }
+
   const tradeOrError = computeTradeParams(payload, config, { balance, equity }, riskMultiplier);
 
   const baseInsert = {
@@ -228,7 +245,7 @@ async function handleActivation(
     lotSize: trade.lotSize,
     riskAmount: trade.riskAmount,
     rewardRiskRatio: config.tpRMultiple,
-    computeReason: `${trade.reason} | watermark: ${watermarkNote}`,
+    computeReason: `${trade.reason} | ${breakerNote} | watermark: ${watermarkNote}`,
     isDryRun: config.dryRun,
   };
 
@@ -267,7 +284,7 @@ async function handleActivation(
   // ── Live execution ────────────────────────────
   const orderType = payload.direction === 'LONG' ? 'ORDER_TYPE_BUY' : 'ORDER_TYPE_SELL';
   let status: TvAlertStatus = 'pending' as TvAlertStatus;
-  let metaapiOrderIds: string[] = [];
+  const metaapiOrderIds: string[] = [];
   let errorMessage: string | null = null;
   const orderSentAt = new Date();
 

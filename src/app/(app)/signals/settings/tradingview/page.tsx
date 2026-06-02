@@ -69,6 +69,17 @@ interface TvAlertRow {
   isDryRun: boolean;
 }
 
+interface BreakerContextRow {
+  id: string;
+  accountId: string | null;
+  tvSymbol: string;
+  breakerHigh: number;
+  breakerLow: number;
+  breakerDirection: 'bullish' | 'bearish' | null;
+  source: string;
+  receivedAt: string;
+}
+
 interface TradingAccount {
   id: string;
   name: string;
@@ -129,23 +140,27 @@ export default function TvAlertSettingsPage() {
   const [configs, setConfigs] = useState<TvAlertConfigRow[]>([]);
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [alerts, setAlerts] = useState<TvAlertRow[]>([]);
+  const [breakerContexts, setBreakerContexts] = useState<BreakerContextRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<Partial<TvAlertConfigRow> | null>(null);
 
   const reload = useCallback(async () => {
-    const [cfgRes, acctRes, alertRes] = await Promise.all([
+    const [cfgRes, acctRes, alertRes, ctxRes] = await Promise.all([
       fetch('/api/signals/tradingview/configs'),
       fetch('/api/accounts'),
       fetch('/api/signals/tradingview/alerts?limit=20'),
+      fetch('/api/signals/tradingview/breaker-context'),
     ]);
-    const [cfg, acct, alertList] = await Promise.all([
+    const [cfg, acct, alertList, ctx] = await Promise.all([
       cfgRes.json(),
       acctRes.json(),
       alertRes.json(),
+      ctxRes.json(),
     ]);
     setConfigs(Array.isArray(cfg) ? cfg : []);
     setAccounts(Array.isArray(acct) ? acct : []);
     setAlerts(Array.isArray(alertList) ? alertList : []);
+    setBreakerContexts(Array.isArray(ctx) ? ctx : []);
   }, []);
 
   useEffect(() => {
@@ -153,11 +168,13 @@ export default function TvAlertSettingsPage() {
       fetch('/api/signals/tradingview/configs').then((r) => r.json()),
       fetch('/api/accounts').then((r) => r.json()),
       fetch('/api/signals/tradingview/alerts?limit=20').then((r) => r.json()),
+      fetch('/api/signals/tradingview/breaker-context').then((r) => r.json()),
     ])
-      .then(([cfg, acct, alertList]) => {
+      .then(([cfg, acct, alertList, ctx]) => {
         setConfigs(Array.isArray(cfg) ? cfg : []);
         setAccounts(Array.isArray(acct) ? acct : []);
         setAlerts(Array.isArray(alertList) ? alertList : []);
+        setBreakerContexts(Array.isArray(ctx) ? ctx : []);
         setLoaded(true);
       })
       .catch(() => {
@@ -248,10 +265,16 @@ export default function TvAlertSettingsPage() {
           <p className="text-xs text-text-tertiary">
             Paste this into the <span className="text-text-primary">Notifications → Webhook URL</span> field of each TradingView alert.
             The alert body must include <code className="text-text-primary">secret</code> matching the <code className="text-text-primary">TRADINGVIEW_WEBHOOK_SECRET</code> env var.
-            Use <code className="text-text-primary">tv_alert_indicator.pine</code> as the template.
           </p>
         </CardContent>
       </Card>
+
+      {/* Breaker Context (from companion publisher) */}
+      <BreakerContextCard
+        contexts={breakerContexts}
+        accounts={accounts}
+        configs={configs}
+      />
 
       {/* Configs */}
       <Card>
@@ -396,6 +419,108 @@ export default function TvAlertSettingsPage() {
         />
       )}
     </div>
+  );
+}
+
+// ─── Breaker Context Card ─────────────────────────────
+
+function BreakerContextCard({
+  contexts,
+  accounts,
+  configs,
+}: {
+  contexts: BreakerContextRow[];
+  accounts: TradingAccount[];
+  configs: TvAlertConfigRow[];
+}) {
+  const publisherUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/api/signals/tradingview/breaker-context`
+    : '/api/signals/tradingview/breaker-context';
+
+  // Rows we expect: one per configured tvSymbol. Missing rows = no publisher.
+  const expected = Array.from(new Set(configs.map((c) => c.tvSymbol)));
+  const byKey = new Map(contexts.map((c) => [`${c.tvSymbol}|${c.accountId ?? ''}`, c]));
+
+  // eslint-disable-next-line react-hooks/purity -- intentional: reflect render-time freshness
+  const renderTime = Date.now();
+  function fmtAge(receivedAt: string): { label: string; stale: boolean } {
+    const ageMs = renderTime - new Date(receivedAt).getTime();
+    const stale = ageMs > 60 * 60 * 1000;
+    if (ageMs < 60_000) return { label: 'just now', stale };
+    if (ageMs < 3_600_000) return { label: `${Math.floor(ageMs / 60_000)}m ago`, stale };
+    return { label: `${Math.floor(ageMs / 3_600_000)}h ago`, stale };
+  }
+
+  return (
+    <Card>
+      <CardHeader><h3 className="text-sm font-medium">Breaker Context (companion publisher)</h3></CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-text-tertiary">
+          The Unicorn activation alert doesn&apos;t carry breaker H/L values. Add the
+          companion <code className="text-text-primary">unicorn_breaker_publisher.pine</code> indicator on each chart
+          and point its alert at the publisher URL below. It publishes the latest breaker values
+          which Haia uses as the SL anchor when an activation fires.
+        </p>
+
+        <div className="flex gap-2 items-center">
+          <code className="flex-1 p-2 bg-bg-primary rounded text-text-secondary text-xs font-mono break-all">
+            {publisherUrl}
+          </code>
+        </div>
+
+        {expected.length === 0 ? (
+          <p className="text-xs text-text-tertiary">No configs yet — add an instrument first.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase text-text-tertiary border-b border-border-primary">
+                <tr>
+                  <th className="text-left  py-2 px-2">Symbol</th>
+                  <th className="text-left  py-2 px-2">Account</th>
+                  <th className="text-right py-2 px-2">Breaker High</th>
+                  <th className="text-right py-2 px-2">Breaker Low</th>
+                  <th className="text-left  py-2 px-2">Direction</th>
+                  <th className="text-left  py-2 px-2">Last update</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expected.flatMap((sym) => {
+                  const cfgs = configs.filter((c) => c.tvSymbol === sym);
+                  return cfgs.map((cfg) => {
+                    const ctx =
+                      byKey.get(`${sym}|${cfg.accountId}`) ?? byKey.get(`${sym}|`);
+                    const acct = accounts.find((a) => a.id === cfg.accountId);
+                    const age = ctx ? fmtAge(ctx.receivedAt) : null;
+                    return (
+                      <tr key={`${sym}-${cfg.accountId}`} className="border-b border-border-primary">
+                        <td className="py-2 px-2 font-mono text-text-primary">{sym}</td>
+                        <td className="py-2 px-2 text-text-secondary">{acct?.name ?? cfg.accountId.slice(0, 6)}</td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {ctx ? ctx.breakerHigh : <span className="text-text-tertiary">—</span>}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">
+                          {ctx ? ctx.breakerLow : <span className="text-text-tertiary">—</span>}
+                        </td>
+                        <td className="py-2 px-2">
+                          {ctx?.breakerDirection === 'bullish' && <Badge variant="profit">Bullish</Badge>}
+                          {ctx?.breakerDirection === 'bearish' && <Badge variant="loss">Bearish</Badge>}
+                          {!ctx?.breakerDirection && <span className="text-text-tertiary text-xs">—</span>}
+                        </td>
+                        <td className="py-2 px-2 text-xs">
+                          {age
+                            ? <span className={age.stale ? 'text-warning' : 'text-text-tertiary'}>{age.label}</span>
+                            : <Badge variant="warning">No publisher</Badge>}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,0 +1,95 @@
+// ============================================================================
+// Haia Unicorn Breaker Publisher (companion indicator)
+// ============================================================================
+//
+// PURPOSE:
+//   Reads Unicorn° Pro+'s breaker high/low plots and publishes their current
+//   values to Haia on every bar close. Haia caches the latest values and
+//   uses them as the SL anchor when Unicorn's "Activation" alert fires
+//   (since the Activation alert itself doesn't carry the breaker price).
+//
+// PREREQUISITE:
+//   Unicorn must expose Breaker High / Breaker Low as PLOT SERIES (not just
+//   visual rectangles drawn with box.new). To verify:
+//     - Add this indicator to the chart
+//     - Click the gear ⚙ to open its settings
+//     - Click the dropdown next to "Breaker High Source"
+//     - You should see "Unicorn° [Pro+]: Breaker High" (or similar) in the
+//       list. If you only see "Unicorn° [Pro+]: close / high / low / open"
+//       and no breaker-specific entry, the breaker is drawn as a rectangle
+//       and this approach won't work — fall back to "use prior N-min candle"
+//       in Haia's settings.
+//
+// SETUP:
+//   1. Add Unicorn° [Pro+] to your chart and configure it.
+//   2. Add this companion indicator on top.
+//   3. Open this indicator's settings:
+//        - Breaker High Source: pick Unicorn's Breaker High plot
+//        - Breaker Low Source:  pick Unicorn's Breaker Low plot
+//        - Webhook Secret:      paste TRADINGVIEW_WEBHOOK_SECRET
+//        - TV Symbol Override:  leave blank to use chart ticker
+//        - Account ID:          leave blank to apply to all accounts,
+//                               or paste a specific Haia trading-account ID
+//   4. Create ONE TradingView alert on this indicator:
+//        - Condition: "Haia Breaker Publisher" → "Any alert() function call"
+//        - Expiration: Open-ended
+//        - Webhook URL: https://YOUR_HAIA_URL/api/signals/tradingview/breaker-context
+//        - Notifications: Webhook URL checked
+//        - Message field: leave the default (the indicator sets it)
+//
+//   The alert fires on every bar close. The indicator only sends data when
+//   the breaker values have actually changed since the last bar, so the
+//   endpoint won't get spammed with duplicate values.
+// ============================================================================
+
+//@version=6
+indicator("Haia Breaker Publisher", overlay=true)
+
+// ── INPUTS ──────────────────────────────────────────────────────────────────
+
+breaker_high_src = input.source(close, "Breaker High Source",
+                       tooltip="Bind to Unicorn's Breaker High plot.")
+breaker_low_src  = input.source(close, "Breaker Low Source",
+                       tooltip="Bind to Unicorn's Breaker Low plot.")
+webhook_secret   = input.string("CHANGE_ME", "Webhook Secret",
+                       tooltip="Must match TRADINGVIEW_WEBHOOK_SECRET in Haia.")
+tv_symbol_override = input.string("", "TV Symbol Override",
+                       tooltip="Leave blank to use the chart's ticker.")
+account_id         = input.string("", "Haia Account ID (optional)",
+                       tooltip="Restrict this publisher to one Haia account.")
+
+// ── CHANGE DETECTION ────────────────────────────────────────────────────────
+// Only fire when the breaker values change. Saves bandwidth and DB writes.
+
+bh = breaker_high_src
+bl = breaker_low_src
+
+changed = barstate.isconfirmed and (bh != bh[1] or bl != bl[1])
+
+// ── DIRECTION HINT ──────────────────────────────────────────────────────────
+// A heuristic: bullish breaker when current close is above the breaker
+// midpoint, bearish below. Optional — server treats this as advisory only.
+
+direction = bh > bl ? (close > (bh + bl) / 2 ? "bullish" : "bearish") : na
+
+// ── PAYLOAD ─────────────────────────────────────────────────────────────────
+
+sym = tv_symbol_override == "" ? syminfo.ticker : tv_symbol_override
+
+payload = '{' +
+    '"secret":"'           + webhook_secret + '",' +
+    '"tv_symbol":"'        + sym            + '",' +
+    '"breaker_high":'      + str.tostring(bh, "#.######") + ',' +
+    '"breaker_low":'       + str.tostring(bl, "#.######") + ',' +
+    (na(direction) ? "" : '"breaker_direction":"' + direction + '",') +
+    (account_id == "" ? "" : '"account_id":"' + account_id + '",') +
+    '"timestamp":"{{timenow}}"' +
+    '}'
+
+if changed and not na(bh) and not na(bl)
+    alert(payload, alert.freq_once_per_bar_close)
+
+// ── PLOTTING (for sanity) ───────────────────────────────────────────────────
+
+plot(bh, "Breaker High (mirrored)", color=color.new(color.lime, 60), style=plot.style_circles)
+plot(bl, "Breaker Low (mirrored)",  color=color.new(color.red,  60), style=plot.style_circles)

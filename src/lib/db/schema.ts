@@ -685,6 +685,30 @@ export const tvPositionsRelations = relations(tvPositions, ({ one, many }) => ({
 // is the highest balance ever snapshotted for that account; new trades scale
 // risk down when current balance falls below it by the configured threshold.
 
+// ─── TradingView Breaker Context ──────────────────
+// Latest breaker high/low published by the companion publisher indicator.
+// One row per (accountId | tvSymbol). The activation webhook reads the
+// latest fresh row before computing SL. accountId is nullable so a single
+// publisher can serve all configs that share a tvSymbol.
+
+export const tvBreakerContexts = pgTable('tv_breaker_contexts', {
+  id:           text('id').primaryKey().$defaultFn(() => createId()),
+  accountId:    text('account_id').references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  tvSymbol:     text('tv_symbol').notNull(),
+  breakerHigh:  real('breaker_high').notNull(),
+  breakerLow:   real('breaker_low').notNull(),
+  // 'bullish' | 'bearish' | null — bullish breaker = expect LONG; bearish = SHORT
+  breakerDirection: text('breaker_direction'),
+  source:       text('source').notNull().default('publisher'),
+  receivedAt:   timestamp('received_at').notNull().defaultNow(),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  // Without account scoping: at most one row per symbol per account.
+  unique('tv_breaker_contexts_account_symbol_uniq').on(table.accountId, table.tvSymbol),
+  index('tv_breaker_contexts_tv_symbol_idx').on(table.tvSymbol),
+  index('tv_breaker_contexts_received_at_idx').on(table.receivedAt),
+]);
+
 export const accountBalanceSnapshots = pgTable('account_balance_snapshots', {
   id:           text('id').primaryKey().$defaultFn(() => createId()),
   accountId:    text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),

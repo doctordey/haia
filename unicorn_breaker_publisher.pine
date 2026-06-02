@@ -76,15 +76,19 @@ direction = bh > bl ? (close > (bh + bl) / 2 ? "bullish" : "bearish") : na
 
 sym = tv_symbol_override == "" ? syminfo.ticker : tv_symbol_override
 
-payload = '{' +
-     '"secret":"'           + webhook_secret + '",' +
-     '"tv_symbol":"'        + sym            + '",' +
-     '"breaker_high":'      + str.tostring(bh, "#.######") + ',' +
-     '"breaker_low":'       + str.tostring(bl, "#.######") + ',' +
-     (na(direction) ? "" : '"breaker_direction":"' + direction + '",') +
-     (account_id == "" ? "" : '"account_id":"' + account_id + '",') +
-     '"timestamp":"{{timenow}}"' +
-     '}'
+// Build the JSON payload in steps. Imperative assembly avoids Pine's
+// CW10001 deprecation warning about multi-line single-quoted strings
+// (the warning fires even when you concatenate with `+` across lines).
+string payload = "{"
+payload := payload + "\"secret\":\""       + webhook_secret + "\","
+payload := payload + "\"tv_symbol\":\""    + sym + "\","
+payload := payload + "\"breaker_high\":"   + str.tostring(bh, "#.######") + ","
+payload := payload + "\"breaker_low\":"    + str.tostring(bl, "#.######") + ","
+if not na(direction)
+     payload := payload + "\"breaker_direction\":\"" + direction + "\","
+if account_id != ""
+     payload := payload + "\"account_id\":\"" + account_id + "\","
+payload := payload + "\"timestamp\":\"{{timenow}}\"}"
 
 if changed and not na(bh) and not na(bl)
     alert(payload, alert.freq_once_per_bar_close)

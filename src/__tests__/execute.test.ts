@@ -45,6 +45,8 @@ const mockMetaApi: MetaApiTradeInterface = {
   createOrder: vi.fn().mockResolvedValue({ orderId: 'order-123' }),
   cancelOrder: vi.fn().mockResolvedValue(undefined),
   modifyPosition: vi.fn().mockResolvedValue(undefined),
+  closePosition: vi.fn().mockResolvedValue(undefined),
+  closePositionPartially: vi.fn().mockResolvedValue(undefined),
   calculateMargin: vi.fn().mockResolvedValue({ margin: 100 }),
   getAccountInformation: vi.fn().mockResolvedValue({ balance: 10000, equity: 10000, freeMargin: 9000 }),
 };

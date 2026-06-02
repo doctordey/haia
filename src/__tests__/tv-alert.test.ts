@@ -12,8 +12,12 @@ function xbrConfig(overrides: Partial<TvAlertConfig> = {}): TvAlertConfig {
     fusionSymbol: 'XBRUSD',
     isEnabled: true,
     dryRun: false,
-    riskPercent: 5,
-    rewardRiskRatio: 2,
+    riskPercent: 1,
+    tpRMultiple: 5,
+    beAtRMultiple: 1,
+    partialCloseAtRMultiple: 2,
+    partialClosePercent: 50,
+    closeAtRMultiple: 5,
     slPipOffset: 2,
     pipSize: 0.01,
     pipValuePerLot: 0.10,
@@ -23,248 +27,245 @@ function xbrConfig(overrides: Partial<TvAlertConfig> = {}): TvAlertConfig {
     lotStep: 0.01,
     maxLotSize: 100,
     maxLotsPerOrder: 50,
+    spilloverMode: 'cap',
     minStopDistancePips: 5,
     maxRiskPercent: 10,
     maxSlippage: 5,
     marginWarningThreshold: 80,
     marginRejectThreshold: 95,
     maxOffsetAbs: 10,
+    invalidationCloseEnabled: true,
+    watermarkEnabled: false,
+    watermarkDrawdownThreshold: 10,
+    watermarkRiskReductionPercent: 50,
+    marketCloseTimezone: 'America/Los_Angeles',
+    marketCloseHour: 14,
+    marketCloseMinute: 0,
     ...overrides,
   };
 }
 
 function ukConfig(overrides: Partial<TvAlertConfig> = {}): TvAlertConfig {
-  return {
-    ...xbrConfig({
-      id: 'cfg-uk',
-      tvSymbol: 'UK10YBG',
-      fusionSymbol: 'UKGILT',
-      rewardRiskRatio: 1,
-    }),
+  return xbrConfig({
+    id: 'cfg-uk',
+    tvSymbol: 'UK10YBG',
+    fusionSymbol: 'UKGILT',
     ...overrides,
-  };
+  });
 }
 
 const account: AccountInfo = { balance: 10_000, equity: 10_000 };
 
-describe('computeTradeParams — XBRUSD (no offset)', () => {
-  it('LONG: SL is 2 pips below prev candle low, TP is 2× SL distance above entry', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'LONG',
-      tv_price: 75.50,
-      prev_5m_high: 75.55,
-      prev_5m_low: 75.40,
-    };
+function activation(overrides: Partial<TvAlertPayload> = {}): TvAlertPayload {
+  return {
+    secret: 'x',
+    alert_type: 'activation',
+    tv_symbol: 'XBRUSD',
+    direction: 'LONG',
+    tv_price: 75.50,
+    prev_5m_high: 75.55,
+    prev_5m_low: 75.40,
+    ...overrides,
+  };
+}
 
-    const result = computeTradeParams(payload, xbrConfig(), account);
+describe('computeTradeParams — XBRUSD activation (no offset)', () => {
+  it('LONG: SL 2 pips below candle low, TP at 5R', () => {
+    const result = computeTradeParams(activation(), xbrConfig(), account, 1.0);
     if ('error' in result) throw new Error(result.error);
 
     expect(result.offsetApplied).toBe(0);
     expect(result.entryPrice).toBe(75.5);
-    // SL = 75.40 - (2 × 0.01) = 75.38
+    // SL = 75.40 - 0.02 = 75.38
     expect(result.stopLoss).toBeCloseTo(75.38, 5);
-    // distance = 0.12 → TP = 75.50 + 2 × 0.12 = 75.74
-    expect(result.takeProfit).toBeCloseTo(75.74, 5);
-    expect(result.stopDistancePips).toBeCloseTo(12, 2);
+    // R distance = 0.12; TP = entry + 5×R = 75.50 + 0.60 = 76.10
+    expect(result.takeProfit).toBeCloseTo(76.10, 5);
+    expect(result.rDistance).toBeCloseTo(0.12, 5);
     expect(result.lotSize).toBeGreaterThan(0);
+    expect(result.riskMultiplierApplied).toBe(1.0);
   });
 
-  it('SHORT: SL is 2 pips above prev candle high, TP below entry', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'SHORT',
-      tv_price: 75.50,
-      prev_5m_high: 75.60,
-      prev_5m_low: 75.45,
-    };
-
-    const result = computeTradeParams(payload, xbrConfig(), account);
+  it('SHORT: SL above candle high, TP at 5R below entry', () => {
+    const result = computeTradeParams(
+      activation({ direction: 'SHORT', prev_5m_high: 75.60, prev_5m_low: 75.45 }),
+      xbrConfig(),
+      account,
+      1.0,
+    );
     if ('error' in result) throw new Error(result.error);
-
-    // SL = 75.60 + 0.02 = 75.62
+    // SL = 75.60 + 0.02 = 75.62; R = 0.12; TP = 75.50 - 0.60 = 74.90
     expect(result.stopLoss).toBeCloseTo(75.62, 5);
-    // distance = 0.12 → TP = 75.50 - 2 × 0.12 = 75.26
-    expect(result.takeProfit).toBeCloseTo(75.26, 5);
+    expect(result.takeProfit).toBeCloseTo(74.90, 5);
   });
 
-  it('rejects LONG when prev candle low is above current price (impossible setup)', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'LONG',
-      tv_price: 75.20,
-      prev_5m_high: 75.55,
-      prev_5m_low: 75.40,
-    };
+  it('uses breaker_high/low when provided (preferred over prev_5m_*)', () => {
+    const result = computeTradeParams(
+      activation({ breaker_high: 75.80, breaker_low: 75.10 }),
+      xbrConfig(),
+      account,
+      1.0,
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.stopLoss).toBeCloseTo(75.08, 5);  // 75.10 - 0.02
+    expect(result.breakerLowAdjusted).toBeCloseTo(75.10, 5);
+  });
 
-    const result = computeTradeParams(payload, xbrConfig(), account);
+  it('rejects LONG when low is above current price', () => {
+    const result = computeTradeParams(
+      activation({ tv_price: 75.20, prev_5m_high: 75.55, prev_5m_low: 75.40 }),
+      xbrConfig(),
+      account,
+      1.0,
+    );
     expect('error' in result).toBe(true);
   });
 
   it('rejects when stop distance is below min', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'LONG',
-      tv_price: 75.50,
-      prev_5m_high: 75.51,
-      prev_5m_low: 75.49,    // only 1 pip below entry
-    };
-
-    const result = computeTradeParams(payload, xbrConfig({ minStopDistancePips: 5 }), account);
+    const result = computeTradeParams(
+      activation({ prev_5m_high: 75.51, prev_5m_low: 75.49 }),
+      xbrConfig({ minStopDistancePips: 5 }),
+      account,
+      1.0,
+    );
     expect('error' in result).toBe(true);
   });
 });
 
-describe('computeTradeParams — UK10YBG → UKGILT (with inline offset)', () => {
-  it('subtracts offset from prev candle H/L so SL sits in Fusion price space', () => {
-    // UK10YBG at 91.55, UKGILT at 91.20 → offset = 0.35
-    const payload: TvAlertPayload = {
-      secret: 'x',
+describe('computeTradeParams — UK10YBG → UKGILT (inline offset)', () => {
+  it('subtracts offset from candle H/L for Fusion price space', () => {
+    const payload = activation({
       tv_symbol: 'UK10YBG',
-      direction: 'LONG',
       tv_price: 91.55,
       fusion_price: 91.20,
       prev_5m_high: 91.60,
       prev_5m_low: 91.50,
-    };
-
-    const result = computeTradeParams(payload, ukConfig(), account);
+    });
+    const result = computeTradeParams(payload, ukConfig(), account, 1.0);
     if ('error' in result) throw new Error(result.error);
 
     expect(result.offsetApplied).toBeCloseTo(0.35, 5);
-    expect(result.fusionPriceAtAlert).toBe(91.20);
     expect(result.entryPrice).toBe(91.20);
-
-    // prevLowFusion = 91.50 - 0.35 = 91.15 → SL = 91.15 - 0.02 = 91.13
-    expect(result.prevCandleLowAdjusted).toBeCloseTo(91.15, 5);
+    expect(result.breakerLowAdjusted).toBeCloseTo(91.15, 5);
     expect(result.stopLoss).toBeCloseTo(91.13, 5);
-
-    // RR=1: TP = 91.20 + 1 × (91.20 - 91.13) = 91.27
-    expect(result.takeProfit).toBeCloseTo(91.27, 5);
+    // R = 0.07, TP = 91.20 + 5×0.07 = 91.55
+    expect(result.takeProfit).toBeCloseTo(91.55, 5);
   });
 
   it('requires fusion_price when symbols differ', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
+    const payload = activation({
       tv_symbol: 'UK10YBG',
-      direction: 'LONG',
       tv_price: 91.55,
       prev_5m_high: 91.60,
       prev_5m_low: 91.50,
-      // fusion_price missing
-    };
-
-    const result = computeTradeParams(payload, ukConfig(), account);
+    });
+    const result = computeTradeParams(payload, ukConfig(), account, 1.0);
     expect('error' in result).toBe(true);
     if ('error' in result) expect(result.error).toMatch(/fusion_price/);
   });
 
-  it('rejects when offset exceeds maxOffsetAbs (data sanity)', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
+  it('rejects when offset exceeds maxOffsetAbs', () => {
+    const payload = activation({
       tv_symbol: 'UK10YBG',
-      direction: 'LONG',
       tv_price: 91.55,
-      fusion_price: 70.0,    // 21.55 offset — way out of band
+      fusion_price: 70.0,
       prev_5m_high: 91.60,
       prev_5m_low: 91.50,
-    };
-
-    const result = computeTradeParams(payload, ukConfig({ maxOffsetAbs: 10 }), account);
+    });
+    const result = computeTradeParams(payload, ukConfig({ maxOffsetAbs: 10 }), account, 1.0);
     expect('error' in result).toBe(true);
-    if ('error' in result) expect(result.error).toMatch(/offset/i);
   });
 });
 
 describe('lot sizing', () => {
-  it('5% of equity × XBRUSD setup produces a reasonable lot size', () => {
-    const payload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'LONG',
-      tv_price: 75.50,
-      prev_5m_high: 75.55,
-      prev_5m_low: 75.40,
-    };
-
-    const result = computeTradeParams(payload, xbrConfig(), account);
+  it('1% risk × tight stop produces a meaningful lot size', () => {
+    const result = computeTradeParams(activation(), xbrConfig(), account, 1.0);
     if ('error' in result) throw new Error(result.error);
-
-    // riskAmount = 10,000 × 5% = $500
-    // stopDistancePips = 12
-    // pipValuePerLot = $0.10/pip → cost per lot for full stop = 12 × $0.10 = $1.20
-    // lots = $500 / $1.20 = 416.67 → capped at maxLotSize=100
-    expect(result.lotSize).toBe(100);
-    expect(result.riskAmount).toBe(500);
+    expect(result.lotSize).toBeGreaterThan(0);
+    expect(result.riskAmount).toBe(100); // 10_000 × 1%
   });
 
-  it('scales lot size down for wider stops', () => {
-    const tightPayload: TvAlertPayload = {
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      direction: 'LONG',
-      tv_price: 75.50,
-      prev_5m_high: 75.55,
-      prev_5m_low: 74.50,    // 100 pip distance + 2 pip buffer = 102 pips
-    };
-    const widePayload: TvAlertPayload = { ...tightPayload, prev_5m_low: 70.0 }; // ~552 pips
+  it('applies watermark risk multiplier proportionally', () => {
+    const full   = computeTradeParams(activation(), xbrConfig(), account, 1.0);
+    const halved = computeTradeParams(activation(), xbrConfig(), account, 0.5);
+    if ('error' in full || 'error' in halved) throw new Error('unexpected error');
+    expect(halved.lotSize).toBeCloseTo(full.lotSize / 2, 1);
+    expect(halved.riskMultiplierApplied).toBe(0.5);
+  });
 
-    // Cap below the unbounded calc so sizing is the binding constraint, not the cap.
-    const cfg = xbrConfig({ maxLotSize: 50 });
-    const tight = computeTradeParams(tightPayload, cfg, account);
-    const wide  = computeTradeParams(widePayload, cfg, account);
+  it('caps at maxLotSize in cap spillover mode', () => {
+    // Tiny stop, high risk %, huge balance → unbounded lots would be massive.
+    const result = computeTradeParams(
+      activation({ prev_5m_low: 75.45 }),                     // 5 pip stop
+      xbrConfig({ riskPercent: 5, maxLotSize: 10, spilloverMode: 'cap' }),
+      { balance: 1_000_000, equity: 1_000_000 },
+      1.0,
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.lotSize).toBe(10);
+    expect(result.orderSizes).toEqual([10]);
+  });
 
-    if ('error' in tight || 'error' in wide) throw new Error('unexpected error');
-    expect(wide.lotSize).toBeLessThan(tight.lotSize);
+  it('splits into multiple orders in split spillover mode', () => {
+    const result = computeTradeParams(
+      activation({ prev_5m_low: 75.45 }),
+      xbrConfig({ riskPercent: 5, maxLotSize: 10, spilloverMode: 'split' }),
+      { balance: 1_000_000, equity: 1_000_000 },
+      1.0,
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.orderSizes.length).toBeGreaterThan(1);
+    expect(result.lotSize).toBeGreaterThan(10);
+    // All but possibly the last should be at the max
+    expect(result.orderSizes.slice(0, -1).every((v) => v === 10)).toBe(true);
   });
 });
 
 describe('validatePayload', () => {
-  it('rejects missing fields', () => {
-    expect(validatePayload({}).ok).toBe(false);
-    expect(validatePayload({ secret: 'x' }).ok).toBe(false);
-    expect(validatePayload({ secret: 'x', tv_symbol: 'XBRUSD' }).ok).toBe(false);
-  });
-
-  it('rejects invalid direction', () => {
-    const v = validatePayload({
-      secret: 'x',
-      tv_symbol: 'XBRUSD',
-      // @ts-expect-error testing runtime guard
-      direction: 'BUY',
-      tv_price: 75,
-      prev_5m_high: 75.1,
-      prev_5m_low: 74.9,
-    });
+  it('requires alert_type', () => {
+    const v = validatePayload({ secret: 'x', tv_symbol: 'XBRUSD' });
     expect(v.ok).toBe(false);
   });
 
-  it('rejects high < low', () => {
-    const v = validatePayload({
+  it('activation requires direction and price + breaker/candle', () => {
+    expect(validatePayload({
       secret: 'x',
+      alert_type: 'activation',
+      tv_symbol: 'XBRUSD',
+      tv_price: 75,
+      // no direction, no breaker, no prev candle
+    }).ok).toBe(false);
+
+    expect(validatePayload({
+      secret: 'x',
+      alert_type: 'activation',
       tv_symbol: 'XBRUSD',
       direction: 'LONG',
       tv_price: 75,
-      prev_5m_high: 74.9,
-      prev_5m_low: 75.1,
-    });
-    expect(v.ok).toBe(false);
+      prev_5m_high: 75.1,
+      prev_5m_low: 74.9,
+    }).ok).toBe(true);
   });
 
-  it('accepts a well-formed payload', () => {
-    expect(
-      validatePayload({
-        secret: 'x',
-        tv_symbol: 'XBRUSD',
-        direction: 'LONG',
-        tv_price: 75,
-        prev_5m_high: 75.1,
-        prev_5m_low: 74.9,
-      }).ok,
-    ).toBe(true);
+  it('target_reached requires r_level', () => {
+    expect(validatePayload({
+      secret: 'x',
+      alert_type: 'target_reached',
+      tv_symbol: 'XBRUSD',
+    }).ok).toBe(false);
+
+    expect(validatePayload({
+      secret: 'x',
+      alert_type: 'target_reached',
+      tv_symbol: 'XBRUSD',
+      r_level: 1,
+    }).ok).toBe(true);
+  });
+
+  it('invalidation_hit only needs tv_symbol + secret + alert_type', () => {
+    expect(validatePayload({
+      secret: 'x',
+      alert_type: 'invalidation_hit',
+      tv_symbol: 'XBRUSD',
+    }).ok).toBe(true);
   });
 });

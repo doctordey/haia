@@ -1,103 +1,124 @@
 // ============================================================================
-// Haia TradingView Alert → FusionMarkets Webhook
+// Haia TradingView Alert → FusionMarkets Webhook (Unicorn° Pro+ compatible)
 // ============================================================================
-// Companion indicator that piggybacks on your signal indicator's LONG/SHORT
-// outputs and shapes the alert payload Haia's /api/signals/tradingview/webhook
-// endpoint expects.
 //
-// SETUP:
-//   1. Open the chart of an instrument wired up in Haia (e.g. XBRUSD or
-//      UK10YBG). Make sure your signal indicator is on the chart too.
-//   2. Add this indicator on top of it.
-//   3. Replace the `long_signal` / `short_signal` placeholders below with the
-//      plot/series exposed by your real signal indicator (TradingView Pine
-//      supports `input.source(...)` so you can wire it up via the indicator
-//      settings — keep that approach if you don't want to edit code).
-//   4. Set the symbol input to match the chart's ticker (XBRUSD or UK10YBG).
-//   5. Create TWO alerts on this indicator:
-//        - Condition: "Haia TV Alert" → "LONG entry"
-//        - Condition: "Haia TV Alert" → "SHORT entry"
-//      For each:
-//        - Webhook URL: https://YOUR_HAIA_URL/api/signals/tradingview/webhook
-//        - Expiration: Open-ended
-//        - Message: leave default — the indicator sets `alert_msg` automatically
+// The Unicorn° Pro+ indicator already fires the alert events we need:
+//   - Activation
+//   - Target Reached
+//   - Invalidation Hit
+//   - (Invalidation Warning + Potential Breaker — logged only)
 //
-// IMPORTANT — UK10YBG users:
-//   UK10YBG on TradingView is NOT FusionMarkets' UKGILT. Set
-//   `fusion_proxy` to FUSIONMARKETS:UKGILT so the alert payload carries the
-//   live UKGILT price; Haia computes the offset on receipt. XBRUSD on
-//   TradingView IS already a FusionMarkets feed — leave `fusion_proxy` blank.
+// SETUP (no Pine editing needed):
+//
+// 1. In the indicator settings, enable the alert types you want:
+//      Activation?, Target Reached?, Invalidation Hit?
+//
+// 2. In TradingView, create ONE alert per type, per chart:
+//
+//      Activation:
+//        Condition: Unicorn° [Pro+]  →  Activation?
+//        Webhook URL: https://YOUR_HAIA_URL/api/signals/tradingview/webhook
+//        Message: <paste the ACTIVATION_TEMPLATE below>
+//
+//      Target Reached:
+//        Condition: Unicorn° [Pro+]  →  Target Reached?
+//        Webhook URL: (same)
+//        Message: <paste the TARGET_REACHED_TEMPLATE below>
+//
+//      Invalidation Hit:
+//        Condition: Unicorn° [Pro+]  →  Invalidation Hit?
+//        Webhook URL: (same)
+//        Message: <paste the INVALIDATION_HIT_TEMPLATE below>
+//
+// 3. Replace YOUR_SECRET in each template with TRADINGVIEW_WEBHOOK_SECRET
+//    (the same value set in your Haia env vars on Railway).
+//
+// CROSS-FEED SYMBOLS:
+//    If the chart's symbol differs from the FusionMarkets ticker (e.g.
+//    UK10YBG on TV vs UKGILT on Fusion), the offset is computed server-side
+//    when you also include fusion_price. The indicator can't fetch a Fusion
+//    price natively, so either:
+//      (a) Use a TradingView Spread chart (TV:UK10YBG-FUSION:UKGILT) and
+//          pass {{plot("Spread")}} as the offset, or
+//      (b) Run a parallel companion indicator that publishes
+//          fusion_price via webhook (see existing offset webhook pattern),
+//          and omit fusion_price from these payloads.
+//    For symbols whose TV ticker matches the Fusion ticker (most cases),
+//    omit fusion_price entirely.
 // ============================================================================
 
-//@version=6
-indicator("Haia TV Alert", overlay=true)
+// ── ACTIVATION_TEMPLATE ─────────────────────────────────────────────────────
+// Required: tv_symbol, direction, tv_price, breaker_high, breaker_low
+// Optional: fusion_price (only when TV ticker != Fusion ticker)
+//
+// {
+//   "secret": "YOUR_SECRET",
+//   "alert_type": "activation",
+//   "tv_symbol": "{{ticker}}",
+//   "direction": "LONG",
+//   "tv_price": {{close}},
+//   "breaker_high": {{plot("Breaker High")}},
+//   "breaker_low":  {{plot("Breaker Low")}},
+//   "prev_5m_high": {{high}},
+//   "prev_5m_low":  {{low}},
+//   "timestamp":    "{{timenow}}"
+// }
+//
+// Notes:
+// - Create a SEPARATE TradingView alert for LONG vs SHORT activations if
+//   Unicorn distinguishes them as different conditions. Hardcode "direction"
+//   in each template accordingly.
+// - If Unicorn doesn't expose Breaker High/Low as named plots, leave those
+//   lines out — the server will fall back to prev_5m_high/low.
 
-// ── INPUTS ──────────────────────────────────────────────────────────────────
+// ── TARGET_REACHED_TEMPLATE ─────────────────────────────────────────────────
+// Required: tv_symbol, r_level
+//
+// {
+//   "secret":     "YOUR_SECRET",
+//   "alert_type": "target_reached",
+//   "tv_symbol":  "{{ticker}}",
+//   "tv_price":   {{close}},
+//   "r_level":    1,
+//   "timestamp":  "{{timenow}}"
+// }
+//
+// Notes:
+// - If Unicorn fires Target Reached separately for 1R, 2R, and 5R, create
+//   THREE TradingView alerts (one per R level), each pinned to the matching
+//   condition, and hardcode r_level: 1 / 2 / 5 in the template.
+// - If it exposes the R level as a plot, use:
+//       "r_level": {{plot("R Level")}}
+//   in a single alert and the server will dispatch based on the value.
 
-tv_symbol      = input.string("XBRUSD",    "TradingView Symbol",
-                    options=["XBRUSD", "UK10YBG"],
-                    tooltip="Must match the chart this indicator is added to.")
-fusion_proxy   = input.symbol("",          "FusionMarkets Proxy Symbol",
-                    tooltip="Leave blank for XBRUSD (already a Fusion feed). For UK10YBG set to FUSIONMARKETS:UKGILT.")
-webhook_secret = input.string("CHANGE_ME", "Webhook Secret",
-                    tooltip="Must match TRADINGVIEW_WEBHOOK_SECRET in your Haia env vars.")
-account_id     = input.string("",          "Override Account ID (optional)",
-                    tooltip="If you have multiple Fusion accounts in Haia, set this. Otherwise the first enabled config wins.")
+// ── INVALIDATION_HIT_TEMPLATE ───────────────────────────────────────────────
+// Required: tv_symbol
+//
+// {
+//   "secret":     "YOUR_SECRET",
+//   "alert_type": "invalidation_hit",
+//   "tv_symbol":  "{{ticker}}",
+//   "tv_price":   {{close}},
+//   "timestamp":  "{{timenow}}"
+// }
+//
+// Closes any open position for this instrument. Set
+// invalidation_close_enabled = false on the config to disable.
 
-// Wire these to your real signal indicator's plot via the indicator settings.
-// They should be 1 when the signal fires on this bar, 0 otherwise.
-long_signal_src  = input.source(close, "LONG Signal Source")
-short_signal_src = input.source(close, "SHORT Signal Source")
-long_threshold   = input.float(0.5,   "LONG Trigger Threshold",
-                    tooltip="Signal fires when LONG source crosses above this.")
-short_threshold  = input.float(0.5,   "SHORT Trigger Threshold",
-                    tooltip="Signal fires when SHORT source crosses above this.")
+// ── INVALIDATION_WARNING_TEMPLATE (optional, logged only) ───────────────────
+// {
+//   "secret":     "YOUR_SECRET",
+//   "alert_type": "invalidation_warning",
+//   "tv_symbol":  "{{ticker}}",
+//   "tv_price":   {{close}},
+//   "timestamp":  "{{timenow}}"
+// }
 
-// ── PRICES ──────────────────────────────────────────────────────────────────
-
-// Previous CLOSED 5-min candle on the chart symbol — [1] indexes the bar
-// before the current one (i.e. the most recently closed one).
-prev_5m_high = request.security(syminfo.tickerid, "5", high)[1]
-prev_5m_low  = request.security(syminfo.tickerid, "5", low)[1]
-
-// Live FusionMarkets proxy price (only meaningful when symbols diverge).
-fusion_price = fusion_proxy == "" ? close : request.security(fusion_proxy, timeframe.period, close)
-
-// ── TRIGGERS ────────────────────────────────────────────────────────────────
-
-long_fire  = ta.crossover(long_signal_src,  long_threshold)
-short_fire = ta.crossover(short_signal_src, short_threshold)
-
-// ── ALERT PAYLOADS ──────────────────────────────────────────────────────────
-
-build_payload(string direction) =>
-    '{' +
-      '"secret":"'       + webhook_secret + '",' +
-      '"tv_symbol":"'    + tv_symbol      + '",' +
-      '"direction":"'    + direction      + '",' +
-      '"tv_price":'      + str.tostring(close,        "#.######") + ',' +
-      '"fusion_price":'  + str.tostring(fusion_price, "#.######") + ',' +
-      '"prev_5m_high":'  + str.tostring(prev_5m_high, "#.######") + ',' +
-      '"prev_5m_low":'   + str.tostring(prev_5m_low,  "#.######") + ',' +
-      '"timestamp":"{{timenow}}"' +
-      (account_id == "" ? "" : ',"account_id":"' + account_id + '"') +
-    '}'
-
-// ── ALERTS ──────────────────────────────────────────────────────────────────
-
-alertcondition(long_fire,  title="LONG entry",  message='{{strategy.order.alert_message}}')
-alertcondition(short_fire, title="SHORT entry", message='{{strategy.order.alert_message}}')
-
-// Use alert() so the message is computed at fire time (alertcondition messages
-// are constant strings — alert() can carry per-bar dynamic payloads).
-if long_fire  and barstate.isconfirmed
-    alert(build_payload("LONG"),  alert.freq_once_per_bar_close)
-if short_fire and barstate.isconfirmed
-    alert(build_payload("SHORT"), alert.freq_once_per_bar_close)
-
-// ── PLOTTING ────────────────────────────────────────────────────────────────
-
-plotshape(long_fire,  title="LONG",  location=location.belowbar, style=shape.triangleup,   color=color.lime,  size=size.small)
-plotshape(short_fire, title="SHORT", location=location.abovebar, style=shape.triangledown, color=color.red,   size=size.small)
-plot(prev_5m_high, "Prev 5m High", color=color.new(color.gray, 70))
-plot(prev_5m_low,  "Prev 5m Low",  color=color.new(color.gray, 70))
+// ── POTENTIAL_BREAKER_TEMPLATE (optional, logged only) ──────────────────────
+// {
+//   "secret":     "YOUR_SECRET",
+//   "alert_type": "potential_breaker",
+//   "tv_symbol":  "{{ticker}}",
+//   "tv_price":   {{close}},
+//   "timestamp":  "{{timenow}}"
+// }

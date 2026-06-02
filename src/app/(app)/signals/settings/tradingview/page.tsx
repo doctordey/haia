@@ -19,7 +19,11 @@ interface TvAlertConfigRow {
   isEnabled: boolean;
   dryRun: boolean;
   riskPercent: number;
-  rewardRiskRatio: number;
+  tpRMultiple: number;
+  beAtRMultiple: number;
+  partialCloseAtRMultiple: number;
+  partialClosePercent: number;
+  closeAtRMultiple: number;
   slPipOffset: number;
   pipSize: number;
   pipValuePerLot: number;
@@ -29,20 +33,30 @@ interface TvAlertConfigRow {
   lotStep: number;
   maxLotSize: number;
   maxLotsPerOrder: number;
+  spilloverMode: 'cap' | 'split';
   minStopDistancePips: number;
   maxRiskPercent: number;
   maxSlippage: number;
   marginWarningThreshold: number;
   marginRejectThreshold: number;
   maxOffsetAbs: number;
+  invalidationCloseEnabled: boolean;
+  watermarkEnabled: boolean;
+  watermarkDrawdownThreshold: number;
+  watermarkRiskReductionPercent: number;
+  marketCloseTimezone: string;
+  marketCloseHour: number;
+  marketCloseMinute: number;
 }
 
 interface TvAlertRow {
   id: string;
   receivedAt: string;
+  alertType: string;
+  rLevel: number | null;
   tvSymbol: string;
   fusionSymbol: string | null;
-  direction: 'LONG' | 'SHORT';
+  direction: string;
   status: string;
   entryPrice: number | null;
   stopLoss: number | null;
@@ -50,6 +64,7 @@ interface TvAlertRow {
   lotSize: number | null;
   metaapiOrderId: string | null;
   errorMessage: string | null;
+  computeReason: string | null;
   totalLatencyMs: number | null;
   isDryRun: boolean;
 }
@@ -64,9 +79,9 @@ interface TradingAccount {
 
 const TV_SYMBOLS = ['XBRUSD', 'UK10YBG'] as const;
 
-const SYMBOL_DEFAULTS: Record<string, { fusionSymbol: string; rewardRiskRatio: number }> = {
-  XBRUSD:  { fusionSymbol: 'XBRUSD',  rewardRiskRatio: 2.0 },
-  UK10YBG: { fusionSymbol: 'UKGILT',  rewardRiskRatio: 1.0 },
+const SYMBOL_DEFAULTS: Record<string, { fusionSymbol: string }> = {
+  XBRUSD:  { fusionSymbol: 'XBRUSD'  },
+  UK10YBG: { fusionSymbol: 'UKGILT'  },
 };
 
 function emptyConfig(): Partial<TvAlertConfigRow> {
@@ -75,8 +90,12 @@ function emptyConfig(): Partial<TvAlertConfigRow> {
     fusionSymbol: 'XBRUSD',
     isEnabled: false,
     dryRun: true,
-    riskPercent: 5,
-    rewardRiskRatio: 2,
+    riskPercent: 1,
+    tpRMultiple: 5,
+    beAtRMultiple: 1,
+    partialCloseAtRMultiple: 2,
+    partialClosePercent: 50,
+    closeAtRMultiple: 5,
     slPipOffset: 2,
     pipSize: 0.01,
     pipValuePerLot: 0.10,
@@ -86,12 +105,20 @@ function emptyConfig(): Partial<TvAlertConfigRow> {
     lotStep: 0.01,
     maxLotSize: 100,
     maxLotsPerOrder: 50,
+    spilloverMode: 'cap',
     minStopDistancePips: 5,
     maxRiskPercent: 10,
     maxSlippage: 5,
     marginWarningThreshold: 80,
     marginRejectThreshold: 95,
     maxOffsetAbs: 10,
+    invalidationCloseEnabled: true,
+    watermarkEnabled: false,
+    watermarkDrawdownThreshold: 10,
+    watermarkRiskReductionPercent: 50,
+    marketCloseTimezone: 'America/Los_Angeles',
+    marketCloseHour: 14,
+    marketCloseMinute: 0,
   };
 }
 
@@ -249,9 +276,10 @@ export default function TvAlertSettingsPage() {
                     <th className="text-left py-2 px-2">Account</th>
                     <th className="text-left py-2 px-2">State</th>
                     <th className="text-right py-2 px-2">Risk %</th>
-                    <th className="text-right py-2 px-2">RR</th>
+                    <th className="text-right py-2 px-2">TP</th>
                     <th className="text-right py-2 px-2">SL pips</th>
                     <th className="text-right py-2 px-2">Max lots</th>
+                    <th className="text-left  py-2 px-2">Watermark</th>
                     <th className="text-right py-2 px-2"></th>
                   </tr>
                 </thead>
@@ -268,10 +296,15 @@ export default function TvAlertSettingsPage() {
                             ? c.dryRun ? <Badge variant="warning">Dry</Badge> : <Badge variant="profit">Live</Badge>
                             : <Badge>Off</Badge>}
                         </td>
-                        <td className="py-2 px-2 text-right font-mono">{c.riskPercent.toFixed(1)}</td>
-                        <td className="py-2 px-2 text-right font-mono">{c.rewardRiskRatio}:1</td>
+                        <td className="py-2 px-2 text-right font-mono">{c.riskPercent.toFixed(2)}</td>
+                        <td className="py-2 px-2 text-right font-mono">{c.tpRMultiple}R</td>
                         <td className="py-2 px-2 text-right font-mono">{c.slPipOffset}</td>
                         <td className="py-2 px-2 text-right font-mono">{c.maxLotSize}</td>
+                        <td className="py-2 px-2">
+                          {c.watermarkEnabled
+                            ? <Badge variant="info">{`−${c.watermarkDrawdownThreshold}% → ÷${(100 / (100 - c.watermarkRiskReductionPercent)).toFixed(1)}x`}</Badge>
+                            : <Badge>Off</Badge>}
+                        </td>
                         <td className="py-2 px-2 text-right space-x-2">
                           <button
                             className="text-xs text-accent-primary hover:underline cursor-pointer"
@@ -405,7 +438,6 @@ function ConfigEditor({
     const defaults = SYMBOL_DEFAULTS[sym];
     if (defaults) {
       set('fusionSymbol', defaults.fusionSymbol);
-      if (!initial.id) set('rewardRiskRatio', defaults.rewardRiskRatio);
     }
   }
 
@@ -481,14 +513,82 @@ function ConfigEditor({
           )}
 
           <div className="grid grid-cols-3 gap-3">
-            <NumberInput label="Risk %"    value={form.riskPercent}     onChange={(v) => set('riskPercent', v)}     step={0.5} />
-            <NumberInput label="RR Ratio"  value={form.rewardRiskRatio} onChange={(v) => set('rewardRiskRatio', v)} step={0.5} />
-            <NumberInput label="SL Pips"   value={form.slPipOffset}     onChange={(v) => set('slPipOffset', v)}     step={1} />
+            <NumberInput label="Risk %"          value={form.riskPercent}     onChange={(v) => set('riskPercent', v)}     step={0.25} />
+            <NumberInput label="TP (R)"          value={form.tpRMultiple}     onChange={(v) => set('tpRMultiple', v)}     step={0.5} />
+            <NumberInput label="SL Pips"         value={form.slPipOffset}     onChange={(v) => set('slPipOffset', v)}     step={1} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <NumberInput label="Max Lots"           value={form.maxLotSize}         onChange={(v) => set('maxLotSize', v)} />
-            <NumberInput label="Min Stop (pips)"    value={form.minStopDistancePips} onChange={(v) => set('minStopDistancePips', v)} />
+          <div className="grid grid-cols-3 gap-3">
+            <NumberInput label="BE at (R)"          value={form.beAtRMultiple}           onChange={(v) => set('beAtRMultiple', v)}           step={0.5} />
+            <NumberInput label="Partial at (R)"     value={form.partialCloseAtRMultiple} onChange={(v) => set('partialCloseAtRMultiple', v)} step={0.5} />
+            <NumberInput label="Partial %"          value={form.partialClosePercent}     onChange={(v) => set('partialClosePercent', v)}     step={5} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <NumberInput label="Close at (R)"    value={form.closeAtRMultiple}    onChange={(v) => set('closeAtRMultiple', v)} step={0.5} />
+            <NumberInput label="Max Lots"        value={form.maxLotSize}          onChange={(v) => set('maxLotSize', v)} />
+            <NumberInput label="Min Stop (pips)" value={form.minStopDistancePips} onChange={(v) => set('minStopDistancePips', v)} />
+          </div>
+
+          <Select
+            label="When sized lots > max"
+            value={form.spilloverMode ?? 'cap'}
+            onChange={(e) => set('spilloverMode', e.target.value as TvAlertConfigRow['spilloverMode'])}
+            options={[
+              { value: 'cap',   label: 'Cap at max lots (under-risk)' },
+              { value: 'split', label: 'Split into multiple orders (hit risk target)' },
+            ]}
+          />
+
+          <div className="border-t border-border-primary pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">Invalidation Hit</p>
+              <Toggle
+                label="Close on invalidation"
+                checked={!!form.invalidationCloseEnabled}
+                onChange={(v) => set('invalidationCloseEnabled', v)}
+                active="bg-loss-primary"
+              />
+            </div>
+            <p className="text-xs text-text-tertiary">
+              When enabled, any open position for this instrument is closed when an Invalidation Hit alert fires.
+            </p>
+          </div>
+
+          <div className="border-t border-border-primary pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium">High Watermark</p>
+              <Toggle
+                label="Watermark"
+                checked={!!form.watermarkEnabled}
+                onChange={(v) => set('watermarkEnabled', v)}
+                active="bg-accent-primary"
+              />
+            </div>
+            {form.watermarkEnabled && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <NumberInput label="Drawdown trigger (%)" value={form.watermarkDrawdownThreshold} onChange={(v) => set('watermarkDrawdownThreshold', v)} step={0.5} />
+                  <NumberInput label="Risk reduction (%)"   value={form.watermarkRiskReductionPercent} onChange={(v) => set('watermarkRiskReductionPercent', v)} step={5} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Market close TZ"
+                    value={form.marketCloseTimezone ?? 'America/Los_Angeles'}
+                    onChange={(e) => set('marketCloseTimezone', e.target.value)}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <NumberInput label="Close HH" value={form.marketCloseHour}   onChange={(v) => set('marketCloseHour', Math.max(0, Math.min(23, v)))} />
+                    <NumberInput label="Close mm" value={form.marketCloseMinute} onChange={(v) => set('marketCloseMinute', Math.max(0, Math.min(59, v)))} />
+                  </div>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  At the configured close time, the account balance is snapshotted. If the next day&apos;s balance
+                  drops below the highest snapshot by {form.watermarkDrawdownThreshold}%, risk is reduced by
+                  {' '}{form.watermarkRiskReductionPercent}% until balance recovers.
+                </p>
+              </>
+            )}
           </div>
 
           <button

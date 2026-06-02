@@ -8,28 +8,39 @@ import type {
 import type { AccountInfo, ContractSpec, SizingConfig } from '@/types/signals';
 
 /**
- * Translate a TradingView alert into FusionMarkets trade parameters.
+ * Translate a TradingView **Activation** alert into FusionMarkets trade
+ * parameters (entry, SL, TP, lot size).
  *
- * Pricing flow:
- *   offset = tvPrice - fusionPrice         (0 for symbols that are native fusion feeds)
- *   prevHighFusion = prevTvHigh - offset
- *   prevLowFusion  = prevTvLow  - offset
+ * Pricing:
+ *   offset = tv_price - fusion_price   (0 when symbols match)
+ *   highFusion = breakerHigh - offset  (falls back to prev_5m_high)
+ *   lowFusion  = breakerLow  - offset
  *
- * Stop placement (in Fusion price space):
- *   LONG:  SL = prevLowFusion  - slPipOffset × pipSize
- *          TP = entry + RR × (entry - SL)
- *   SHORT: SL = prevHighFusion + slPipOffset × pipSize
- *          TP = entry - RR × (SL - entry)
+ * Stop:
+ *   LONG:  SL = lowFusion  - slPipOffset × pipSize
+ *   SHORT: SL = highFusion + slPipOffset × pipSize
  *
- * Entry is the live Fusion market price at alert receipt; the order is sent
- * as a MARKET order.
+ * Take Profit (initial, placed on the order):
+ *   R   = |entry - SL|
+ *   LONG:  TP = entry + tpRMultiple × R
+ *   SHORT: TP = entry - tpRMultiple × R
+ *
+ * Lot sizing reuses the percent_equity engine, scaled by `riskMultiplier`
+ * (which the caller derives from the watermark check).
+ *
+ * Spillover: if the unbounded lot calculation would exceed `maxLotSize`,
+ * either cap at maxLotSize (mode='cap') or open N back-to-back orders that
+ * collectively reach the target risk (mode='split').
  */
 export function computeTradeParams(
   payload: TvAlertPayload,
   config: TvAlertConfig,
   account: AccountInfo,
+  riskMultiplier: number,
 ): TvTradeParams | { error: string } {
-  // Offset — webhook supplies fusion_price when symbols diverge (e.g. UK10YBG → UKGILT)
+  if (!payload.direction) return { error: 'Activation payload missing direction' };
+
+  // ── Offset ───────────────────────────────────────
   const needsOffset = payload.tv_symbol !== config.fusionSymbol;
   const fusionPrice = needsOffset ? payload.fusion_price : payload.tv_price;
   if (fusionPrice == null || !Number.isFinite(fusionPrice)) {
@@ -41,60 +52,69 @@ export function computeTradeParams(
     return {
       error:
         `Offset ${offset.toFixed(4)} for ${payload.tv_symbol}→${config.fusionSymbol} ` +
-        `exceeds max ${config.maxOffsetAbs}. Possible data error.`,
+        `exceeds max ${config.maxOffsetAbs}.`,
     };
   }
 
-  const prevHighFusion = payload.prev_5m_high - offset;
-  const prevLowFusion = payload.prev_5m_low - offset;
+  // ── Stop reference (breaker H/L, fall back to prev 5-min candle) ──
+  const highTv = payload.breaker_high ?? payload.prev_5m_high;
+  const lowTv  = payload.breaker_low  ?? payload.prev_5m_low;
+  if (highTv == null || lowTv == null) {
+    return { error: 'Activation payload must include breaker_high/low or prev_5m_high/low' };
+  }
+  if (highTv < lowTv) return { error: 'breaker_high < breaker_low — payload corrupted' };
 
-  const pipBuffer = config.slPipOffset * config.pipSize;
+  const highFusion = highTv - offset;
+  const lowFusion  = lowTv  - offset;
+  const pipBuffer  = config.slPipOffset * config.pipSize;
   const entryPrice = fusionPrice;
 
+  // ── Stop loss ───────────────────────────────────
   let stopLoss: number;
-  let takeProfit: number;
   if (payload.direction === 'LONG') {
-    stopLoss = prevLowFusion - pipBuffer;
+    stopLoss = lowFusion - pipBuffer;
     if (stopLoss >= entryPrice) {
-      return { error: `LONG SL ${stopLoss} not below entry ${entryPrice} — candle low above current price.` };
+      return { error: `LONG SL ${stopLoss} not below entry ${entryPrice} — breaker low above current price.` };
     }
-    takeProfit = entryPrice + config.rewardRiskRatio * (entryPrice - stopLoss);
   } else {
-    stopLoss = prevHighFusion + pipBuffer;
+    stopLoss = highFusion + pipBuffer;
     if (stopLoss <= entryPrice) {
-      return { error: `SHORT SL ${stopLoss} not above entry ${entryPrice} — candle high below current price.` };
+      return { error: `SHORT SL ${stopLoss} not above entry ${entryPrice} — breaker high below current price.` };
     }
-    takeProfit = entryPrice - config.rewardRiskRatio * (stopLoss - entryPrice);
   }
 
-  const stopDistancePrice = Math.abs(entryPrice - stopLoss);
-  const stopDistancePips = stopDistancePrice / config.pipSize;
+  const rDistance = Math.abs(entryPrice - stopLoss);
+  const stopDistancePips = rDistance / config.pipSize;
 
   if (stopDistancePips < config.minStopDistancePips) {
     return {
       error:
-        `Stop distance ${stopDistancePips.toFixed(1)} pips < min ${config.minStopDistancePips} — ` +
-        `would risk unreasonable lot size.`,
+        `Stop distance ${stopDistancePips.toFixed(1)} pips < min ${config.minStopDistancePips}.`,
     };
   }
 
-  // Reuse existing sizing engine. Map our single-tier config to the multi-tier
-  // shape the engine expects by pinning size=Medium with multiplier=1.0.
+  // ── Take profit at tpRMultiple × R ───────────────
+  const takeProfit = payload.direction === 'LONG'
+    ? entryPrice + config.tpRMultiple * rDistance
+    : entryPrice - config.tpRMultiple * rDistance;
+
+  // ── Lot sizing (scaled by riskMultiplier) ────────
+  const effectiveRiskPercent = config.riskPercent * riskMultiplier;
+
   const sizingConfig: SizingConfig = {
     mode: config.sizingMode,
     executionMode: 'single',
     strictLots: { Small: config.strictLots, Medium: config.strictLots, Large: config.strictLots },
-    baseRiskPercent: config.riskPercent,
+    baseRiskPercent: effectiveRiskPercent,
     sizeMultipliers: { Small: 1, Medium: 1, Large: 1 },
     maxRiskPercent: config.maxRiskPercent,
-    // Engine's stopDistance is in the same units as the entry/sl we pass — pips here.
     minStopDistance: config.minStopDistancePips,
-    maxLotSize: config.maxLotSize,
+    // Run the engine with a huge cap first so we can detect spillover ourselves.
+    // We re-cap below based on `spilloverMode`.
+    maxLotSize: 1e9,
     maxLotsPerOrder: config.maxLotsPerOrder,
   };
 
-  // The existing sizing engine treats `pipValuePerLot` as $-per-point. We want
-  // $-per-PIP — so we scale stop distance into pips before handing it over.
   const contractSpec: ContractSpec = {
     pipValuePerLot: config.pipValuePerLot,
     minLotSize: config.minLotSize,
@@ -102,6 +122,8 @@ export function computeTradeParams(
     maxOrderSize: config.maxLotsPerOrder,
   };
 
+  // The sizing engine expects entry/sl in the same units as the math it
+  // performs. We pass stopDistance in pips and matching pipValuePerLot.
   const sizing = calculateLotSize(
     sizingConfig,
     { size: 'Medium', entryPrice: stopDistancePips, stopLoss: 0 },
@@ -109,24 +131,76 @@ export function computeTradeParams(
     contractSpec,
   );
 
+  const unboundedLots = sizing.lotSize;
+  const orderSizes = applySpillover(unboundedLots, config);
+  if (orderSizes.length === 0) {
+    return { error: 'Computed lot size is below the broker minimum.' };
+  }
+  const totalLots = orderSizes.reduce((s, v) => s + v, 0);
+
   const round = (n: number, dp = 5) => Math.round(n * 10 ** dp) / 10 ** dp;
+
+  const spilloverNote = orderSizes.length > 1
+    ? ` | split into ${orderSizes.length} orders (${orderSizes.join(' + ')})`
+    : (unboundedLots > config.maxLotSize ? ` | capped at maxLotSize ${config.maxLotSize}` : '');
 
   return {
     direction: payload.direction,
     fusionSymbol: config.fusionSymbol,
     fusionPriceAtAlert: fusionPrice,
-    prevCandleHighAdjusted: round(prevHighFusion),
-    prevCandleLowAdjusted: round(prevLowFusion),
+    breakerHighAdjusted: round(highFusion),
+    breakerLowAdjusted: round(lowFusion),
     offsetApplied: round(offset),
     entryPrice: round(entryPrice),
     stopLoss: round(stopLoss),
     takeProfit: round(takeProfit),
+    rDistance: round(rDistance),
     stopDistancePips: round(stopDistancePips, 2),
-    lotSize: sizing.lotSize,
+    lotSize: round(totalLots, 2),
     riskAmount: sizing.riskAmount,
-    rewardRiskRatio: config.rewardRiskRatio,
-    reason: `${sizing.reason} | RR=${config.rewardRiskRatio}:1 | SL=${stopDistancePips.toFixed(1)} pips`,
+    riskMultiplierApplied: riskMultiplier,
+    orderSizes,
+    reason:
+      `${effectiveRiskPercent.toFixed(2)}% risk (multiplier ${riskMultiplier.toFixed(2)}) | ` +
+      `SL ${stopDistancePips.toFixed(1)} pips | TP @ ${config.tpRMultiple}R${spilloverNote}`,
   };
+}
+
+/**
+ * Apply spillover policy to an unbounded lot calculation.
+ *  - 'cap':   one order at maxLotSize (or the calc if it fits)
+ *  - 'split': N orders each at maxLotSize, with a remainder order ≥ minLotSize
+ */
+function applySpillover(unboundedLots: number, config: TvAlertConfig): number[] {
+  const step = config.lotStep;
+  const min = config.minLotSize;
+  const max = config.maxLotSize;
+  const round = (v: number) => Math.floor(v / step) * step;
+
+  if (unboundedLots < min) return [];
+  if (unboundedLots <= max) return [parseFloat(round(unboundedLots).toFixed(2))];
+
+  if (config.spilloverMode === 'cap') {
+    return [parseFloat(round(max).toFixed(2))];
+  }
+
+  // split mode
+  const orders: number[] = [];
+  let remaining = unboundedLots;
+  while (remaining > max) {
+    orders.push(parseFloat(round(max).toFixed(2)));
+    remaining -= max;
+  }
+  if (remaining >= min) {
+    orders.push(parseFloat(round(remaining).toFixed(2)));
+  } else if (orders.length > 0 && remaining > 0) {
+    // Roll the dust onto the last order if it doesn't bust the broker cap.
+    const last = orders[orders.length - 1];
+    if (last + remaining <= max) {
+      orders[orders.length - 1] = parseFloat((last + round(remaining)).toFixed(2));
+    }
+  }
+  return orders;
 }
 
 export function validatePayload(payload: Partial<TvAlertPayload>): TvTradeValidation {
@@ -136,17 +210,26 @@ export function validatePayload(payload: Partial<TvAlertPayload>): TvTradeValida
   if (!payload.tv_symbol || typeof payload.tv_symbol !== 'string') {
     return { ok: false, reason: 'Missing tv_symbol' };
   }
-  if (payload.direction !== 'LONG' && payload.direction !== 'SHORT') {
-    return { ok: false, reason: `Invalid direction: ${payload.direction}` };
+  if (!payload.alert_type) {
+    return { ok: false, reason: 'Missing alert_type' };
   }
-  if (!Number.isFinite(payload.tv_price)) {
-    return { ok: false, reason: 'Missing or invalid tv_price' };
+  if (payload.alert_type === 'activation') {
+    if (payload.direction !== 'LONG' && payload.direction !== 'SHORT') {
+      return { ok: false, reason: `Invalid direction for activation: ${payload.direction}` };
+    }
+    if (!Number.isFinite(payload.tv_price)) {
+      return { ok: false, reason: 'Missing or invalid tv_price' };
+    }
+    const hasBreaker = Number.isFinite(payload.breaker_high) && Number.isFinite(payload.breaker_low);
+    const hasCandle  = Number.isFinite(payload.prev_5m_high) && Number.isFinite(payload.prev_5m_low);
+    if (!hasBreaker && !hasCandle) {
+      return { ok: false, reason: 'Activation requires breaker_high/low or prev_5m_high/low' };
+    }
   }
-  if (!Number.isFinite(payload.prev_5m_high) || !Number.isFinite(payload.prev_5m_low)) {
-    return { ok: false, reason: 'Missing or invalid prev_5m_high / prev_5m_low' };
-  }
-  if ((payload.prev_5m_high as number) < (payload.prev_5m_low as number)) {
-    return { ok: false, reason: 'prev_5m_high < prev_5m_low — payload corrupted' };
+  if (payload.alert_type === 'target_reached') {
+    if (!Number.isFinite(payload.r_level)) {
+      return { ok: false, reason: 'target_reached requires r_level' };
+    }
   }
   return { ok: true, reason: 'OK' };
 }

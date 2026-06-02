@@ -260,6 +260,10 @@ export interface MetaApiTradeInterface {
     takeProfit?: number;
   }): Promise<void>;
 
+  closePosition(positionId: string): Promise<void>;
+
+  closePositionPartially(positionId: string, volume: number): Promise<void>;
+
   calculateMargin(params: {
     symbol: string;
     volume: number;

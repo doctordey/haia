@@ -14,9 +14,9 @@ const FUSION_DEFAULTS: Record<string, string> = {
   UK10YBG: 'UKGILT',
 };
 
-const RR_DEFAULTS: Record<string, number> = {
-  XBRUSD: 2.0,
-  UK10YBG: 1.0,
+const TP_R_DEFAULTS: Record<string, number> = {
+  XBRUSD: 5.0,
+  UK10YBG: 5.0,
 };
 
 export async function GET() {
@@ -53,7 +53,6 @@ export async function POST(request: NextRequest) {
   const fusionSymbol = body.fusionSymbol
     ? String(body.fusionSymbol).toUpperCase()
     : FUSION_DEFAULTS[tvSymbol] ?? tvSymbol;
-  const rewardRiskRatio = body.rewardRiskRatio ?? RR_DEFAULTS[tvSymbol] ?? 2.0;
 
   const data = {
     userId: session.user.id,
@@ -62,23 +61,38 @@ export async function POST(request: NextRequest) {
     fusionSymbol,
     isEnabled: body.isEnabled ?? false,
     dryRun: body.dryRun ?? true,
-    riskPercent: body.riskPercent ?? 5.0,
-    rewardRiskRatio,
+    // Risk / R targets
+    riskPercent: body.riskPercent ?? 1.0,
+    tpRMultiple: body.tpRMultiple ?? TP_R_DEFAULTS[tvSymbol] ?? 5.0,
+    beAtRMultiple: body.beAtRMultiple ?? 1.0,
+    partialCloseAtRMultiple: body.partialCloseAtRMultiple ?? 2.0,
+    partialClosePercent: body.partialClosePercent ?? 50.0,
+    closeAtRMultiple: body.closeAtRMultiple ?? 5.0,
     slPipOffset: body.slPipOffset ?? 2.0,
     pipSize: body.pipSize ?? 0.01,
     pipValuePerLot: body.pipValuePerLot ?? 0.10,
+    // Sizing
     sizingMode: body.sizingMode ?? 'percent_equity',
     strictLots: body.strictLots ?? 0.01,
     minLotSize: body.minLotSize ?? 0.01,
     lotStep: body.lotStep ?? 0.01,
     maxLotSize: body.maxLotSize ?? 100,
     maxLotsPerOrder: Math.min(body.maxLotsPerOrder ?? 50, 100),
+    spilloverMode: body.spilloverMode ?? 'cap',
     minStopDistancePips: body.minStopDistancePips ?? 5,
     maxRiskPercent: body.maxRiskPercent ?? 10.0,
     maxSlippage: body.maxSlippage ?? 5.0,
     marginWarningThreshold: body.marginWarningThreshold ?? 80,
     marginRejectThreshold: body.marginRejectThreshold ?? 95,
     maxOffsetAbs: body.maxOffsetAbs ?? 10,
+    invalidationCloseEnabled: body.invalidationCloseEnabled ?? true,
+    // Watermark
+    watermarkEnabled: body.watermarkEnabled ?? false,
+    watermarkDrawdownThreshold: body.watermarkDrawdownThreshold ?? 10.0,
+    watermarkRiskReductionPercent: body.watermarkRiskReductionPercent ?? 50.0,
+    marketCloseTimezone: body.marketCloseTimezone ?? 'America/Los_Angeles',
+    marketCloseHour: body.marketCloseHour ?? 14,
+    marketCloseMinute: body.marketCloseMinute ?? 0,
   };
 
   const existing = await db.query.tvAlertConfigs.findFirst({

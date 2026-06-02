@@ -606,6 +606,22 @@ function buildMetaApiInterface(connection: any): MetaApiTradeInterface {
         throw new Error(`MetaApi modifyPosition failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     },
+    async closePosition(positionId) {
+      try {
+        await connection.closePosition(positionId);
+      } catch (error) {
+        console.error(`[metaapi] closePosition failed for ${positionId}:`, error);
+        throw new Error(`MetaApi closePosition failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
+    async closePositionPartially(positionId, volume) {
+      try {
+        await connection.closePositionPartially(positionId, volume);
+      } catch (error) {
+        console.error(`[metaapi] closePositionPartially failed for ${positionId}:`, error);
+        throw new Error(`MetaApi closePositionPartially failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    },
     async calculateMargin(params) {
       try {
         const result = await connection.calculateMargin({
@@ -641,6 +657,8 @@ function buildDryRunMetaApi(): MetaApiTradeInterface {
     async createOrder() { return { orderId: 'dry-run' }; },
     async cancelOrder() {},
     async modifyPosition() {},
+    async closePosition() {},
+    async closePositionPartially() {},
     async calculateMargin() { return { margin: 0 }; },
     async getAccountInformation() { return { balance: 0, equity: 0, freeMargin: 0 }; },
   };

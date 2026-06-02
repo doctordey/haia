@@ -74,6 +74,12 @@ function buildInterface(connection: any): MetaApiTradeInterface {
     async modifyPosition(positionId, params) {
       await connection.modifyPosition(positionId, params.stopLoss, params.takeProfit);
     },
+    async closePosition(positionId) {
+      await connection.closePosition(positionId);
+    },
+    async closePositionPartially(positionId, volume) {
+      await connection.closePositionPartially(positionId, volume);
+    },
     async calculateMargin(params) {
       const result = await connection.calculateMargin(params);
       return { margin: result.margin };

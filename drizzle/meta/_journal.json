@@ -57,6 +57,13 @@
       "when": 1779830371531,
       "tag": "0007_tradingview_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780371135818,
+      "tag": "0008_tv_alerts_unicorn",
+      "breakpoints": true
     }
   ]
 }

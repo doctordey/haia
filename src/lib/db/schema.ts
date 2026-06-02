@@ -483,9 +483,17 @@ export const tvAlertConfigs = pgTable('tv_alert_configs', {
   dryRun:    boolean('dry_run').notNull().default(true),
 
   // Trade parameters
-  riskPercent:       real('risk_percent').notNull().default(5.0),
+  riskPercent:       real('risk_percent').notNull().default(1.0),
+  // Deprecated — superseded by tpRMultiple/beAtRMultiple. Kept so the column
+  // doesn't get dropped (Drizzle's prompt is interactive and we run migrations
+  // headless on Railway). Safe to remove in a future cleanup migration.
   rewardRiskRatio:   real('reward_risk_ratio').notNull().default(2.0),
-  slPipOffset:       real('sl_pip_offset').notNull().default(2.0),    // pips beyond candle high/low
+  tpRMultiple:       real('tp_r_multiple').notNull().default(5.0),      // initial TP at N×R from entry
+  beAtRMultiple:     real('be_at_r_multiple').notNull().default(1.0),   // move SL to entry when this R is reached
+  partialCloseAtRMultiple: real('partial_close_at_r_multiple').notNull().default(2.0),
+  partialClosePercent: real('partial_close_percent').notNull().default(50.0),
+  closeAtRMultiple:  real('close_at_r_multiple').notNull().default(5.0), // full close target
+  slPipOffset:       real('sl_pip_offset').notNull().default(2.0),    // pips beyond breaker high/low
   pipSize:           real('pip_size').notNull().default(0.01),         // 1 pip in price units
   pipValuePerLot:    real('pip_value_per_lot').notNull().default(0.10), // $ per pip per 1 lot
 
@@ -496,6 +504,9 @@ export const tvAlertConfigs = pgTable('tv_alert_configs', {
   lotStep:           real('lot_step').notNull().default(0.01),
   maxLotSize:        real('max_lot_size').notNull().default(100),
   maxLotsPerOrder:   real('max_lots_per_order').notNull().default(50),
+  // When sized lots exceed maxLotSize: "cap" caps at maxLotSize (under-risks),
+  // "split" opens multiple positions to reach the target risk.
+  spilloverMode:     text('spillover_mode').notNull().default('cap'),
   minStopDistancePips: real('min_stop_distance_pips').notNull().default(5),
   maxRiskPercent:    real('max_risk_percent').notNull().default(10.0),
   maxSlippage:       real('max_slippage').notNull().default(5.0),
@@ -504,8 +515,19 @@ export const tvAlertConfigs = pgTable('tv_alert_configs', {
   marginWarningThreshold: real('margin_warning_threshold').notNull().default(80),
   marginRejectThreshold:  real('margin_reject_threshold').notNull().default(95),
 
-  // Offset bounds (UK10YBG vs UKGILT can sit in a small band; outside this we reject)
+  // Offset bounds (when tvSymbol != fusionSymbol, |tv-fusion| above this is rejected)
   maxOffsetAbs: real('max_offset_abs').notNull().default(10),
+
+  // Invalidation handling
+  invalidationCloseEnabled: boolean('invalidation_close_enabled').notNull().default(true),
+
+  // High watermark drawdown protection
+  watermarkEnabled:          boolean('watermark_enabled').notNull().default(false),
+  watermarkDrawdownThreshold: real('watermark_drawdown_threshold').notNull().default(10.0), // % below watermark
+  watermarkRiskReductionPercent: real('watermark_risk_reduction_percent').notNull().default(50.0), // reduce risk by this %
+  marketCloseTimezone:       text('market_close_timezone').notNull().default('America/Los_Angeles'),
+  marketCloseHour:           integer('market_close_hour').notNull().default(14),  // 2pm
+  marketCloseMinute:         integer('market_close_minute').notNull().default(0),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
@@ -537,14 +559,20 @@ export const tvAlerts = pgTable('tv_alerts', {
   receivedAt: timestamp('received_at').notNull().defaultNow(),
 
   // Parsed signal
+  alertType:    text('alert_type').notNull().default('activation'), // "activation" | "target_reached" | "invalidation_hit" | "invalidation_warning" | "potential_breaker"
+  rLevel:       real('r_level'),                     // 1, 2, 5 for target_reached
   tvSymbol:     text('tv_symbol').notNull(),
   fusionSymbol: text('fusion_symbol'),
-  direction:    text('direction').notNull(),        // "LONG" | "SHORT"
+  direction:    text('direction').notNull(),         // "LONG" | "SHORT"
   tvPrice:      real('tv_price'),                    // current TradingView price at alert time
   fusionPrice:  real('fusion_price'),                // FusionMarkets price (for offset calc)
   offsetApplied: real('offset_applied'),             // tv - fusion (0 for native feeds)
 
-  // 5-min candle context
+  // Breaker / candle context (whichever the indicator supplies)
+  breakerHigh:           real('breaker_high'),
+  breakerLow:            real('breaker_low'),
+  breakerHighAdjusted:   real('breaker_high_adjusted'),
+  breakerLowAdjusted:    real('breaker_low_adjusted'),
   prevCandleHigh:         real('prev_candle_high'),
   prevCandleLow:          real('prev_candle_low'),
   prevCandleHighAdjusted: real('prev_candle_high_adjusted'),
@@ -558,6 +586,10 @@ export const tvAlerts = pgTable('tv_alerts', {
   riskAmount: real('risk_amount'),
   rewardRiskRatio: real('reward_risk_ratio'),
   computeReason:   text('compute_reason'),
+  riskMultiplierApplied: real('risk_multiplier_applied'), // 1.0 unless watermark scaled risk down
+
+  // Position linkage — for target_reached / invalidation_hit alerts
+  linkedPositionId: text('linked_position_id'),
 
   // Execution result
   status:         text('status').notNull(),  // "pending" | "sent" | "rejected" | "error" | "dry_run" | "duplicate"
@@ -578,9 +610,93 @@ export const tvAlerts = pgTable('tv_alerts', {
 ]);
 
 export const tvAlertsRelations = relations(tvAlerts, ({ one }) => ({
-  config:  one(tvAlertConfigs, { fields: [tvAlerts.configId], references: [tvAlertConfigs.id] }),
-  account: one(tradingAccounts, { fields: [tvAlerts.accountId], references: [tradingAccounts.id] }),
+  config:   one(tvAlertConfigs, { fields: [tvAlerts.configId], references: [tvAlertConfigs.id] }),
+  account:  one(tradingAccounts, { fields: [tvAlerts.accountId], references: [tradingAccounts.id] }),
+  position: one(tvPositions,    { fields: [tvAlerts.linkedPositionId], references: [tvPositions.id] }),
 }));
+
+// ─── TradingView Positions ────────────────────────
+// One row per Activation alert that successfully opened a trade. Subsequent
+// Target Reached / Invalidation alerts find the matching row by tvSymbol and
+// apply trade management (BE move, partial close, full close).
+
+export const tvPositions = pgTable('tv_positions', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  configId:  text('config_id').notNull().references(() => tvAlertConfigs.id, { onDelete: 'cascade' }),
+  accountId: text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  activationAlertId: text('activation_alert_id').references(() => tvAlerts.id, { onDelete: 'set null' }),
+
+  // Symbol + direction
+  tvSymbol:     text('tv_symbol').notNull(),
+  fusionSymbol: text('fusion_symbol').notNull(),
+  direction:    text('direction').notNull(),     // "LONG" | "SHORT"
+
+  // Initial trade levels (set at activation)
+  entryPrice:        real('entry_price').notNull(),
+  originalStopLoss:  real('original_stop_loss').notNull(),
+  rDistance:         real('r_distance').notNull(),     // |entry - originalStopLoss|, in price units
+  initialTakeProfit: real('initial_take_profit').notNull(),
+  initialLotSize:    real('initial_lot_size').notNull(),
+  riskAmount:        real('risk_amount').notNull(),
+  riskMultiplierApplied: real('risk_multiplier_applied').notNull().default(1.0),
+
+  // MetaApi linkage — array of position IDs (one per chunk/spillover order)
+  metaapiPositionIds: text('metaapi_position_ids').notNull(),  // JSON array
+
+  // Trade management state
+  currentStopLoss: real('current_stop_loss').notNull(),
+  remainingLots:   real('remaining_lots').notNull(),
+  hit1R:           boolean('hit_1r').notNull().default(false),
+  hit2R:           boolean('hit_2r').notNull().default(false),
+  hit5R:           boolean('hit_5r').notNull().default(false),
+  movedToBreakeven: boolean('moved_to_breakeven').notNull().default(false),
+  partialClosedAt:  timestamp('partial_closed_at'),
+
+  // Outcome
+  status:        text('status').notNull().default('open'),  // "open" | "partial" | "closed" | "invalidated" | "stopped_out"
+  closeReason:   text('close_reason'),                       // "5r_target" | "invalidation_hit" | "stop_loss" | "manual"
+  closedAt:      timestamp('closed_at'),
+  rGainAchieved: real('r_gain_achieved'),                    // final R multiple realised
+  pnlAmount:     real('pnl_amount'),
+  pctGain:       real('pct_gain'),                           // pnl / accountBalanceAtOpen
+
+  accountBalanceAtOpen: real('account_balance_at_open'),
+
+  isDryRun:  boolean('is_dry_run').notNull().default(false),
+  openedAt:  timestamp('opened_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  index('tv_positions_config_id_idx').on(table.configId),
+  index('tv_positions_account_id_idx').on(table.accountId),
+  index('tv_positions_status_idx').on(table.status),
+  index('tv_positions_tv_symbol_idx').on(table.tvSymbol),
+  index('tv_positions_opened_at_idx').on(table.openedAt),
+]);
+
+export const tvPositionsRelations = relations(tvPositions, ({ one, many }) => ({
+  config:          one(tvAlertConfigs, { fields: [tvPositions.configId], references: [tvAlertConfigs.id] }),
+  account:         one(tradingAccounts, { fields: [tvPositions.accountId], references: [tradingAccounts.id] }),
+  activationAlert: one(tvAlerts, { fields: [tvPositions.activationAlertId], references: [tvAlerts.id] }),
+  followUpAlerts:  many(tvAlerts),
+}));
+
+// ─── Daily Balance Snapshots ──────────────────────
+// One row per account per day (after configured market close). The watermark
+// is the highest balance ever snapshotted for that account; new trades scale
+// risk down when current balance falls below it by the configured threshold.
+
+export const accountBalanceSnapshots = pgTable('account_balance_snapshots', {
+  id:           text('id').primaryKey().$defaultFn(() => createId()),
+  accountId:    text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  snapshotDate: date('snapshot_date').notNull(),  // local date in marketCloseTimezone
+  balance:      real('balance').notNull(),
+  equity:       real('equity').notNull(),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  unique('account_balance_snapshots_account_date_uniq').on(table.accountId, table.snapshotDate),
+  index('account_balance_snapshots_account_id_idx').on(table.accountId),
+  index('account_balance_snapshots_snapshot_date_idx').on(table.snapshotDate),
+]);
 
 export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({
   user:            one(users, { fields: [tradeJournal.userId], references: [users.id] }),

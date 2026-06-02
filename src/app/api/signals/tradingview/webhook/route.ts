@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tvAlertConfigs, tvAlerts, tvPositions, tradingAccounts } from '@/lib/db/schema';
 import { computeTradeParams, validatePayload } from '@/lib/signals/tv-alert';
+import { parseUnicornMessage } from '@/lib/signals/unicorn-parser';
 import { getBreakerContext } from '@/lib/signals/breaker-context';
 import {
   findOpenPositionForSymbol,
@@ -41,17 +42,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
   }
 
-  let rawBody: string;
-  let body: Partial<TvAlertPayload>;
-  try {
-    rawBody = await request.text();
-    body = JSON.parse(rawBody) as Partial<TvAlertPayload>;
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
-  }
+  const rawBody = await request.text();
 
-  if (body.secret !== webhookSecret) {
-    return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
+  // Webhook accepts either:
+  //   (1) JSON {secret, alert_type, ...} — what custom Pine indicators send
+  //   (2) Unicorn's free-form text — we parse it into a payload and assume
+  //       the request is authenticated via a secret in the URL query
+  //       (?secret=...) since the text body can't carry one.
+  let body: Partial<TvAlertPayload>;
+
+  const looksJson = rawBody.trim().startsWith('{');
+  if (looksJson) {
+    try {
+      body = JSON.parse(rawBody) as Partial<TvAlertPayload>;
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+    if (body.secret !== webhookSecret) {
+      return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
+    }
+  } else {
+    // Unicorn text mode — secret in query string.
+    const urlSecret = request.nextUrl.searchParams.get('secret');
+    if (urlSecret !== webhookSecret) {
+      return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
+    }
+    const parsed = parseUnicornMessage(rawBody);
+    if (!parsed.ok) {
+      // Log so we can see unknown formats and extend the parser.
+      await db.insert(tvAlerts).values({
+        rawPayload: rawBody,
+        tvSymbol: '?',
+        direction: '?',
+        alertType: 'unknown',
+        status: 'rejected',
+        errorMessage: `Unicorn parse failed: ${parsed.reason}`,
+        isDryRun: false,
+      });
+      return NextResponse.json({ error: parsed.reason, raw: rawBody.slice(0, 200) }, { status: 400 });
+    }
+    body = { ...parsed.payload, secret: webhookSecret };
   }
 
   const validation = validatePayload(body);

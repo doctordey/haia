@@ -77,14 +77,14 @@ direction = bh > bl ? (close > (bh + bl) / 2 ? "bullish" : "bearish") : na
 sym = tv_symbol_override == "" ? syminfo.ticker : tv_symbol_override
 
 payload = '{' +
-    '"secret":"'           + webhook_secret + '",' +
-    '"tv_symbol":"'        + sym            + '",' +
-    '"breaker_high":'      + str.tostring(bh, "#.######") + ',' +
-    '"breaker_low":'       + str.tostring(bl, "#.######") + ',' +
-    (na(direction) ? "" : '"breaker_direction":"' + direction + '",') +
-    (account_id == "" ? "" : '"account_id":"' + account_id + '",') +
-    '"timestamp":"{{timenow}}"' +
-    '}'
+     '"secret":"'           + webhook_secret + '",' +
+     '"tv_symbol":"'        + sym            + '",' +
+     '"breaker_high":'      + str.tostring(bh, "#.######") + ',' +
+     '"breaker_low":'       + str.tostring(bl, "#.######") + ',' +
+     (na(direction) ? "" : '"breaker_direction":"' + direction + '",') +
+     (account_id == "" ? "" : '"account_id":"' + account_id + '",') +
+     '"timestamp":"{{timenow}}"' +
+     '}'
 
 if changed and not na(bh) and not na(bl)
     alert(payload, alert.freq_once_per_bar_close)

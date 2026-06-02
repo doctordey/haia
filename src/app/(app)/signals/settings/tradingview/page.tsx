@@ -47,6 +47,11 @@ interface TvAlertConfigRow {
   marketCloseTimezone: string;
   marketCloseHour: number;
   marketCloseMinute: number;
+  slAnchorMode: 'breaker_publisher' | 'swing' | 'prior_candle' | 'fixed_pips';
+  swingTimeframe: string;
+  swingStrength: number;
+  swingLookback: number;
+  fixedSlPips: number;
 }
 
 interface TvAlertRow {
@@ -130,6 +135,11 @@ function emptyConfig(): Partial<TvAlertConfigRow> {
     marketCloseTimezone: 'America/Los_Angeles',
     marketCloseHour: 14,
     marketCloseMinute: 0,
+    slAnchorMode: 'swing',
+    swingTimeframe: '5m',
+    swingStrength: 3,
+    swingLookback: 50,
+    fixedSlPips: 20,
   };
 }
 
@@ -640,7 +650,47 @@ function ConfigEditor({
           <div className="grid grid-cols-3 gap-3">
             <NumberInput label="Risk %"          value={form.riskPercent}     onChange={(v) => set('riskPercent', v)}     step={0.25} />
             <NumberInput label="TP (R)"          value={form.tpRMultiple}     onChange={(v) => set('tpRMultiple', v)}     step={0.5} />
-            <NumberInput label="SL Pips"         value={form.slPipOffset}     onChange={(v) => set('slPipOffset', v)}     step={1} />
+            <NumberInput label="SL Pip Buffer"   value={form.slPipOffset}     onChange={(v) => set('slPipOffset', v)}     step={1} />
+          </div>
+
+          <div className="border-t border-border-primary pt-4 space-y-3">
+            <Select
+              label="SL Anchor"
+              value={form.slAnchorMode ?? 'swing'}
+              onChange={(e) => set('slAnchorMode', e.target.value as TvAlertConfigRow['slAnchorMode'])}
+              options={[
+                { value: 'swing',              label: 'Swing high/low (server-side via MetaApi)' },
+                { value: 'breaker_publisher',  label: 'Breaker publisher (companion indicator)' },
+                { value: 'prior_candle',       label: 'Prior candle high/low (from payload)' },
+                { value: 'fixed_pips',         label: 'Fixed pip distance' },
+              ]}
+            />
+            {form.slAnchorMode === 'swing' && (
+              <div className="grid grid-cols-3 gap-3">
+                <Select
+                  label="Timeframe"
+                  value={form.swingTimeframe ?? '5m'}
+                  onChange={(e) => set('swingTimeframe', e.target.value)}
+                  options={[
+                    { value: '1m', label: '1m' },
+                    { value: '5m', label: '5m' },
+                    { value: '15m', label: '15m' },
+                    { value: '1h', label: '1h' },
+                  ]}
+                />
+                <NumberInput label="Strength (bars each side)" value={form.swingStrength} onChange={(v) => set('swingStrength', Math.max(1, Math.floor(v)))} />
+                <NumberInput label="Lookback (bars)"           value={form.swingLookback} onChange={(v) => set('swingLookback', Math.max(2 * (form.swingStrength ?? 3) + 1, Math.floor(v)))} />
+              </div>
+            )}
+            {form.slAnchorMode === 'fixed_pips' && (
+              <NumberInput label="SL distance (pips)" value={form.fixedSlPips} onChange={(v) => set('fixedSlPips', v)} step={1} />
+            )}
+            <p className="text-xs text-text-tertiary">
+              {form.slAnchorMode === 'swing' && 'Server fetches recent candles from MetaApi at activation time and uses the most recent qualifying swing as the SL reference, then adds the pip buffer above.'}
+              {form.slAnchorMode === 'breaker_publisher' && 'Reads the latest values published by the companion indicator. Requires the publisher to be running.'}
+              {form.slAnchorMode === 'prior_candle' && 'Uses prev_5m_high/low from the alert payload. Only useful if the indicator can include those values in its message.'}
+              {form.slAnchorMode === 'fixed_pips' && 'Places SL a fixed pip distance from entry. Ignores price structure.'}
+            </p>
           </div>
 
           <div className="grid grid-cols-3 gap-3">

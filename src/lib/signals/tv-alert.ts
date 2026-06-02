@@ -8,35 +8,49 @@ import type {
 import type { AccountInfo, ContractSpec, SizingConfig } from '@/types/signals';
 
 /**
+ * The pre-resolved SL anchor. The caller (webhook) computes this based on the
+ * config's `slAnchorMode` — fetching from the breaker publisher cache, running
+ * server-side swing detection on MetaApi candles, using payload fallbacks, or
+ * applying a fixed pip distance.
+ *
+ * `slPriceFusion` is the raw anchor in Fusion price space — the SL itself is
+ * derived from this by adding/subtracting the per-config pip buffer.
+ *
+ * `fixedSlPriceFusion` short-circuits the math: when set, computeTradeParams
+ * uses this value directly as the stop loss without adding any pip buffer.
+ */
+export interface SlAnchor {
+  source: 'breaker_publisher' | 'swing' | 'prior_candle' | 'fixed_pips';
+  slPriceFusion?: number;       // anchor price (swing/breaker/candle low for LONG, high for SHORT)
+  fixedSlPriceFusion?: number;  // final SL (fixed_pips mode)
+  note: string;                  // human-readable description for the alert log
+}
+
+/**
  * Translate a TradingView **Activation** alert into FusionMarkets trade
- * parameters (entry, SL, TP, lot size).
+ * parameters. The SL anchor comes from `anchor` — see SlAnchor above for the
+ * dispatch options.
  *
  * Pricing:
- *   offset = tv_price - fusion_price   (0 when symbols match)
- *   highFusion = breakerHigh - offset  (falls back to prev_5m_high)
- *   lowFusion  = breakerLow  - offset
+ *   offset       = tv_price - fusion_price  (0 when symbols match)
+ *   entry        = current fusion_price
  *
  * Stop:
- *   LONG:  SL = lowFusion  - slPipOffset × pipSize
- *   SHORT: SL = highFusion + slPipOffset × pipSize
+ *   fixed_pips mode: SL = anchor.fixedSlPriceFusion
+ *   other modes:     LONG  SL = anchor.slPriceFusion - slPipOffset × pipSize
+ *                    SHORT SL = anchor.slPriceFusion + slPipOffset × pipSize
  *
- * Take Profit (initial, placed on the order):
+ * Take Profit at entry-time:
  *   R   = |entry - SL|
- *   LONG:  TP = entry + tpRMultiple × R
- *   SHORT: TP = entry - tpRMultiple × R
- *
- * Lot sizing reuses the percent_equity engine, scaled by `riskMultiplier`
- * (which the caller derives from the watermark check).
- *
- * Spillover: if the unbounded lot calculation would exceed `maxLotSize`,
- * either cap at maxLotSize (mode='cap') or open N back-to-back orders that
- * collectively reach the target risk (mode='split').
+ *   LONG  TP = entry + tpRMultiple × R
+ *   SHORT TP = entry - tpRMultiple × R
  */
 export function computeTradeParams(
   payload: TvAlertPayload,
   config: TvAlertConfig,
   account: AccountInfo,
   riskMultiplier: number,
+  anchor: SlAnchor,
 ): TvTradeParams | { error: string } {
   if (!payload.direction) return { error: 'Activation payload missing direction' };
 
@@ -56,31 +70,33 @@ export function computeTradeParams(
     };
   }
 
-  // ── Stop reference (breaker H/L, fall back to prev 5-min candle) ──
-  const highTv = payload.breaker_high ?? payload.prev_5m_high;
-  const lowTv  = payload.breaker_low  ?? payload.prev_5m_low;
-  if (highTv == null || lowTv == null) {
-    return { error: 'Activation payload must include breaker_high/low or prev_5m_high/low' };
-  }
-  if (highTv < lowTv) return { error: 'breaker_high < breaker_low — payload corrupted' };
-
-  const highFusion = highTv - offset;
-  const lowFusion  = lowTv  - offset;
-  const pipBuffer  = config.slPipOffset * config.pipSize;
   const entryPrice = fusionPrice;
+  const pipBuffer = config.slPipOffset * config.pipSize;
 
-  // ── Stop loss ───────────────────────────────────
+  // ── Stop loss from anchor ─────────────────────────
   let stopLoss: number;
-  if (payload.direction === 'LONG') {
-    stopLoss = lowFusion - pipBuffer;
-    if (stopLoss >= entryPrice) {
-      return { error: `LONG SL ${stopLoss} not below entry ${entryPrice} — breaker low above current price.` };
+  if (anchor.source === 'fixed_pips') {
+    if (anchor.fixedSlPriceFusion == null || !Number.isFinite(anchor.fixedSlPriceFusion)) {
+      return { error: 'fixed_pips anchor missing fixedSlPriceFusion' };
     }
+    stopLoss = anchor.fixedSlPriceFusion;
   } else {
-    stopLoss = highFusion + pipBuffer;
-    if (stopLoss <= entryPrice) {
-      return { error: `SHORT SL ${stopLoss} not above entry ${entryPrice} — breaker high below current price.` };
+    if (anchor.slPriceFusion == null || !Number.isFinite(anchor.slPriceFusion)) {
+      return { error: `SL anchor (${anchor.source}) did not produce a valid price` };
     }
+    if (payload.direction === 'LONG') {
+      stopLoss = anchor.slPriceFusion - pipBuffer;
+    } else {
+      stopLoss = anchor.slPriceFusion + pipBuffer;
+    }
+  }
+
+  // Wrong-side guard
+  if (payload.direction === 'LONG' && stopLoss >= entryPrice) {
+    return { error: `LONG SL ${stopLoss} not below entry ${entryPrice} (${anchor.source}: ${anchor.note})` };
+  }
+  if (payload.direction === 'SHORT' && stopLoss <= entryPrice) {
+    return { error: `SHORT SL ${stopLoss} not above entry ${entryPrice} (${anchor.source}: ${anchor.note})` };
   }
 
   const rDistance = Math.abs(entryPrice - stopLoss);
@@ -148,8 +164,8 @@ export function computeTradeParams(
     direction: payload.direction,
     fusionSymbol: config.fusionSymbol,
     fusionPriceAtAlert: fusionPrice,
-    breakerHighAdjusted: round(highFusion),
-    breakerLowAdjusted: round(lowFusion),
+    breakerHighAdjusted: payload.direction === 'SHORT' && anchor.slPriceFusion != null ? round(anchor.slPriceFusion) : null,
+    breakerLowAdjusted:  payload.direction === 'LONG'  && anchor.slPriceFusion != null ? round(anchor.slPriceFusion) : null,
     offsetApplied: round(offset),
     entryPrice: round(entryPrice),
     stopLoss: round(stopLoss),
@@ -162,7 +178,8 @@ export function computeTradeParams(
     orderSizes,
     reason:
       `${effectiveRiskPercent.toFixed(2)}% risk (multiplier ${riskMultiplier.toFixed(2)}) | ` +
-      `SL ${stopDistancePips.toFixed(1)} pips | TP @ ${config.tpRMultiple}R${spilloverNote}`,
+      `SL ${stopDistancePips.toFixed(1)} pips (${anchor.source}: ${anchor.note}) | ` +
+      `TP @ ${config.tpRMultiple}R${spilloverNote}`,
   };
 }
 

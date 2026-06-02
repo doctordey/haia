@@ -86,6 +86,12 @@ export async function POST(request: NextRequest) {
     marginRejectThreshold: body.marginRejectThreshold ?? 95,
     maxOffsetAbs: body.maxOffsetAbs ?? 10,
     invalidationCloseEnabled: body.invalidationCloseEnabled ?? true,
+    // SL anchor
+    slAnchorMode: body.slAnchorMode ?? 'swing',
+    swingTimeframe: body.swingTimeframe ?? '5m',
+    swingStrength: body.swingStrength ?? 3,
+    swingLookback: body.swingLookback ?? 50,
+    fixedSlPips: body.fixedSlPips ?? 20,
     // Watermark
     watermarkEnabled: body.watermarkEnabled ?? false,
     watermarkDrawdownThreshold: body.watermarkDrawdownThreshold ?? 10.0,

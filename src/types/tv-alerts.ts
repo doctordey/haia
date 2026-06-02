@@ -36,6 +36,8 @@ export type TvPositionStatus =
 
 export type SpilloverMode = 'cap' | 'split';
 
+export type SlAnchorMode = 'breaker_publisher' | 'swing' | 'prior_candle' | 'fixed_pips';
+
 // ─── Webhook Payload ────────────────────────────────
 
 export interface TvAlertPayload {
@@ -108,6 +110,13 @@ export interface TvAlertConfig {
 
   invalidationCloseEnabled: boolean;
 
+  // SL anchor
+  slAnchorMode:   SlAnchorMode;
+  swingTimeframe: string;        // '1m'|'5m'|'15m'|'1h'
+  swingStrength:  number;        // bars each side
+  swingLookback:  number;        // bars to scan
+  fixedSlPips:    number;
+
   // Watermark
   watermarkEnabled: boolean;
   watermarkDrawdownThreshold: number;
@@ -124,6 +133,9 @@ export interface TvTradeParams {
   fusionSymbol: string;
 
   fusionPriceAtAlert: number;
+  // SL anchor in Fusion price space (echoed for audit). For LONG positions the
+  // anchor is a low; for SHORT it's a high; both fields nullable for fixed_pips
+  // mode where there's no candle-derived anchor.
   breakerHighAdjusted: number | null;
   breakerLowAdjusted: number | null;
   offsetApplied: number;

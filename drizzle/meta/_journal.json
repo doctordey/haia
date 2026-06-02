@@ -71,6 +71,13 @@
       "when": 1780372825303,
       "tag": "0009_tv_breaker_contexts",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780374659725,
+      "tag": "0010_tv_sl_anchor_mode",
+      "breakpoints": true
     }
   ]
 }

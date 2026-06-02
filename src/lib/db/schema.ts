@@ -518,6 +518,17 @@ export const tvAlertConfigs = pgTable('tv_alert_configs', {
   // Offset bounds (when tvSymbol != fusionSymbol, |tv-fusion| above this is rejected)
   maxOffsetAbs: real('max_offset_abs').notNull().default(10),
 
+  // SL anchor: where the stop loss is measured from.
+  //   'breaker_publisher' — read from tv_breaker_contexts (companion indicator)
+  //   'swing'             — server-side swing detection from MetaApi candles
+  //   'prior_candle'      — use payload-supplied prev_5m_high/low
+  //   'fixed_pips'        — entry ± fixedSlPips × pipSize
+  slAnchorMode:   text('sl_anchor_mode').notNull().default('swing'),
+  swingTimeframe: text('swing_timeframe').notNull().default('5m'),  // '1m'|'5m'|'15m'|'1h'
+  swingStrength:  integer('swing_strength').notNull().default(3),    // bars each side
+  swingLookback:  integer('swing_lookback').notNull().default(50),   // bars to scan
+  fixedSlPips:    real('fixed_sl_pips').notNull().default(20),
+
   // Invalidation handling
   invalidationCloseEnabled: boolean('invalidation_close_enabled').notNull().default(true),
 

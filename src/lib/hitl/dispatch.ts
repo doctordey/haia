@@ -139,8 +139,7 @@ export async function openLegs(
         openPrice: params.openPrice,
         stopLoss: params.sl,
         takeProfit: leg.tp,
-        clientId: leg.clientId,
-        comment: `HITL_${leg.leg}`,   // short + pattern-safe; correlation is via clientId
+        clientId: leg.clientId,        // correlation key; also shown as the platform comment
         slippage: params.slippage,
       });
       leg.ticket = ticket;

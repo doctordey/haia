@@ -34,8 +34,8 @@ export interface OpenOrderParams {
   openPrice?: number;       // required when entryMode === 'pending'
   stopLoss: number;
   takeProfit: number;
-  clientId: string;         // haia-hitl-{signalId}-{legA|legB}
-  comment: string;
+  clientId: string;         // hh_{alnum signalId}_{A|B}
+  comment?: string;         // optional; omitted by default (combined length cap)
   slippage: number;
 }
 
@@ -54,14 +54,14 @@ export interface HitlBroker {
   positionsBySignal(signalId: string): HitlPosition[];
 }
 
-// MetaApi clientId/comment must match a restricted pattern (alphanumerics,
-// underscore, dot, +, !) — NO hyphens — and be short (≤ 36 chars). Sanitize the
-// signalId to alphanumerics and keep the tag compact. clientIdFor and
-// signalIdPrefix must stay in lockstep: the prefix is how we find a signal's
-// positions/deals.
+// MetaApi stores clientId inside the platform comment, so it must (a) match a
+// restricted pattern — alphanumerics + underscore, NO hyphens — and (b) be
+// short: the clientId+comment combined length is capped (~26 chars). We send no
+// separate comment and keep the tag compact. clientIdFor and signalIdPrefix
+// must stay in lockstep: the prefix is how we find a signal's positions/deals.
 function clientIdTag(signalId: string): string {
   const clean = signalId.replace(/[^a-zA-Z0-9]/g, '');
-  return `hh_${clean.slice(0, 30)}`; // "hh_" + ≤30 + "_A" = ≤35 chars
+  return `hh_${clean.slice(0, 16)}`; // "hh_" + ≤16 + "_A" = ≤21 chars
 }
 
 export function clientIdFor(signalId: string, leg: 'A' | 'B'): string {
@@ -154,7 +154,13 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
 
     async openOrder(params) {
       const type = ORDER_TYPE_BY_MODE[params.entryMode][params.direction];
-      const opts = { comment: params.comment, clientId: params.clientId, slippage: params.slippage };
+      // Send only clientId (+ slippage). Omit comment unless explicitly set —
+      // MetaApi caps the combined clientId+comment length.
+      const opts: { clientId: string; slippage: number; comment?: string } = {
+        clientId: params.clientId,
+        slippage: params.slippage,
+      };
+      if (params.comment) opts.comment = params.comment;
       let result;
       try {
         switch (type) {

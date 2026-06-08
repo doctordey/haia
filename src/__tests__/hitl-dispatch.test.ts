@@ -14,11 +14,11 @@ function cfg(overrides: Partial<HitlConfig> = {}): HitlConfig {
 }
 
 describe('clientId tagging (MetaApi pattern-safe)', () => {
-  it('strips hyphens from auto-derived signal ids (the case that failed)', () => {
+  it('strips hyphens and caps length for auto-derived signal ids (the case that failed)', () => {
     const id = clientIdFor('auto-0d4f95fbf9bbc946', 'A');
-    expect(id).toBe('hh_auto0d4f95fbf9bbc946_A');
+    expect(id).toBe('hh_auto0d4f95fbf9bb_A');
     expect(id).toMatch(/^[a-zA-Z0-9_]+$/);   // no hyphens / illegal chars
-    expect(id.length).toBeLessThanOrEqual(36);
+    expect(id.length).toBeLessThanOrEqual(26); // MetaApi combined-length cap
   });
 
   it('prefix is a strict prefix of each leg clientId', () => {
@@ -27,9 +27,9 @@ describe('clientId tagging (MetaApi pattern-safe)', () => {
     expect(clientIdFor('auto-0d4f95fbf9bbc946', 'B').startsWith(prefix)).toBe(true);
   });
 
-  it('caps long ids to stay within 36 chars', () => {
+  it('caps long ids well within the length limit', () => {
     const id = clientIdFor('x'.repeat(100), 'B');
-    expect(id.length).toBeLessThanOrEqual(36);
+    expect(id.length).toBeLessThanOrEqual(26);
     expect(id).toMatch(/^[a-zA-Z0-9_]+$/);
   });
 });

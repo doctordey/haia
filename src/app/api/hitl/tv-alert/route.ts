@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { loadHitlConfig, resolveBrokerSymbol } from '@/lib/hitl/config';
+import { loadHitlConfig } from '@/lib/hitl/config';
 import { secretMatches, deriveSignalId, getHitlNotifier } from '@/lib/hitl/webhook';
 import { parseAlert, type AlertInfo } from '@/lib/hitl/alert';
+import { resolveBrokerSymbolLive } from '@/lib/hitl/symbol-map';
 import * as session from '@/lib/hitl/session';
 
 /**
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ accepted: false, reason: 'unparseable' });
   }
 
-  const symbol = resolveBrokerSymbol(cfg, alert.symbol);
+  const symbol = await resolveBrokerSymbolLive(cfg, alert.symbol);
 
   // ── Target Reached → breakeven request (correlated by symbol + direction) ──
   if (alert.type === 'target_reached') {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parseAlert } from '@/lib/hitl/alert';
 import { loadHitlConfig, resolveBrokerSymbol } from '@/lib/hitl/config';
+import { resolveWithMap } from '@/lib/hitl/symbol-map';
 
 const ACTIVATION = 'Activated 5m Bearish Unicorn [1H OHLC] on US30 @ 50788.71';
 const TARGET = 'Target Reached: 5m Bearish Unicorn [1H OHLC] on ETHUSD @ 1671.72';
@@ -48,10 +49,25 @@ describe('resolveBrokerSymbol', () => {
     expect(resolveBrokerSymbol(cfg, 'US30')).toBe('US30');
   });
 
-  it('applies a configured map (UK10YBGBP → UKGILT), case-insensitive', () => {
+  it('applies a configured env map (UK10YBGBP → UKGILT), case-insensitive', () => {
     const cfg = loadHitlConfig({ HITL_SYMBOL_MAP: 'UK10YBGBP:UKGILT, FOO:BAR' } as unknown as NodeJS.ProcessEnv);
     expect(resolveBrokerSymbol(cfg, 'UK10YBGBP')).toBe('UKGILT');
     expect(resolveBrokerSymbol(cfg, 'uk10ybgbp')).toBe('UKGILT');
     expect(resolveBrokerSymbol(cfg, 'ETHUSD')).toBe('ETHUSD');
+  });
+});
+
+describe('resolveWithMap (DB-managed map)', () => {
+  it('DB rows override, identity otherwise, case-insensitive', () => {
+    const map = { UK10YBGBP: 'UKGILT' };
+    expect(resolveWithMap(map, 'UK10YBGBP')).toBe('UKGILT');
+    expect(resolveWithMap(map, 'uk10ybgbp')).toBe('UKGILT');
+    expect(resolveWithMap(map, 'US30')).toBe('US30');
+  });
+
+  it('merge semantics: DB wins over env seed', () => {
+    const cfg = loadHitlConfig({ HITL_SYMBOL_MAP: 'US30:US30.cash' } as unknown as NodeJS.ProcessEnv);
+    const merged = { ...cfg.symbolMap, US30: 'DJ30' }; // DB overrides env
+    expect(resolveWithMap(merged, 'US30')).toBe('DJ30');
   });
 });

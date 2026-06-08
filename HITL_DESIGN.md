@@ -47,8 +47,10 @@ Target Reached: 5m Bearish Unicorn [1H OHLC] on ETHUSD @ 1671.72 → breakeven
 - **Target-Reached → breakeven** is correlated to the open trade by
   **symbol + direction** (no id to match on); the live-prefill block keeps
   concurrent same-symbol trades rare.
-- **Symbol map**: TradingView ticker → broker symbol, identity by default,
-  override via `HITL_SYMBOL_MAP` (e.g. `UK10YBGBP:UKGILT`).
+- **Symbol map**: TradingView ticker → broker symbol, identity by default.
+  Managed in-app (Settings → HITL → Symbol Map, table `hitl_symbol_maps`);
+  `HITL_SYMBOL_MAP` env is an optional seed that DB rows override. Resolved
+  live at webhook intake (e.g. `UK10YBGBP → UKGILT`).
 
 ---
 

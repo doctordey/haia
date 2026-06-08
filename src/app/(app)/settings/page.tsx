@@ -22,6 +22,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="hitl">HITL</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -29,6 +30,10 @@ export default function SettingsPage() {
 
         <TabsContent value="accounts" className="mt-4 space-y-4">
           <AccountsSection accounts={accounts} onRefetch={refetch} toast={toast} />
+        </TabsContent>
+
+        <TabsContent value="hitl" className="mt-4 space-y-4">
+          <HitlSection toast={toast} />
         </TabsContent>
 
         <TabsContent value="profile" className="mt-4 space-y-4">
@@ -160,6 +165,114 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
         </div>
       )}
     </>
+  );
+}
+
+type SymbolMap = { id: string; tvSymbol: string; brokerSymbol: string };
+
+function HitlSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [maps, setMaps] = useState<SymbolMap[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ tvSymbol: '', brokerSymbol: '' });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/hitl/symbol-map');
+      if (res.ok) setMaps(await res.json());
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleAdd() {
+    if (!form.tvSymbol.trim() || !form.brokerSymbol.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/symbol-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (res.ok) {
+        toast('Mapping saved', 'success');
+        setForm({ tvSymbol: '', brokerSymbol: '' });
+        load();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast(d.error || 'Failed to save mapping', 'error');
+      }
+    } catch { toast('Failed to save mapping', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/hitl/symbol-map/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Mapping removed', 'success'); load(); }
+      else toast('Failed to remove', 'error');
+    } catch { toast('Failed to remove', 'error'); }
+    finally { setDeleting(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Symbol Map</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Map TradingView tickers to the symbol names on your broker. Anything not listed is used as-is.
+          Example: <span className="font-mono">UK10YBGBP → UKGILT</span>.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <Input
+              label="TradingView ticker"
+              placeholder="UK10YBGBP"
+              value={form.tvSymbol}
+              onChange={(e) => setForm({ ...form, tvSymbol: e.target.value.toUpperCase() })}
+            />
+          </div>
+          <div className="flex-1">
+            <Input
+              label="Broker symbol"
+              placeholder="UKGILT"
+              value={form.brokerSymbol}
+              onChange={(e) => setForm({ ...form, brokerSymbol: e.target.value })}
+            />
+          </div>
+          <Button onClick={handleAdd} loading={saving} disabled={!form.tvSymbol.trim() || !form.brokerSymbol.trim()}>
+            Add
+          </Button>
+        </div>
+
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : maps.length === 0 ? (
+          <p className="text-xs text-text-tertiary">No mappings yet — tickers are used exactly as TradingView sends them.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {maps.map((m) => (
+              <div key={m.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                <div className="flex items-center gap-2 font-mono text-sm">
+                  <span className="text-text-primary">{m.tvSymbol}</span>
+                  <span className="text-text-tertiary">→</span>
+                  <span className="text-accent-primary">{m.brokerSymbol}</span>
+                </div>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(m.id)} loading={deleting === m.id}>
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

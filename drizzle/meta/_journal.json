@@ -57,6 +57,13 @@
       "when": 1780890066111,
       "tag": "0007_hitl_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780894396543,
+      "tag": "0008_hitl_symbol_maps",
+      "breakpoints": true
     }
   ]
 }

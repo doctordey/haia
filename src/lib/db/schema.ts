@@ -547,3 +547,15 @@ export const hitlSessions = pgTable('hitl_sessions', {
 export const hitlSessionsRelations = relations(hitlSessions, ({ one }) => ({
   account: one(tradingAccounts, { fields: [hitlSessions.accountId], references: [tradingAccounts.id] }),
 }));
+
+// ─── HITL Symbol Map (TradingView ticker → broker symbol) ──
+// Operator-level config (global, like offsetHistory). Editable from Settings;
+// resolved at webhook intake. Identity unless a row overrides.
+
+export const hitlSymbolMaps = pgTable('hitl_symbol_maps', {
+  id:           text('id').primaryKey().$defaultFn(() => createId()),
+  tvSymbol:     text('tv_symbol').notNull().unique(),   // stored uppercase
+  brokerSymbol: text('broker_symbol').notNull(),
+  createdAt:    timestamp('created_at').notNull().defaultNow(),
+  updatedAt:    timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});

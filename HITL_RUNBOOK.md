@@ -44,10 +44,9 @@ AUTHORIZED_TELEGRAM_USER_IDS=123456789
 HITL_OPERATOR_CHAT_ID=123456789
 HITL_WEBHOOK_SECRET=...
 ```
-Optional symbol map (only symbols that differ from the broker):
-```
-HITL_SYMBOL_MAP=UK10YBGBP:UKGILT
-```
+Symbol map (only symbols that differ from the broker) is managed in the app —
+**Settings → HITL → Symbol Map** (e.g. `UK10YBGBP → UKGILT`). `HITL_SYMBOL_MAP`
+still works as an optional seed, but the UI is the easy way and DB entries win.
 Everything else (`SL_FROM=range_size`, `POSITION_MODEL=two_position`,
 `BE_TRIGGER=both`, risk %, timeouts…) has locked defaults — leave unless you
 mean to change a decision. `METAAPI_TOKEN` is already set.

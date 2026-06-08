@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, real, timestamp, date, unique, index } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, real, timestamp, date, unique, index, jsonb } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 
@@ -55,6 +55,7 @@ export const tradingAccounts = pgTable('trading_accounts', {
   leverage:   integer('leverage'),
   currency:   text('currency').notNull().default('USD'),
   accessMode: text('access_mode').notNull().default('investor'),  // "investor" (read-only) | "trading" (full access)
+  hitlEnabled: boolean('hitl_enabled').notNull().default(false),   // opt-in: this account receives approved HITL trades
   isActive:   boolean('is_active').notNull().default(true),
   lastSyncAt: timestamp('last_sync_at'),
   syncStatus: text('sync_status').notNull().default('pending'),
@@ -70,6 +71,7 @@ export const tradingAccountsRelations = relations(tradingAccounts, ({ one, many 
   trades:         many(trades),
   dailySnapshots: many(dailySnapshots),
   accountStats:   one(accountStats),
+  hitlSessions:   many(hitlSessions),
 }));
 
 // ─── Trades ──────────────────────────────────────────
@@ -469,4 +471,77 @@ export const tradeJournalRelations = relations(tradeJournal, ({ one }) => ({
   user:            one(users, { fields: [tradeJournal.userId], references: [users.id] }),
   trade:           one(trades, { fields: [tradeJournal.tradeId], references: [trades.id] }),
   signalExecution: one(signalExecutions, { fields: [tradeJournal.signalExecutionId], references: [signalExecutions.id] }),
+}));
+
+// ─── HITL Sessions (human-in-the-loop execution) ──
+// Durable, never hard-deleted — only ever transitioned through the state
+// machine (see HITL_DESIGN.md §5). One row per TradingView alert that enters
+// the approval flow.
+
+export type HitlLeg = {
+  leg: 'A' | 'B';
+  tp: number;            // take-profit target for this leg (TP2 for A, TP3 for B)
+  volume: number;
+  clientId: string;      // haia-hitl-{signalId}-{legA|legB}
+  ticket: string | null; // MetaApi position id once filled
+  status: 'pending' | 'open' | 'closed' | 'failed';
+};
+
+export const hitlSessions = pgTable('hitl_sessions', {
+  id:         text('id').primaryKey().$defaultFn(() => createId()),
+  signalId:   text('signal_id').notNull().unique(),                 // correlation key; order clientId = haia-hitl-{signalId}-{legA|legB}
+  accountId:  text('account_id').references(() => tradingAccounts.id, { onDelete: 'set null' }), // resolved from hitlEnabled; kept for audit
+
+  symbol:     text('symbol').notNull(),
+  action:     text('action'),                                       // "BUY" | "SELL" | null until AWAITING_DIRECTION resolved
+  state:      text('state').notNull().default('RECEIVED'),          // state machine (§5)
+
+  // ── inputs ──
+  entryRef:   real('entry_ref'),
+  rangeHigh:  real('range_high'),
+  rangeLow:   real('range_low'),
+  rawAlert:   jsonb('raw_alert').$type<Record<string, unknown>>(),
+
+  // ── computed (gated by SL_FROM=range_size) ──
+  direction:  text('direction'),                                    // "BUY" | "SELL"
+  sl:         real('sl'),
+  r:          real('r'),
+  tp1:        real('tp1'),
+  tp2:        real('tp2'),
+  tp3:        real('tp3'),
+  lots:       real('lots'),
+  legs:       jsonb('legs').$type<HitlLeg[]>(),
+
+  // ── config snapshot (audit) ──
+  slFrom:        text('sl_from'),
+  positionModel: text('position_model'),
+  entryMode:     text('entry_mode'),
+  riskPct:       real('risk_pct'),
+
+  // ── telegram ──
+  operatorChatId:   text('operator_chat_id'),
+  promptMessageId:  text('prompt_message_id'),
+  confirmMessageId: text('confirm_message_id'),
+
+  // ── lifecycle ──
+  beApplied:     boolean('be_applied').notNull().default(false),
+  beAppliedAt:   timestamp('be_applied_at'),
+  dispatchedAt:  timestamp('dispatched_at'),
+  realizedPnl:   real('realized_pnl'),
+  failureReason: text('failure_reason'),
+
+  receivedAt:      timestamp('received_at').notNull().defaultNow(),
+  rangeReceivedAt: timestamp('range_received_at'),
+  approvedAt:      timestamp('approved_at'),
+  closedAt:        timestamp('closed_at'),
+  createdAt:       timestamp('created_at').notNull().defaultNow(),
+  updatedAt:       timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+}, (table) => [
+  index('hitl_sessions_state_idx').on(table.state),
+  index('hitl_sessions_symbol_idx').on(table.symbol),
+  index('hitl_sessions_account_id_idx').on(table.accountId),
+]);
+
+export const hitlSessionsRelations = relations(hitlSessions, ({ one }) => ({
+  account: one(tradingAccounts, { fields: [hitlSessions.accountId], references: [tradingAccounts.id] }),
 }));

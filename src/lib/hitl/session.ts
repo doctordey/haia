@@ -104,6 +104,32 @@ export async function inCooldown(symbol: string, cooldownSeconds: number): Promi
   return Boolean(row);
 }
 
+/** Route a text reply: find the session whose current prompt is this message. */
+export async function findByPromptMessageId(messageId: number): Promise<HitlSession | undefined> {
+  const [row] = await db
+    .select()
+    .from(hitlSessions)
+    .where(eq(hitlSessions.promptMessageId, String(messageId)))
+    .limit(1);
+  return row;
+}
+
+/** Fallback routing: newest session awaiting operator input on this chat. */
+export async function newestAwaitingForChat(operatorChatId: string): Promise<HitlSession | undefined> {
+  const [row] = await db
+    .select()
+    .from(hitlSessions)
+    .where(
+      and(
+        eq(hitlSessions.operatorChatId, operatorChatId),
+        inArray(hitlSessions.state, [STATES.AWAITING_RANGE, STATES.AWAITING_DIRECTION]),
+      ),
+    )
+    .orderBy(desc(hitlSessions.receivedAt))
+    .limit(1);
+  return row;
+}
+
 export async function listByState(states: HitlState[]): Promise<HitlSession[]> {
   if (states.length === 0) return [];
   return db.select().from(hitlSessions).where(inArray(hitlSessions.state, states)).orderBy(desc(hitlSessions.receivedAt));
@@ -133,6 +159,20 @@ export async function transition(
 /** Patch fields without changing state (e.g. recording prompt message ids). */
 export async function patch(id: string, fields: SessionPatch): Promise<HitlSession | null> {
   const [row] = await db.update(hitlSessions).set(fields).where(eq(hitlSessions.id, id)).returning();
+  return row ?? null;
+}
+
+/**
+ * Atomically claim the breakeven move for an OPEN session (idempotent). Returns
+ * the row only to the caller that won the claim (beApplied flips false→true),
+ * so the SL move runs exactly once even if webhook + price-watch both fire.
+ */
+export async function claimBreakeven(id: string): Promise<HitlSession | null> {
+  const [row] = await db
+    .update(hitlSessions)
+    .set({ beApplied: true, beAppliedAt: new Date() })
+    .where(and(eq(hitlSessions.id, id), eq(hitlSessions.state, STATES.OPEN), eq(hitlSessions.beApplied, false)))
+    .returning();
   return row ?? null;
 }
 

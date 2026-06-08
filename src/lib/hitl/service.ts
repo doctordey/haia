@@ -10,6 +10,7 @@ import { computeLevels, inferDirection, type Direction } from './levels';
 import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
 import { isUserAuthorized } from './access';
+import { loadTpMultiples } from './targets';
 import * as session from './session';
 import { STATES } from './session';
 
@@ -47,8 +48,10 @@ export class HitlService implements HitlBotDeps {
   /** Opening prompt text for a freshly received alert. */
   promptText(symbol: string, entry: number | null): string {
     return (
-      `🔔 HITL alert: ${symbol} @ ${fmt(entry)}\n` +
-      `Reply with the range as two numbers (high low), e.g. \`${fmt(entry ? entry + 10 : 0)} ${fmt(entry ? entry - 10 : 0)}\`.`
+      `🔔 HITL alert: ${symbol} @ ${entry ?? '—'}\n` +
+      `Reply to THIS message with the range as two numbers — high then low ` +
+      `(e.g. for an alert near ${entry ?? 'X'}, the range's high and low).\n` +
+      `Replying to the specific alert keeps each one matched to the right trade.`
     );
   }
 
@@ -105,12 +108,14 @@ export class HitlService implements HitlBotDeps {
       return { kind: 'error', text: 'Target account is not connected yet — try again shortly.' };
     }
 
+    const tpMultiples = await loadTpMultiples(cfg);
     const lv = computeLevels({
       entry: s.entryRef,
       rangeHigh: input.rangeHigh,
       rangeLow: input.rangeLow,
       direction: input.direction,
       slFrom: cfg.slFrom,
+      tpMultiples,
     });
     if (!lv.ok) return { kind: 'error', text: `Cannot compute levels: ${lv.reason}` };
 

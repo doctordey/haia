@@ -23,6 +23,8 @@ const CLOSE_GRACE_MS = 15_000; // ignore "no positions" right after dispatch
 
 export class HitlManager {
   private timer: NodeJS.Timeout | null = null;
+  // Sessions we've already DM'd about a BE issue, so we don't repeat every tick.
+  private beAlerted = new Set<string>();
 
   constructor(
     private readonly ctx: HitlContext,
@@ -100,10 +102,26 @@ export class HitlManager {
   private async breakevenBackstop(): Promise<void> {
     const rows = await session.listByState([STATES.OPEN]);
     for (const s of rows) {
-      if (s.beApplied || s.accountId == null || s.entryRef == null) continue;
+      if (s.beApplied || s.accountId == null || s.entryRef == null || !s.direction) continue;
       const broker = this.ctx.getBroker(s.accountId);
       if (!broker) continue;
       if (!this.beShouldFire(s, broker)) continue;
+
+      // The stop can only move to entry when the trade is in profit (entry on the
+      // protective side of the live price); otherwise the broker would reject it.
+      const price = broker.getPrice(s.symbol);
+      if (!price) continue; // no quote yet — retry next tick
+      const valid = s.direction === 'BUY' ? s.entryRef < price.bid : s.entryRef > price.ask;
+      if (!valid) {
+        if (!this.beAlerted.has(s.id)) {
+          this.beAlerted.add(s.id);
+          await this.ctx.notify(
+            `⚠️ HITL ${s.symbol}: breakeven was triggered, but the trade isn't in profit yet — ` +
+            `the stop can't move to entry until price reaches TP1. I'll apply it automatically when it does.`,
+          );
+        }
+        continue;
+      }
 
       // Claim first (exactly-once), then move; revert the claim if the move fails.
       const claimed = await session.claimBreakeven(s.id);
@@ -114,10 +132,16 @@ export class HitlManager {
         for (const pos of positions) {
           await broker.modifySl(pos.id, s.entryRef, pos.takeProfit ?? undefined);
         }
+        this.beAlerted.delete(s.id);
         await this.ctx.notify(`🟦 HITL ${s.symbol}: TP1 reached — stop moved to breakeven (${positions.length} leg(s)).`);
       } catch (err) {
-        console.error(`[hitl/manager] BE move failed for ${s.id}, reverting claim:`, err);
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(`[hitl/manager] BE move failed for ${s.id}, reverting claim:`, reason);
         await session.patch(s.id, { beApplied: false, beAppliedAt: null });
+        if (!this.beAlerted.has(s.id)) {
+          this.beAlerted.add(s.id);
+          await this.ctx.notify(`⚠️ HITL ${s.symbol}: breakeven move was rejected — ${reason}. Will retry.`);
+        }
       }
     }
   }

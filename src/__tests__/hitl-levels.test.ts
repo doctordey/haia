@@ -5,22 +5,29 @@ import { computeLots, splitLegs, valuePerPoint, type HitlSymbolSpec } from '@/li
 // ── Geometry: SL_FROM = range_size (locked default) ──
 
 describe('computeLevels — range_size', () => {
-  it('BUY: range width is R, stop one R below entry, TP ladder 1R/2R/3R', () => {
+  it('BUY: range width is R, stop one R below entry, default TP ladder 1R/2R/5R', () => {
     const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'range_size' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.levels).toMatchObject({ r: 20, sl: 4980, tp1: 5020, tp2: 5040, tp3: 5060 });
+    expect(r.levels).toMatchObject({ r: 20, sl: 4980, tp1: 5020, tp2: 5040, tp3: 5100 });
   });
 
-  it('SELL: stop one R above entry, TPs descend', () => {
+  it('SELL: stop one R above entry, TPs descend (1R/2R/5R)', () => {
     const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'SELL', slFrom: 'range_size' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.levels).toMatchObject({ r: 20, sl: 5020, tp1: 4980, tp2: 4960, tp3: 4940 });
+    expect(r.levels).toMatchObject({ r: 20, sl: 5020, tp1: 4980, tp2: 4960, tp3: 4900 });
   });
 
-  it('TP multiples are the documented ladder', () => {
-    expect(TP_MULTIPLES).toEqual({ tp1: 1, tp2: 2, tp3: 3 });
+  it('default TP multiples are 1R/2R/5R', () => {
+    expect(TP_MULTIPLES).toEqual({ tp1: 1, tp2: 2, tp3: 5 });
+  });
+
+  it('honours custom TP multiples', () => {
+    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'range_size', tpMultiples: { tp1: 1, tp2: 3, tp3: 6 } });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.levels).toMatchObject({ tp1: 5020, tp2: 5060, tp3: 5120 });
   });
 });
 

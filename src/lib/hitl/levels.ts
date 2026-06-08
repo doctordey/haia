@@ -15,8 +15,11 @@ import type { SlFrom } from './config';
 
 export type Direction = 'BUY' | 'SELL';
 
-/** R-multiples for the TP ladder. TP1 = BE trigger, TP2 = Leg A, TP3 = Leg B. */
-export const TP_MULTIPLES = { tp1: 1, tp2: 2, tp3: 3 } as const;
+/** Default R-multiples for the TP ladder. TP1 = BE trigger, TP2 = Leg A, TP3 = Leg B.
+ *  Configurable per-deployment (env HITL_TP{1,2,3}_R / Settings → HITL → Targets). */
+export const TP_MULTIPLES = { tp1: 1, tp2: 2, tp3: 5 } as const;
+
+export interface TpMultiples { tp1: number; tp2: number; tp3: number }
 
 export interface ComputedLevels {
   direction: Direction;
@@ -48,10 +51,12 @@ export interface ComputeLevelsInput {
   rangeLow: number;
   direction: Direction;
   slFrom: SlFrom;
+  tpMultiples?: TpMultiples;   // defaults to TP_MULTIPLES
 }
 
 export function computeLevels(input: ComputeLevelsInput): LevelsResult {
   const { entry, rangeHigh, rangeLow, direction, slFrom } = input;
+  const mult = input.tpMultiples ?? TP_MULTIPLES;
 
   if (![entry, rangeHigh, rangeLow].every((n) => Number.isFinite(n))) {
     return { ok: false, reason: 'entry, rangeHigh and rangeLow must all be finite numbers' };
@@ -78,9 +83,9 @@ export function computeLevels(input: ComputeLevelsInput): LevelsResult {
   }
 
   const sign = direction === 'BUY' ? 1 : -1;
-  const tp1 = entry + sign * TP_MULTIPLES.tp1 * r;
-  const tp2 = entry + sign * TP_MULTIPLES.tp2 * r;
-  const tp3 = entry + sign * TP_MULTIPLES.tp3 * r;
+  const tp1 = entry + sign * mult.tp1 * r;
+  const tp2 = entry + sign * mult.tp2 * r;
+  const tp3 = entry + sign * mult.tp3 * r;
 
   return { ok: true, levels: { direction, entry, sl, r, tp1, tp2, tp3 } };
 }

@@ -35,6 +35,12 @@ export interface HitlConfig {
   riskPct: number;
   maxRiskPerTrade: number;
 
+  // ── TP ladder R-multiples (TP1=BE trigger, TP2=Leg A, TP3=Leg B). Env defaults;
+  //    overridable in-app (Settings → HITL → Targets). ──
+  tp1R: number;
+  tp2R: number;
+  tp3R: number;
+
   // ── behaviour switches (locked defaults per HITL_DESIGN.md) ──
   slFrom: SlFrom;
   positionModel: PositionModel;
@@ -88,6 +94,10 @@ export function loadHitlConfig(env: NodeJS.ProcessEnv = process.env): HitlConfig
 
     riskPct: num(env.RISK_PCT, 1.0),
     maxRiskPerTrade: num(env.MAX_RISK_PER_TRADE, 5.0),
+
+    tp1R: num(env.HITL_TP1_R, 1),
+    tp2R: num(env.HITL_TP2_R, 2),
+    tp3R: num(env.HITL_TP3_R, 5),
 
     slFrom: oneOf(env.SL_FROM, ['range_size', 'protective_edge'] as const, 'range_size'),
     positionModel: oneOf(env.POSITION_MODEL, ['two_position', 'single'] as const, 'two_position'),
@@ -156,6 +166,13 @@ export function validateHitlConfig(cfg: HitlConfig): void {
   ];
   for (const [key, value] of positives) {
     if (!Number.isFinite(value) || value <= 0) problems.push(`${key} must be a positive number (got "${value}")`);
+  }
+
+  for (const [key, value] of [['HITL_TP1_R', cfg.tp1R], ['HITL_TP2_R', cfg.tp2R], ['HITL_TP3_R', cfg.tp3R]] as [string, number][]) {
+    if (!Number.isFinite(value) || value <= 0) problems.push(`${key} must be a positive number (got "${value}")`);
+  }
+  if (!(cfg.tp1R < cfg.tp2R && cfg.tp2R < cfg.tp3R)) {
+    problems.push(`TP multiples must be strictly increasing: TP1_R (${cfg.tp1R}) < TP2_R (${cfg.tp2R}) < TP3_R (${cfg.tp3R})`);
   }
 
   if (cfg.riskPct > cfg.maxRiskPerTrade) {

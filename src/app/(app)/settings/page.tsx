@@ -34,6 +34,7 @@ export default function SettingsPage() {
 
         <TabsContent value="hitl" className="mt-4 space-y-4">
           <HitlAccessSection toast={toast} />
+          <HitlTargetsSection toast={toast} />
           <HitlSection toast={toast} />
         </TabsContent>
 
@@ -300,6 +301,72 @@ function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => v
             </div>
           )}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [targets, setTargets] = useState({ tp1: '1', tp2: '2', tp3: '5' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/targets')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setTargets({ tp1: String(d.tp1), tp2: String(d.tp2), tp3: String(d.tp3) }); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/targets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tp1: Number(targets.tp1), tp2: Number(targets.tp2), tp3: Number(targets.tp3) }),
+      });
+      if (res.ok) toast('Targets saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save targets', 'error'); }
+    } catch { toast('Failed to save targets', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Targets (R multiples)</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Distance of each target from entry, in multiples of R (the range width). TP1 is the breakeven trigger,
+          TP2 is Leg A&apos;s take-profit, TP3 is Leg B&apos;s. Must be strictly increasing. Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input label="TP1 — breakeven" type="number" step="0.1" value={targets.tp1}
+                  onChange={(e) => setTargets({ ...targets, tp1: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="TP2 — Leg A" type="number" step="0.1" value={targets.tp2}
+                  onChange={(e) => setTargets({ ...targets, tp2: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="TP3 — Leg B" type="number" step="0.1" value={targets.tp3}
+                  onChange={(e) => setTargets({ ...targets, tp3: e.target.value })} />
+              </div>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
+            </p>
+          </>
+        )}
       </CardContent>
     </Card>
   );

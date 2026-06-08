@@ -381,23 +381,37 @@ type HitlMessage = { key: string; label: string; description: string; variables:
 function HitlMessagesSection({ toast }: { toast: (msg: string, type?: string) => void }) {
   const [messages, setMessages] = useState<HitlMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [dir, setDir] = useState({ BUY: '🟢 BUY', SELL: '🔴 SELL' });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/hitl/messages');
-      if (res.ok) {
-        const d = await res.json();
-        setMessages(d.messages || []);
-        setDrafts(Object.fromEntries((d.messages || []).map((m: HitlMessage) => [m.key, m.value])));
+      const [m, d] = await Promise.all([fetch('/api/hitl/messages'), fetch('/api/hitl/direction-labels')]);
+      if (m.ok) {
+        const data = await m.json();
+        setMessages(data.messages || []);
+        setDrafts(Object.fromEntries((data.messages || []).map((x: HitlMessage) => [x.key, x.value])));
       }
+      if (d.ok) { const dl = await d.json(); setDir({ BUY: dl.BUY, SELL: dl.SELL }); }
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  async function saveDir() {
+    setBusy('dir');
+    try {
+      const res = await fetch('/api/hitl/direction-labels', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dir),
+      });
+      if (res.ok) toast('Direction labels saved', 'success');
+      else { const e = await res.json().catch(() => ({})); toast(e.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setBusy(null); }
+  }
 
   async function save(key: string) {
     setBusy(key);
@@ -432,6 +446,17 @@ function HitlMessagesSection({ toast }: { toast: (msg: string, type?: string) =>
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="space-y-1.5 border-b border-border-primary pb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">Direction label</span>
+            <Button size="sm" onClick={saveDir} loading={busy === 'dir'}>Save</Button>
+          </div>
+          <p className="text-xs text-text-tertiary">What <span className="font-mono">{'{direction}'}</span> renders as.</p>
+          <div className="flex items-end gap-2">
+            <div className="flex-1"><Input label="BUY (bullish)" value={dir.BUY} onChange={(e) => setDir({ ...dir, BUY: e.target.value })} /></div>
+            <div className="flex-1"><Input label="SELL (bearish)" value={dir.SELL} onChange={(e) => setDir({ ...dir, SELL: e.target.value })} /></div>
+          </div>
+        </div>
         {loading ? (
           <p className="text-xs text-text-tertiary">Loading…</p>
         ) : (

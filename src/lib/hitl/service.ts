@@ -11,7 +11,7 @@ import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
 import { isUserAuthorized } from './access';
 import { loadTpMultiples } from './targets';
-import { renderMessage } from './messages';
+import { renderMessage, directionLabel } from './messages';
 import * as session from './session';
 import { STATES } from './session';
 
@@ -44,8 +44,8 @@ export class HitlService implements HitlBotDeps {
   }
 
   /** Opening prompt text for a freshly received alert. */
-  promptText(symbol: string, entry: number | null, direction: string | null): Promise<string> {
-    return renderMessage('prompt', { direction: direction ?? '', symbol, price: entry ?? '—' });
+  async promptText(symbol: string, entry: number | null, direction: string | null): Promise<string> {
+    return renderMessage('prompt', { direction: await directionLabel(direction), symbol, price: entry ?? '—' });
   }
 
   async submitRange(sessionId: string, a: number, b: number): Promise<DialogResult> {
@@ -156,7 +156,7 @@ export class HitlService implements HitlBotDeps {
       .join('\n') + (plan.collapsed ? `\n⚠️ ${plan.note}` : '');
 
     const text = await renderMessage('confirm', {
-      direction: input.direction,
+      direction: await directionLabel(input.direction),
       symbol: s.symbol,
       account: target.isDemo ? 'DEMO' : 'LIVE',
       entry: fmt(lv.levels.entry),

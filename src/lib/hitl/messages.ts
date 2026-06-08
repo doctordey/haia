@@ -117,6 +117,35 @@ export const MESSAGE_DEFS: MessageDef[] = [
 
 const DEFAULTS: Record<string, string> = Object.fromEntries(MESSAGE_DEFS.map((d) => [d.key, d.default]));
 
+// What {direction} renders as — operator-editable (hitl_settings dir.BUY/dir.SELL).
+export const DIRECTION_DEFAULTS = { BUY: '🟢 BUY', SELL: '🔴 SELL' } as const;
+
+export async function loadDirectionLabels(): Promise<{ BUY: string; SELL: string }> {
+  const labels = { ...DIRECTION_DEFAULTS } as { BUY: string; SELL: string };
+  try {
+    const rows = await db.select().from(hitlSettings);
+    for (const r of rows) {
+      if (r.key === 'dir.BUY') labels.BUY = r.value;
+      else if (r.key === 'dir.SELL') labels.SELL = r.value;
+    }
+  } catch (err) {
+    console.error('[hitl/messages] direction label lookup failed, using defaults:', err);
+  }
+  return labels;
+}
+
+/** Resolve a raw direction ('BUY'/'SELL') to its configured display label. */
+export async function directionLabel(dir: string | null | undefined): Promise<string> {
+  if (dir !== 'BUY' && dir !== 'SELL') return '';
+  return (await loadDirectionLabels())[dir];
+}
+
+export async function setDirectionLabels(buy: string, sell: string): Promise<void> {
+  for (const [key, value] of [['dir.BUY', buy], ['dir.SELL', sell]] as [string, string][]) {
+    await db.insert(hitlSettings).values({ key, value }).onConflictDoUpdate({ target: hitlSettings.key, set: { value } });
+  }
+}
+
 export type MessageVars = Record<string, string | number | null | undefined>;
 
 /** Substitute {var} placeholders; unknown/empty vars render as ''. */

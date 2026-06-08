@@ -176,6 +176,9 @@ export class HitlBot {
 
   /** Send a message to every chat; returns the message ids that succeeded. */
   private async sendToAll(chatIds: string[], text: string, keyboard?: InlineKeyboard): Promise<number[]> {
+    if (chatIds.length === 0) {
+      console.warn('[hitl/bot] nothing sent — no destinations configured (Settings → HITL → Access).');
+    }
     const ids: number[] = [];
     for (const chatId of chatIds) {
       try {

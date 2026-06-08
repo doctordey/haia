@@ -145,6 +145,19 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   await manager.resumeOnRestart();
   manager.start();
 
+  // Surface the resolved destinations once at boot — the single most useful line
+  // when prompts aren't arriving.
+  try {
+    const dests = await loadChatIds(cfg);
+    if (dests.length === 0) {
+      console.warn('[hitl] NO destinations configured — add a DM/group in Settings → HITL → Access (or set HITL_OPERATOR_CHAT_ID). Prompts have nowhere to go.');
+    } else {
+      console.log(`[hitl] ${dests.length} destination(s): ${dests.join(', ')}`);
+    }
+  } catch (err) {
+    console.error('[hitl] could not resolve destinations at boot:', err);
+  }
+
   // Pick up accounts toggled on after boot.
   const rescan = setInterval(() => void scanAndConnect().catch(() => {}), 30_000);
 

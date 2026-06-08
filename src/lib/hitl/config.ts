@@ -45,6 +45,9 @@ export interface HitlConfig {
   maxDeviationPoints: number;
   scannerFill: ScannerFill;   // inert unless positionModel === 'single'
   partialLegFailure: PartialLegFailure;
+
+  // ── symbol mapping (TradingView ticker → broker symbol; identity by default) ──
+  symbolMap: Record<string, string>;
 }
 
 class HitlConfigError extends Error {
@@ -95,7 +98,25 @@ export function loadHitlConfig(env: NodeJS.ProcessEnv = process.env): HitlConfig
     maxDeviationPoints: num(env.MAX_DEVIATION_POINTS, 10),
     scannerFill: oneOf(env.SCANNER_FILL, ['close_through', 'touch'] as const, 'close_through'),
     partialLegFailure: oneOf(env.PARTIAL_LEG_FAILURE, ['alert_hold', 'auto_close'] as const, 'alert_hold'),
+
+    symbolMap: parseSymbolMap(env.HITL_SYMBOL_MAP),
   };
+}
+
+/** Parse `HITL_SYMBOL_MAP="UK10YBGBP:UKGILT, FOO:BAR"` into a lookup. */
+function parseSymbolMap(raw: string | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!raw) return map;
+  for (const pair of raw.split(',')) {
+    const [tv, broker] = pair.split(':').map((s) => s.trim());
+    if (tv && broker) map[tv.toUpperCase()] = broker;
+  }
+  return map;
+}
+
+/** Resolve a TradingView ticker to the broker symbol (identity unless mapped). */
+export function resolveBrokerSymbol(cfg: HitlConfig, tvSymbol: string): string {
+  return cfg.symbolMap[tvSymbol.toUpperCase()] ?? tvSymbol;
 }
 
 /**

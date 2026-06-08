@@ -177,6 +177,30 @@ export async function claimBreakeven(id: string): Promise<HitlSession | null> {
 }
 
 /**
+ * Mark a BE request by symbol + direction (the "Target Reached" alert carries
+ * no id). Flags every OPEN, not-yet-BE'd session matching the trade, idempotently.
+ * Returns the affected sessions (usually one — the live-prefill block keeps
+ * concurrent same-symbol trades rare).
+ */
+export async function markBeRequestedBySymbolDirection(
+  symbol: string,
+  direction: 'BUY' | 'SELL',
+): Promise<HitlSession[]> {
+  return db
+    .update(hitlSessions)
+    .set({ beRequested: true, beRequestedAt: new Date() })
+    .where(
+      and(
+        eq(hitlSessions.symbol, symbol),
+        eq(hitlSessions.direction, direction),
+        eq(hitlSessions.state, STATES.OPEN),
+        eq(hitlSessions.beApplied, false),
+      ),
+    )
+    .returning();
+}
+
+/**
  * Mark a BE request from the /tp1-hit webhook (idempotent). Only flags a
  * session that is OPEN and hasn't already had BE applied. The worker reacts.
  */

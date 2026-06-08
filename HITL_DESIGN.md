@@ -28,6 +28,28 @@ scaffold the brief assumed.
 The per-decision sections below are retained for rationale; where they differ
 from this table, **this table wins.**
 
+### Alert format (confirmed from live samples)
+
+The TradingView "Unicorn" indicator fires **plain-text** `alert()` strings (not
+JSON), both types through one alert ("Any alert() function call"):
+
+```
+Activated 5m Bearish Unicorn [1H OHLC] on US30 @ 50788.71      → new signal
+Target Reached: 5m Bearish Unicorn [1H OHLC] on ETHUSD @ 1671.72 → breakeven
+```
+
+- One webhook (`/haia/hitl/tv-alert`) handles both; it routes on
+  `Activated` vs `Target Reached`.
+- Extracted: direction (`Bullish`→BUY / `Bearish`→SELL), symbol (`on <SYM> @`),
+  price (`@ <price>`). No range/SL/TP/id in the message.
+- **Auth is via the URL** (`?secret=…`) since the body is plain text.
+- **Range** is operator-supplied via Telegram (locked — see D1 range source).
+- **Target-Reached → breakeven** is correlated to the open trade by
+  **symbol + direction** (no id to match on); the live-prefill block keeps
+  concurrent same-symbol trades rare.
+- **Symbol map**: TradingView ticker → broker symbol, identity by default,
+  override via `HITL_SYMBOL_MAP` (e.g. `UK10YBGBP:UKGILT`).
+
 ---
 
 ## 0. Premise correction (read first)

@@ -140,7 +140,7 @@ export async function openLegs(
         stopLoss: params.sl,
         takeProfit: leg.tp,
         clientId: leg.clientId,
-        comment: leg.clientId,
+        comment: `HITL_${leg.leg}`,   // short + pattern-safe; correlation is via clientId
         slippage: params.slippage,
       });
       leg.ticket = ticket;

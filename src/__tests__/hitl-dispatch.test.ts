@@ -3,7 +3,7 @@ import { buildLegPlan, preDispatchGates, openLegs } from '@/lib/hitl/dispatch';
 import { loadHitlConfig, type HitlConfig } from '@/lib/hitl/config';
 import type { ComputedLevels } from '@/lib/hitl/levels';
 import type { HitlSymbolSpec } from '@/lib/hitl/sizing';
-import type { HitlBroker, HitlPosition, OpenOrderParams } from '@/lib/hitl/metaapi';
+import { clientIdFor, signalIdPrefix, type HitlBroker, type HitlPosition, type OpenOrderParams } from '@/lib/hitl/metaapi';
 
 const spec: HitlSymbolSpec = { tickValue: 1, tickSize: 1, volumeMin: 0.01, volumeMax: 100, volumeStep: 0.01 };
 
@@ -13,13 +13,34 @@ function cfg(overrides: Partial<HitlConfig> = {}): HitlConfig {
   return { ...loadHitlConfig({} as NodeJS.ProcessEnv), ...overrides };
 }
 
+describe('clientId tagging (MetaApi pattern-safe)', () => {
+  it('strips hyphens from auto-derived signal ids (the case that failed)', () => {
+    const id = clientIdFor('auto-0d4f95fbf9bbc946', 'A');
+    expect(id).toBe('hh_auto0d4f95fbf9bbc946_A');
+    expect(id).toMatch(/^[a-zA-Z0-9_]+$/);   // no hyphens / illegal chars
+    expect(id.length).toBeLessThanOrEqual(36);
+  });
+
+  it('prefix is a strict prefix of each leg clientId', () => {
+    const prefix = signalIdPrefix('auto-0d4f95fbf9bbc946');
+    expect(clientIdFor('auto-0d4f95fbf9bbc946', 'A').startsWith(prefix)).toBe(true);
+    expect(clientIdFor('auto-0d4f95fbf9bbc946', 'B').startsWith(prefix)).toBe(true);
+  });
+
+  it('caps long ids to stay within 36 chars', () => {
+    const id = clientIdFor('x'.repeat(100), 'B');
+    expect(id.length).toBeLessThanOrEqual(36);
+    expect(id).toMatch(/^[a-zA-Z0-9_]+$/);
+  });
+});
+
 describe('buildLegPlan', () => {
   it('two-position: Leg A → TP2, Leg B → TP3', () => {
     const plan = buildLegPlan('sig1', buyLevels, 2.5, cfg(), spec);
     expect(plan.collapsed).toBe(false);
     expect(plan.legs).toEqual([
-      { leg: 'A', tp: 5040, volume: 1.25, clientId: 'haia-hitl-sig1-legA', ticket: null, status: 'pending' },
-      { leg: 'B', tp: 5060, volume: 1.25, clientId: 'haia-hitl-sig1-legB', ticket: null, status: 'pending' },
+      { leg: 'A', tp: 5040, volume: 1.25, clientId: 'hh_sig1_A', ticket: null, status: 'pending' },
+      { leg: 'B', tp: 5060, volume: 1.25, clientId: 'hh_sig1_B', ticket: null, status: 'pending' },
     ]);
   });
 

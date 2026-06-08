@@ -2,7 +2,17 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { decode } from '@auth/core/jwt';
 
-const publicPaths = ['/', '/login', '/register', '/api/auth', '/api/health', '/api/signals/offset/webhook'];
+const publicPaths = [
+  '/', '/login', '/register', '/api/auth', '/api/health',
+  '/api/signals/offset/webhook',
+  // HITL webhooks — authenticated by their own shared secret (TradingView can't
+  // do session auth). The /api/hitl/symbol-map and /api/hitl/access management
+  // routes are intentionally NOT public. Both the /api/* routes and the
+  // /haia/* pretty paths (rewritten in next.config) must be allowed, because
+  // middleware runs before the rewrite.
+  '/api/hitl/tv-alert', '/api/hitl/tp1-hit',
+  '/haia/hitl/tv-alert', '/haia/hitl/tp1-hit',
+];
 
 // Routes that require specific roles (admin only — signals and journal are open to all authenticated users)
 const ROLE_ROUTES: Record<string, string> = {

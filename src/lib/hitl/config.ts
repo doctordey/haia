@@ -19,6 +19,7 @@ export type PartialLegFailure = 'alert_hold' | 'auto_close';
 
 export interface HitlConfig {
   enabled: boolean;
+  allowLive: boolean;        // demo-only until §7 acceptance passes; flip on deliberately
 
   // ── secrets / identity ──
   telegramBotToken: string;
@@ -68,6 +69,7 @@ function oneOf<T extends string>(value: string | undefined, allowed: readonly T[
 export function loadHitlConfig(env: NodeJS.ProcessEnv = process.env): HitlConfig {
   return {
     enabled: env.HITL_ENABLED === 'true',
+    allowLive: env.HITL_ALLOW_LIVE === 'true',
 
     telegramBotToken: env.HITL_TELEGRAM_BOT_TOKEN ?? '',
     authorizedUserIds: (env.AUTHORIZED_TELEGRAM_USER_IDS ?? '')

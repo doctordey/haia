@@ -41,11 +41,21 @@ export async function loadChatIds(cfg: HitlConfig): Promise<string[]> {
   const ids = new Set<string>();
   if (cfg.operatorChatId) ids.add(cfg.operatorChatId.trim());
 
-  const [legacy] = await db.select().from(hitlSettings).where(eq(hitlSettings.key, OPERATOR_CHAT_KEY)).limit(1);
-  if (legacy?.value) ids.add(legacy.value.trim());
+  // Each DB source is isolated: a failure (e.g. an un-applied migration) must
+  // not silence the whole bot — fall back to whatever destinations we can get.
+  try {
+    const [legacy] = await db.select().from(hitlSettings).where(eq(hitlSettings.key, OPERATOR_CHAT_KEY)).limit(1);
+    if (legacy?.value) ids.add(legacy.value.trim());
+  } catch (err) {
+    console.error('[hitl/access] legacy operator-chat lookup failed:', err);
+  }
 
-  const rows = await db.select().from(hitlChats);
-  for (const r of rows) ids.add(r.chatId.trim());
+  try {
+    const rows = await db.select().from(hitlChats);
+    for (const r of rows) ids.add(r.chatId.trim());
+  } catch (err) {
+    console.error('[hitl/access] hitl_chats lookup failed — is migration 0010 applied?', err);
+  }
 
   return [...ids].filter(Boolean);
 }

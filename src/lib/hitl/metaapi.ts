@@ -62,6 +62,25 @@ export function signalIdPrefix(signalId: string): string {
   return `haia-hitl-${signalId}-`;
 }
 
+/**
+ * Flatten a MetaApi trade error into a readable, specific message. MetaApi
+ * ValidationError carries a `details` array (e.g. invalid stops, bad clientId,
+ * volume out of range); the broker reject carries `stringCode`/`numericCode`.
+ */
+function describeBrokerError(err: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const e = err as any;
+  const base = e?.message ? String(e.message) : String(err);
+  const details = e?.details;
+  if (Array.isArray(details) && details.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parts = details.map((d: any) => [d.parameter, d.message, d.value].filter((x) => x != null).join('=')).join('; ');
+    return `${base} (${parts})`;
+  }
+  if (e?.stringCode || e?.numericCode) return `${base} [${e.stringCode ?? e.numericCode}]`;
+  return base;
+}
+
 const ORDER_TYPE_BY_MODE: Record<string, Record<Direction, string>> = {
   market:  { BUY: 'ORDER_TYPE_BUY',       SELL: 'ORDER_TYPE_SELL' },
   // pending uses LIMIT when entering on a pullback toward price; the caller
@@ -127,21 +146,26 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
       const type = ORDER_TYPE_BY_MODE[params.entryMode][params.direction];
       const opts = { comment: params.comment, clientId: params.clientId, slippage: params.slippage };
       let result;
-      switch (type) {
-        case 'ORDER_TYPE_BUY':
-          result = await connection.createMarketBuyOrder(params.symbol, params.volume, params.stopLoss, params.takeProfit, opts);
-          break;
-        case 'ORDER_TYPE_SELL':
-          result = await connection.createMarketSellOrder(params.symbol, params.volume, params.stopLoss, params.takeProfit, opts);
-          break;
-        case 'ORDER_TYPE_BUY_LIMIT':
-          result = await connection.createLimitBuyOrder(params.symbol, params.volume, params.openPrice, params.stopLoss, params.takeProfit, opts);
-          break;
-        case 'ORDER_TYPE_SELL_LIMIT':
-          result = await connection.createLimitSellOrder(params.symbol, params.volume, params.openPrice, params.stopLoss, params.takeProfit, opts);
-          break;
-        default:
-          throw new Error(`unsupported order type ${type}`);
+      try {
+        switch (type) {
+          case 'ORDER_TYPE_BUY':
+            result = await connection.createMarketBuyOrder(params.symbol, params.volume, params.stopLoss, params.takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_SELL':
+            result = await connection.createMarketSellOrder(params.symbol, params.volume, params.stopLoss, params.takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_BUY_LIMIT':
+            result = await connection.createLimitBuyOrder(params.symbol, params.volume, params.openPrice, params.stopLoss, params.takeProfit, opts);
+            break;
+          case 'ORDER_TYPE_SELL_LIMIT':
+            result = await connection.createLimitSellOrder(params.symbol, params.volume, params.openPrice, params.stopLoss, params.takeProfit, opts);
+            break;
+          default:
+            throw new Error(`unsupported order type ${type}`);
+        }
+      } catch (err) {
+        // Surface MetaApi's specific validation details instead of a bare "Validation failed".
+        throw new Error(describeBrokerError(err));
       }
       // Anything but a confirmed result is a failure (fail-closed).
       const ticket = result?.positionId || result?.orderId;

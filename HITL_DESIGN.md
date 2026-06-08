@@ -1,10 +1,30 @@
 # Haia HITL — TypeScript / MetaApi Design (for sign-off)
 
-**Status:** DRAFT — awaiting operator sign-off. Nothing in this document is built yet.
+**Status:** DECISIONS LOCKED — awaiting final plan approval. Nothing is built yet.
 **Author:** Claude Code
 **Scope:** Map the Haia HITL Execution Spec's *behaviour* onto the existing
 TypeScript + MetaApi Cloud codebase, instead of the Python + direct-MetaTrader5
 scaffold the brief assumed.
+
+---
+
+## Decisions — LOCKED (operator sign-off, this session)
+
+| # | Switch | Decision |
+|---|---|---|
+| D1 | Range → SL mapping | **`SL_FROM=range_size`** — range width *is* R; SL = entry ∓ R. *(changed from the `protective_edge` draft default)* |
+| D2 | Breakeven trigger | **`BE_TRIGGER=both`** — `/tp1-hit` webhook **and** internal price-watch backstop; applied once. |
+| D3 | Scanner fill semantics | **N/A** — only used in single-position mode; two-position was chosen, so no scanner. |
+| D4 | Partial-leg failure | **`PARTIAL_LEG_FAILURE=alert_hold`** — leave the filled leg open with its SL, notify operator. |
+| D5 | Process model | **Bot + manager loop inside the `signal-listener` worker.** No new service. |
+| D6 | Pipeline coexistence | **Coexist** — HITL is a separate, approval-gated path; channel pipeline untouched. |
+| D7 | Symbol/price model | **Broker symbol + prices directly, no offset** on the HITL path. |
+| D8 | Order↔session key | **`clientId = haia-hitl-{signalId}-{legA\|legB}`** (+ `comment`), one tag per leg. |
+| D9 | Target account + config | **Existing in-app connected accounts** (`tradingAccounts`) + a per-account **`hitlEnabled`** toggle in Settings. Operator safety knobs stay in env. Demo-only guard keys off the account's demo/live type. |
+| — | Position model | **`POSITION_MODEL=two_position`** — Leg A→TP2, Leg B→TP3. |
+
+The per-decision sections below are retained for rationale; where they differ
+from this table, **this table wins.**
 
 ---
 
@@ -26,27 +46,27 @@ here, the spec wins** (per the brief's own rule).
 
 ---
 
-## 1. Open decisions — NEEDS CONFIRMATION before build
+## 1. Decisions — RESOLVED (rationale retained)
 
-These change behaviour/numbers. Per the brief, defaults are stated and put
-behind a config switch; **do not treat any as settled until signed off.**
+All switches are now locked (see the summary table above). The original
+options/trade-offs are kept here for the record.
 
 ### Carried from brief §5
-| # | Decision | Default (switch) | Notes |
+| # | Decision | LOCKED | Notes |
 |---|---|---|---|
-| D1 | Range → SL mapping | `SL_FROM=protective_edge` (alt: `range_size`) | Highest impact. `protective_edge`: SL at far edge of range, R = \|entry − SL\|. `range_size`: range width *is* R, SL = entry ∓ R. |
-| D2 | TP1 webhook source & `signal_id` correlation | keep `BE_TRIGGER=both` | What fires `/tp1-hit` and can it carry `signal_id`? Until confirmed, the internal price-watch BE backstop is the safety net. |
-| D3 | Scanner fill semantics (single mode) | `SCANNER_FILL=close_through` (alt: `touch`) | 5m close beyond TP2 vs. intrabar touch. |
-| D4 | Partial-leg failure policy | `PARTIAL_LEG_FAILURE=alert_hold` (alt: `auto_close`) | One leg fills, the other errors. |
+| D1 | Range → SL mapping | **`SL_FROM=range_size`** | Highest impact. Chosen: range width *is* R, SL = entry ∓ R. (Alt was `protective_edge`: SL at far edge, R = \|entry − SL\|.) |
+| D2 | TP1 webhook source & `signal_id` correlation | **`BE_TRIGGER=both`** | `/tp1-hit` webhook plus internal price-watch backstop. If the webhook can't carry `signal_id`, the price-watch still moves BE; correlation reconciled when the real spec lands. |
+| D3 | Scanner fill semantics (single mode) | **N/A** | Two-position mode chosen ⇒ no scanner. `SCANNER_FILL` key retained but inert unless `POSITION_MODEL=single`. |
+| D4 | Partial-leg failure policy | **`PARTIAL_LEG_FAILURE=alert_hold`** | One leg fills, the other errors ⇒ keep filled leg open with its SL, notify; operator decides. |
 
 ### New decisions forced by the TS/MetaApi mapping
-| # | Decision | Recommendation | Why it's yours to make |
+| # | Decision | LOCKED | Notes |
 |---|---|---|---|
-| D5 | **Process model.** The brief's "single asyncio process" invariant cannot hold — Next.js is web + workers. | Run the Telegram bot **and** the manager loop inside the existing `signal-listener` worker (it already owns the MetaApi connection). Web `/tv-alert` + `/tp1-hit` routes are thin and coordinate via Postgres. | This is the biggest structural divergence from the spec; see §4. |
-| D6 | **Does the HITL path coexist with, or replace, the existing auto-execute Telegram-channel pipeline?** | Coexist — HITL is a separate, approval-gated path keyed off TradingView. Leave the channel pipeline untouched. | Affects whether `signal-listener` keeps its current behaviour. |
-| D7 | **Signal/symbol model.** Existing pipeline is NQ/ES→NAS100/US500 with a futures-basis *offset*. HITL `compute_levels` is range-based and instrument-generic (US500/NAS100/XAUUSD/BTCUSD/FX). | HITL alerts carry the **broker symbol and prices directly** — no offset applied on the HITL path. | Confirm TradingView posts Fusion symbols/prices, not futures needing offset. |
-| D8 | **Order↔session correlation.** Brief wants MT5 `magic` + `comment=signal_id`. MetaApi sets `magic` at account level (currently `0`); positions expose `comment`/`clientId`. | Correlate via `clientId = signal_id` (+ `comment`), filter `terminalState.positions` by it. | MetaApi doesn't give a per-order magic the same way; confirm `clientId` is acceptable as the key. |
-| D9 | **HITL config home.** Spec is env-driven (`Config` dataclass). Repo uses per-account DB rows (`signalConfigs`) + a few env vars. | Operator-level safety knobs (risk, timeouts, switches) via **env** (`src/lib/hitl/config.ts` + `validate()`), mirroring the spec. Which broker account HITL trades is the one open question — env `HITL_ACCOUNT_ID` or a dedicated config row. | Confirm the env-only approach and how the target account is selected. |
+| D5 | **Process model.** The brief's "single asyncio process" invariant cannot hold — Next.js is web + workers. | **Bot + manager loop in the `signal-listener` worker** (it already owns the MetaApi connection). Web `/tv-alert` + `/tp1-hit` routes are thin and coordinate via Postgres. | Biggest structural divergence from the spec; see §4. |
+| D6 | Coexist with, or replace, the existing auto-execute Telegram-channel pipeline? | **Coexist** — HITL is a separate, approval-gated path keyed off TradingView. Channel pipeline untouched. | `signal-listener` keeps its current behaviour; HITL boots alongside. |
+| D7 | **Signal/symbol model.** Existing pipeline is NQ/ES→NAS100/US500 with a futures-basis *offset*. | **Broker symbol + prices directly — no offset** on the HITL path. | TradingView posts Fusion symbols/prices, used verbatim. |
+| D8 | **Order↔session correlation.** Brief wants MT5 `magic` + `comment=signal_id`. MetaApi sets `magic` at account level; positions expose `comment`/`clientId`. | **`clientId = haia-hitl-{signalId}-{legA\|legB}`** (+ `comment`); filter `terminalState.positions` by the `haia-hitl-{signalId}-` prefix. | Per-leg tag so BE moves, partial-leg-failure detection, and close reconciliation target the exact position. |
+| D9 | **HITL config home + target account.** Spec is env-driven; repo uses per-account DB rows + a few env vars. | **Target account = an existing in-app connected account** (`tradingAccounts`), opted in via a new per-account **`hitlEnabled`** toggle in Settings. Operator safety knobs (risk, timeouts, switches) stay in **env** (`src/lib/hitl/config.ts` + `validate()`). No `HITL_ACCOUNT_ID`. | Accounts are added/connected exactly as today; flipping `hitlEnabled` is the deliberate arming step. Demo-only guard reads the account's demo/live type, not a separate flag. |
 
 ---
 
@@ -73,6 +93,7 @@ behind a config switch; **do not treat any as settled until signed off.**
 5. A **manager loop**: timeout sweep, BE price-watch backstop, single-mode TP2 scanner, close detection, resume-on-restart.
 6. `partialClose` on the MetaApi interface (the only missing write primitive).
 7. Generic symbol-spec sourcing: pull `tickValue`/`tickSize`/`volumeMin/Max/Step` from MetaApi `getSymbolSpecification` so sizing works for XAUUSD/BTCUSD/FX (today `ContractSpec` is hardcoded for NAS100/US500 in `src/types/signals.ts:103`).
+8. **Per-account HITL opt-in (D9):** a new `hitlEnabled` boolean on `tradingAccounts` (default `false`) plus a Settings toggle next to each connected account. The worker resolves its target account(s) by querying `tradingAccounts WHERE hitlEnabled = true` — no env account id. Arming an account is a deliberate click, and the demo-only guard rejects any opted-in account whose MetaApi type isn't demo until §7 passes.
 
 ---
 
@@ -153,7 +174,8 @@ AWAITING_APPROVAL ──reject──▶ REJECTED
 
 ```
 id                cuid (pk)
-signalId          text unique      -- correlation key; also order clientId/comment
+signalId          text unique      -- correlation key; order clientId = haia-hitl-{signalId}-{legA|legB}
+accountId         text             -- FK → tradingAccounts (resolved by hitlEnabled), audit
 symbol            text
 action            text             -- BUY|SELL (or null until AWAITING_DIRECTION resolved)
 state             text             -- state machine (§5)
@@ -201,10 +223,12 @@ Indexes on `state`, `symbol`, `signalId`. Mirrors the durability of
 | `src/lib/hitl/bot.ts` | new | grammy bot: prompt, range parse, confirm card, approve/reject, `_authorized` on reply **and** callback. |
 | `src/lib/hitl/dispatch.ts` | new | Pre-dispatch risk gates + open legs (two_position / single). |
 | `src/lib/hitl/manager.ts` | new | Manager loop: timeout, BE backstop, scanner, close detection, resume. |
-| `src/lib/db/schema.ts` | edit | Add `hitlSessions` table (+ migration). |
+| `src/lib/db/schema.ts` | edit | Add `hitlSessions` table **and** `hitlEnabled` boolean on `tradingAccounts` (+ migration). |
 | `src/workers/signal-listener.ts` | edit | Boot the bot + manager loop alongside existing streaming; add `partialClose` to `buildMetaApiInterface`. |
 | `src/app/api/hitl/tv-alert/route.ts` | new | Intake guards → insert `RECEIVED`. |
 | `src/app/api/hitl/tp1-hit/route.ts` | new | Secret check → set BE request flag. |
+| `src/app/settings/page.tsx` (+ account row component) | edit | Per-account **"Enable HITL"** toggle → `PATCH` `hitlEnabled`; account picker for HITL is just the existing connected-accounts list. |
+| `src/app/api/accounts/[id]/route.ts` | edit | Accept `hitlEnabled` in the account update path. |
 | `src/__tests__/hitl-levels.test.ts` | new | §8 geometry/sizing suite (mock MetaApi; runs off-Windows). |
 
 **Path note:** spec cites `/haia/hitl/tv-alert` & `/haia/hitl/tp1-hit`. In Next.js
@@ -212,10 +236,11 @@ these are `/api/hitl/tv-alert` & `/api/hitl/tp1-hit`; the reverse proxy / Railwa
 route maps the `/haia/hitl/*` public path onto them.
 
 ### MetaApi writes (extend the existing wrapper, don't fork it)
-- `open_order` → reuse `createMarketBuy/SellOrder` or `createLimit/StopOrder`; set `clientId/comment = signal_id`, SL/TP, honour `MAX_DEVIATION_POINTS` via `slippage`. Treat anything but a `DONE` result as failure.
+- **Target account** → resolved from `tradingAccounts WHERE hitlEnabled = true`; the worker uses that account's existing MetaApi streaming connection. Demo-type guard enforced before any write until §7 passes.
+- `open_order` → reuse `createMarketBuy/SellOrder` or `createLimit/StopOrder`; set `clientId = haia-hitl-{signalId}-{legA|legB}` (+ `comment`), SL/TP, honour `MAX_DEVIATION_POINTS` via `slippage`. Treat anything but a `DONE` result as failure.
 - `modify_sl` → `modifyPosition(ticket, entry, preservedTP)` (BE move).
 - `partial_close` → **add** `closePositionPartially(ticket, volume)`.
-- `positionsBySignal` → filter `terminalState.positions` by `clientId/comment === signal_id`.
+- `positionsBySignal` → filter `terminalState.positions` by `clientId` prefix `haia-hitl-{signalId}-`.
 - realized P/L → `getDealsByTimeRange` (reuse `fetchHistoricalDeals`).
 
 ---
@@ -258,22 +283,23 @@ HITL_TELEGRAM_BOT_TOKEN      # BotFather bot (separate from the GramJS listener)
 AUTHORIZED_TELEGRAM_USER_IDS # comma-separated numeric ids (reply + callback auth)
 HITL_OPERATOR_CHAT_ID        # where prompts are sent
 HITL_WEBHOOK_SECRET          # /tv-alert + /tp1-hit shared secret
-HITL_ACCOUNT_ID              # target trading account (D9)
+# (no HITL_ACCOUNT_ID — target account(s) come from tradingAccounts.hitlEnabled, D9)
 SIGNAL_TIMEOUT_SECONDS       # pre-fill sweep
 SIGNAL_COOLDOWN_SECONDS      # per-symbol intake cooldown
 RISK_PCT                     # default risk per trade
 MAX_RISK_PER_TRADE           # hard cap (pre-dispatch gate)
-SL_FROM=protective_edge      # D1
-POSITION_MODEL=two_position  # two_position|single
+SL_FROM=range_size           # D1 (LOCKED: range width is R)
+POSITION_MODEL=two_position  # two_position|single (LOCKED: two_position)
 ENTRY_MODE=market            # market|pending
-BE_TRIGGER=both              # both|internal|webhook  (D2)
-TP2_CLOSE_PCT                # single-mode scale-out
+BE_TRIGGER=both              # both|internal|webhook  (D2, LOCKED: both)
+TP2_CLOSE_PCT                # single-mode scale-out (inert in two_position)
 LEG_SPLIT                    # two-position leg ratio
 MAX_DEVIATION_POINTS         # market slippage cap
-SCANNER_FILL=close_through   # D3
-PARTIAL_LEG_FAILURE=alert_hold  # D4
+SCANNER_FILL=close_through   # D3 (inert unless POSITION_MODEL=single)
+PARTIAL_LEG_FAILURE=alert_hold  # D4 (LOCKED: alert_hold)
 ```
-(Existing `METAAPI_TOKEN`, `DATABASE_URL`, `TELEGRAM_API_ID/HASH` are reused.)
+(Existing `METAAPI_TOKEN`, `DATABASE_URL`, `TELEGRAM_API_ID/HASH` are reused.
+Target account is **not** an env var — it's `tradingAccounts.hitlEnabled`, D9.)
 
 ---
 
@@ -287,7 +313,7 @@ hosts the terminal. Instead:
   (proxy → `/api/hitl/*`). IP-allowlist TradingView ranges at the proxy.
 - Worker runs grammy **long-polling** (no inbound port) + manager loop; auto-restart is Railway-native.
 - New env vars (§10) added to the Railway service; `Config.validate()` fails boot if missing.
-- **Demo-only until brief §7 passes** — `HITL_ACCOUNT_ID` points at a demo account first.
+- **Demo-only until brief §7 passes** — the worker refuses to dispatch on any `hitlEnabled` account whose MetaApi type isn't demo; flip a live account on only after acceptance.
 
 ---
 
@@ -308,25 +334,27 @@ hosts the terminal. Instead:
 
 ## 13. Build order (once signed off)
 
-1. `hitl_sessions` table + migration; `config.ts` + `validate()`.
-2. `levels.ts` + `hitl/sizing.ts` + unit suite (no I/O — fastest to green).
+1. `hitl_sessions` table + `tradingAccounts.hitlEnabled` column + migration; `config.ts` + `validate()`.
+2. `levels.ts` (`SL_FROM=range_size`) + `hitl/sizing.ts` + unit suite (no I/O — fastest to green).
 3. `/tv-alert` + `/tp1-hit` routes with intake guards.
 4. grammy bot dialog (prompt → range → confirm → approve) + auth.
-5. `dispatch.ts` (+ `partialClose` on the wrapper) + pre-dispatch gates.
-6. manager loop: timeout, BE backstop, close detection, scanner, resume.
-7. `.env.example` additions + README runbook; demo §7 acceptance pass.
+5. Settings per-account "Enable HITL" toggle + account-update API; worker resolves target by `hitlEnabled` (+ demo guard).
+6. `dispatch.ts` (+ `partialClose` on the wrapper) + pre-dispatch gates (two_position legs, per-leg `clientId`).
+7. manager loop: timeout, BE backstop (`both`), close detection, resume. (Scanner skipped — two_position.)
+8. `.env.example` additions + README runbook; demo §7 acceptance pass.
 
 ---
 
 ## 14. Sign-off checklist
 
-- [ ] D1 `SL_FROM` default confirmed
-- [ ] D2 `/tp1-hit` source + `signal_id` correlation confirmed (or keep backstop)
-- [ ] D3 scanner fill semantics confirmed
-- [ ] D4 partial-leg failure policy confirmed
-- [ ] D5 process model (bot + loop in `signal-listener` worker) approved
-- [ ] D6 coexist vs replace existing channel pipeline
-- [ ] D7 HITL alerts carry broker symbol/prices directly (no offset)
-- [ ] D8 `clientId/comment = signal_id` correlation acceptable
-- [ ] D9 env-driven HITL config + target-account selection confirmed
-- [ ] Authoritative `Haia_HITL_Execution_Spec.md` provided for §1/§5/§7 reconciliation
+- [x] D1 `SL_FROM=range_size` (range width is R) — **changed from draft default**
+- [x] D2 `BE_TRIGGER=both` (webhook + internal price-watch backstop)
+- [x] D3 scanner fill — N/A (two_position chosen)
+- [x] D4 `PARTIAL_LEG_FAILURE=alert_hold`
+- [x] D5 process model (bot + loop in `signal-listener` worker) approved
+- [x] D6 coexist with existing channel pipeline
+- [x] D7 HITL alerts carry broker symbol/prices directly (no offset)
+- [x] D8 `clientId = haia-hitl-{signalId}-{legA|legB}` correlation
+- [x] D9 target account via existing in-app `tradingAccounts` + per-account `hitlEnabled` toggle; safety knobs in env
+- [x] Position model `two_position` (Leg A→TP2, Leg B→TP3)
+- [ ] Authoritative `Haia_HITL_Execution_Spec.md` provided for §1/§5/§7 reconciliation (still outstanding — not blocking demo build)

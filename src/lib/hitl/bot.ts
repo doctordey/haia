@@ -64,10 +64,27 @@ export class HitlBot {
   }
 
   private registerHandlers(): void {
+    // Setup helper: reports the chat id (group ids are negative) and the
+    // sender's user id, so they can be pasted into Settings → HITL → Access.
+    // Intentionally unauthenticated — neither value is secret, and this is how
+    // you bootstrap the authorized-user list. Handled before the text handler.
+    this.bot.command(['start', 'id', 'chatid'], async (ctx) => {
+      const chatId = ctx.chat?.id;
+      const userId = ctx.from?.id;
+      await ctx.reply(
+        `HITL bot.\n` +
+        `Chat id: ${chatId}\n` +
+        `Your user id: ${userId}\n\n` +
+        `In Haia → Settings → HITL → Access, set the operator/group chat id to ${chatId} ` +
+        `and add ${userId} as an authorized user.`,
+      );
+    });
+
     this.bot.on('message:text', async (ctx) => {
       const userId = ctx.from?.id;
       const chatId = ctx.chat?.id;
       if (userId == null || chatId == null) return;
+      if (ctx.message.text.trim().startsWith('/')) return; // commands handled above
 
       if (!(await this.deps.isAuthorized(userId))) {
         console.warn(`[hitl/bot] ignoring message from unauthorized user ${userId}`);

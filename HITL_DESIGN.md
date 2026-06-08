@@ -1,6 +1,8 @@
 # Haia HITL — TypeScript / MetaApi Design (for sign-off)
 
-**Status:** DECISIONS LOCKED — awaiting final plan approval. Nothing is built yet.
+**Status:** IMPLEMENTED on `claude/trusting-goodall-ll9R2` (build green, 104 unit
+tests pass, app compiles). Pending the live demo §7 acceptance run + the SDK
+field touch-points flagged in §7. Nothing is live (HITL_ENABLED unset by default).
 **Author:** Claude Code
 **Scope:** Map the Haia HITL Execution Spec's *behaviour* onto the existing
 TypeScript + MetaApi Cloud codebase, instead of the Python + direct-MetaTrader5
@@ -334,14 +336,14 @@ hosts the terminal. Instead:
 
 ## 13. Build order (once signed off)
 
-1. `hitl_sessions` table + `tradingAccounts.hitlEnabled` column + migration; `config.ts` + `validate()`.
-2. `levels.ts` (`SL_FROM=range_size`) + `hitl/sizing.ts` + unit suite (no I/O — fastest to green).
-3. `/tv-alert` + `/tp1-hit` routes with intake guards.
-4. grammy bot dialog (prompt → range → confirm → approve) + auth.
-5. Settings per-account "Enable HITL" toggle + account-update API; worker resolves target by `hitlEnabled` (+ demo guard).
-6. `dispatch.ts` (+ `partialClose` on the wrapper) + pre-dispatch gates (two_position legs, per-leg `clientId`).
-7. manager loop: timeout, BE backstop (`both`), close detection, resume. (Scanner skipped — two_position.)
-8. `.env.example` additions + README runbook; demo §7 acceptance pass.
+1. [x] `hitl_sessions` table + `tradingAccounts.hitlEnabled` column + migration `0007`; `config.ts` + `validate()`.
+2. [x] `levels.ts` (`SL_FROM=range_size`) + `hitl/sizing.ts` + unit suite (`hitl-levels.test.ts`, 20 cases).
+3. [x] `/tv-alert` + `/tp1-hit` routes with intake guards + `session.ts` store.
+4. [x] grammy bot dialog (prompt → range → confirm → approve) + auth on reply & callback (`bot.ts`).
+5. [x] Settings per-account "Enable HITL" toggle + account-update API; worker resolves target by `hitlEnabled` (+ demo guard).
+6. [x] `dispatch.ts` (+ `partialClose`/`clientId` on `metaapi.ts` broker) + pre-dispatch gates; `hitl-dispatch.test.ts`, 13 cases.
+7. [x] `manager.ts` loop: timeout, BE backstop (`both`), close detection, resume. (Scanner skipped — two_position.)
+8. [x] `.env.example` additions; worker wiring (`worker-setup.ts`). ☐ live demo §7 acceptance pass (needs creds).
 
 ---
 

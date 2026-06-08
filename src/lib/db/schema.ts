@@ -521,6 +521,7 @@ export const hitlSessions = pgTable('hitl_sessions', {
   // ── telegram ──
   operatorChatId:   text('operator_chat_id'),
   promptMessageId:  text('prompt_message_id'),
+  promptMessageIds: jsonb('prompt_message_ids').$type<number[]>(),  // prompt msg ids across all chats (reply routing)
   confirmMessageId: text('confirm_message_id'),
 
   // ── lifecycle ──
@@ -571,7 +572,18 @@ export const hitlAuthorizedUsers = pgTable('hitl_authorized_users', {
   createdAt:      timestamp('created_at').notNull().defaultNow(),
 });
 
-// Singleton key/value config for HITL (currently: the operator/group chat id).
+// Operator destinations — where prompts/confirm cards/notifications are sent.
+// A DM (positive chat id) and/or group(s) (negative). Prompts fan out to all;
+// the operator can reply/approve from any. Merged with the HITL_OPERATOR_CHAT_ID
+// env seed.
+export const hitlChats = pgTable('hitl_chats', {
+  id:        text('id').primaryKey().$defaultFn(() => createId()),
+  chatId:    text('chat_id').notNull().unique(),   // numeric Telegram chat id (groups are negative)
+  label:     text('label'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// Singleton key/value config for HITL (e.g. TP R-multiples).
 export const hitlSettings = pgTable('hitl_settings', {
   key:       text('key').primaryKey(),
   value:     text('value').notNull(),

@@ -22,17 +22,16 @@ export interface DialogResult {
 
 export interface HitlBotDeps {
   isAuthorized(userId: number): Promise<boolean>;
+  /** All operator destinations; prompts/confirm cards fan out to all of these. */
+  getChatIds(): Promise<string[]>;
   /** Find which session a text message belongs to (reply target → fallback to newest awaiting). */
-  resolveDialogSession(
-    chatId: string,
-    replyToMessageId?: number,
-  ): Promise<{ id: string; state: string } | undefined>;
+  resolveDialogSession(replyToMessageId?: number): Promise<{ id: string; state: string } | undefined>;
   submitRange(sessionId: string, a: number, b: number): Promise<DialogResult>;
   submitDirection(sessionId: string, dir: 'BUY' | 'SELL'): Promise<DialogResult>;
   approve(sessionId: string): Promise<{ ok: boolean; message: string }>;
   reject(sessionId: string): Promise<{ message: string }>;
-  recordPromptMessage(sessionId: string, messageId: number): Promise<void>;
-  recordConfirmMessage(sessionId: string, messageId: number): Promise<void>;
+  /** Append prompt message ids (from a broadcast) so replies in any chat route correctly. */
+  recordPromptMessageIds(sessionId: string, messageIds: number[]): Promise<void>;
 }
 
 const NUMBER_RE = /-?\d+(?:\.\d+)?/g;
@@ -91,10 +90,7 @@ export class HitlBot {
         return; // silent: ignore + log (acceptance requirement)
       }
 
-      const session = await this.deps.resolveDialogSession(
-        String(chatId),
-        ctx.message.reply_to_message?.message_id,
-      );
+      const session = await this.deps.resolveDialogSession(ctx.message.reply_to_message?.message_id);
       if (!session) return; // not part of a dialog
 
       const text = ctx.message.text.trim();
@@ -136,14 +132,19 @@ export class HitlBot {
         return;
       }
 
+      const who = ctx.from?.first_name || ctx.from?.username || `user ${userId}`;
+
       if (action === 'a') {
         await ctx.answerCallbackQuery({ text: 'Approving…' }).catch(() => {});
         const res = await this.deps.approve(sessionId);
-        await ctx.editMessageText(`${res.ok ? '✅ Approved' : '⚠️ Approval failed'}\n${res.message}`).catch(() => {});
+        await ctx.editMessageText(`${res.ok ? '✅ Approved' : '⚠️ Approval failed'} (by ${who})\n${res.message}`).catch(() => {});
+        // Keep the other destinations in sync (their cards still show buttons).
+        await this.broadcast(`${res.ok ? '✅ Approved' : '⚠️ Approval failed'} by ${who}: ${res.message}`);
       } else if (action === 'r') {
         await ctx.answerCallbackQuery({ text: 'Rejected' }).catch(() => {});
         const res = await this.deps.reject(sessionId);
-        await ctx.editMessageText(`❌ Rejected\n${res.message}`).catch(() => {});
+        await ctx.editMessageText(`❌ Rejected (by ${who})\n${res.message}`).catch(() => {});
+        await this.broadcast(`❌ Rejected by ${who}: ${res.message}`);
       } else {
         await ctx.answerCallbackQuery().catch(() => {});
       }
@@ -159,29 +160,45 @@ export class HitlBot {
     ctx: any,
     result: DialogResult,
   ): Promise<void> {
+    const chatIds = await this.deps.getChatIds();
     if (result.kind === 'confirm' && result.sessionId) {
-      const sent = await ctx.reply(result.text, { reply_markup: approvalKeyboard(result.sessionId) });
-      await this.deps.recordConfirmMessage(result.sessionId, sent.message_id);
+      // Broadcast the confirm card (with buttons) to every destination.
+      await this.sendToAll(chatIds, result.text, approvalKeyboard(result.sessionId));
     } else if (result.kind === 'need_direction') {
-      const sent = await ctx.reply(result.text);
-      // Route the next reply: re-point the prompt message id at this question.
-      if (result.sessionId) await this.deps.recordPromptMessage(result.sessionId, sent.message_id);
+      // Broadcast the follow-up question and record its message ids for routing.
+      const ids = await this.sendToAll(chatIds, result.text);
+      if (result.sessionId) await this.deps.recordPromptMessageIds(result.sessionId, ids);
     } else {
+      // Local feedback (errors / acks) go to the chat the operator typed in.
       await ctx.reply(result.text);
     }
   }
 
-  /** Send the opening prompt for a new session; records the message id for reply routing. */
-  async sendPrompt(chatId: string, sessionId: string, text: string): Promise<void> {
-    const sent = await this.bot.api.sendMessage(chatId, text);
-    await this.deps.recordPromptMessage(sessionId, sent.message_id);
+  /** Send a message to every chat; returns the message ids that succeeded. */
+  private async sendToAll(chatIds: string[], text: string, keyboard?: InlineKeyboard): Promise<number[]> {
+    const ids: number[] = [];
+    for (const chatId of chatIds) {
+      try {
+        const sent = await this.bot.api.sendMessage(chatId, text, keyboard ? { reply_markup: keyboard } : undefined);
+        ids.push(sent.message_id);
+      } catch (err) {
+        console.error(`[hitl/bot] send to ${chatId} failed:`, err);
+      }
+    }
+    return ids;
   }
 
-  /** Fire-and-forget operator notification. */
-  async notify(chatId: string, text: string): Promise<void> {
-    await this.bot.api.sendMessage(chatId, text).catch((err) => {
-      console.error('[hitl/bot] notify failed:', err);
-    });
+  /** Broadcast the opening prompt to all destinations; records ids for reply routing. */
+  async sendPrompt(sessionId: string, text: string): Promise<void> {
+    const chatIds = await this.deps.getChatIds();
+    const ids = await this.sendToAll(chatIds, text);
+    await this.deps.recordPromptMessageIds(sessionId, ids);
+  }
+
+  /** Fire-and-forget operator notification to all destinations. */
+  async broadcast(text: string): Promise<void> {
+    const chatIds = await this.deps.getChatIds();
+    await this.sendToAll(chatIds, text);
   }
 
   /** Start long-polling (no inbound port). Non-blocking. */

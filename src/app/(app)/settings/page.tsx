@@ -171,68 +171,62 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
 }
 
 type AuthorizedUser = { id: string; telegramUserId: string; label: string | null };
+type ChatDest = { id: string; chatId: string; label: string | null };
 
 function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => void }) {
   const [users, setUsers] = useState<AuthorizedUser[]>([]);
-  const [chatId, setChatId] = useState('');
+  const [chats, setChats] = useState<ChatDest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingChat, setSavingChat] = useState(false);
-  const [form, setForm] = useState({ telegramUserId: '', label: '' });
-  const [adding, setAdding] = useState(false);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [userForm, setUserForm] = useState({ telegramUserId: '', label: '' });
+  const [chatForm, setChatForm] = useState({ chatId: '', label: '' });
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/hitl/access');
-      if (res.ok) {
-        const d = await res.json();
-        setUsers(d.users || []);
-        setChatId(d.operatorChatId || '');
-      }
+      const [a, c] = await Promise.all([fetch('/api/hitl/access'), fetch('/api/hitl/chats')]);
+      if (a.ok) setUsers((await a.json()).users || []);
+      if (c.ok) setChats((await c.json()).chats || []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  async function handleSaveChat() {
-    setSavingChat(true);
+  async function addChat() {
+    if (!chatForm.chatId.trim()) return;
+    setBusy('add-chat');
     try {
-      const res = await fetch('/api/hitl/access', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatorChatId: chatId }),
+      const res = await fetch('/api/hitl/chats', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(chatForm),
       });
-      if (res.ok) toast('Operator chat saved', 'success');
-      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
-    } catch { toast('Failed to save', 'error'); }
-    finally { setSavingChat(false); }
+      if (res.ok) { toast('Destination added', 'success'); setChatForm({ chatId: '', label: '' }); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add destination', 'error'); }
+    } catch { toast('Failed to add destination', 'error'); }
+    finally { setBusy(null); }
   }
 
-  async function handleAdd() {
-    if (!form.telegramUserId.trim()) return;
-    setAdding(true);
+  async function addUser() {
+    if (!userForm.telegramUserId.trim()) return;
+    setBusy('add-user');
     try {
       const res = await fetch('/api/hitl/access', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(userForm),
       });
-      if (res.ok) { toast('User authorized', 'success'); setForm({ telegramUserId: '', label: '' }); load(); }
+      if (res.ok) { toast('User authorized', 'success'); setUserForm({ telegramUserId: '', label: '' }); load(); }
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add user', 'error'); }
     } catch { toast('Failed to add user', 'error'); }
-    finally { setAdding(false); }
+    finally { setBusy(null); }
   }
 
-  async function handleDelete(id: string) {
-    setDeleting(id);
+  async function remove(kind: 'chats' | 'access', id: string) {
+    setBusy(id);
     try {
-      const res = await fetch(`/api/hitl/access/${id}`, { method: 'DELETE' });
-      if (res.ok) { toast('User removed', 'success'); load(); }
+      const res = await fetch(`/api/hitl/${kind}/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Removed', 'success'); load(); }
       else toast('Failed to remove', 'error');
     } catch { toast('Failed to remove', 'error'); }
-    finally { setDeleting(null); }
+    finally { setBusy(null); }
   }
 
   return (
@@ -240,53 +234,62 @@ function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => v
       <CardHeader>
         <h3 className="text-sm font-medium">Access</h3>
         <p className="text-xs text-text-tertiary mt-1">
-          Who can respond to and approve HITL prompts, and where the bot posts them. Changes take effect immediately.
+          Where the bot posts prompts, and who can respond/approve. Prompts and confirm cards fan out to every
+          destination — add a DM and a group to use both. Changes take effect immediately.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div>
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary">Destinations (DM + group(s))</label>
           <div className="flex items-end gap-2">
             <div className="flex-1">
-              <Input
-                label="Operator / group chat id"
-                placeholder="123456789 (your id) or -1001234567890 (group)"
-                value={chatId}
-                onChange={(e) => setChatId(e.target.value)}
-              />
+              <Input label="Chat id" placeholder="123456789 (DM) or -1001234567890 (group)"
+                value={chatForm.chatId} onChange={(e) => setChatForm({ ...chatForm, chatId: e.target.value })} />
             </div>
-            <Button onClick={handleSaveChat} loading={savingChat} disabled={!chatId.trim()}>Save</Button>
+            <div className="flex-1">
+              <Input label="Label (optional)" placeholder="e.g. Desk group"
+                value={chatForm.label} onChange={(e) => setChatForm({ ...chatForm, label: e.target.value })} />
+            </div>
+            <Button onClick={addChat} loading={busy === 'add-chat'} disabled={!chatForm.chatId.trim()}>Add</Button>
           </div>
-          <p className="text-xs text-text-tertiary mt-1">
-            For a 1:1 DM use your own Telegram id; for a group use the group&apos;s chat id (negative). In a group, disable the bot&apos;s privacy mode in BotFather so it can read replies.
+          <p className="text-xs text-text-tertiary">
+            Tip: send the bot <span className="font-mono">/id</span> in a DM or group to get the chat id (groups are negative).
           </p>
+          {loading ? null : chats.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No destinations yet (HITL_OPERATOR_CHAT_ID env still applies if set).</p>
+          ) : (
+            <div className="space-y-1.5">
+              {chats.map((c) => (
+                <div key={c.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono text-text-primary">{c.chatId}</span>
+                    {Number(c.chatId) < 0 && <Badge variant="info">group</Badge>}
+                    {c.label && <span className="text-text-tertiary">· {c.label}</span>}
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => remove('chats', c.id)} loading={busy === c.id}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
           <label className="block text-sm font-medium text-text-secondary">Authorized users</label>
           <div className="flex items-end gap-2">
             <div className="flex-1">
-              <Input
-                label="Telegram user id"
-                placeholder="123456789"
-                value={form.telegramUserId}
-                onChange={(e) => setForm({ ...form, telegramUserId: e.target.value })}
-              />
+              <Input label="Telegram user id" placeholder="123456789"
+                value={userForm.telegramUserId} onChange={(e) => setUserForm({ ...userForm, telegramUserId: e.target.value })} />
             </div>
             <div className="flex-1">
-              <Input
-                label="Label (optional)"
-                placeholder="e.g. Brandon"
-                value={form.label}
-                onChange={(e) => setForm({ ...form, label: e.target.value })}
-              />
+              <Input label="Label (optional)" placeholder="e.g. Brandon"
+                value={userForm.label} onChange={(e) => setUserForm({ ...userForm, label: e.target.value })} />
             </div>
-            <Button onClick={handleAdd} loading={adding} disabled={!form.telegramUserId.trim()}>Add</Button>
+            <Button onClick={addUser} loading={busy === 'add-user'} disabled={!userForm.telegramUserId.trim()}>Add</Button>
           </div>
-
           {loading ? (
             <p className="text-xs text-text-tertiary">Loading…</p>
           ) : users.length === 0 ? (
-            <p className="text-xs text-text-tertiary">No users authorized in-app. (Anyone listed in AUTHORIZED_TELEGRAM_USER_IDS env still applies.)</p>
+            <p className="text-xs text-text-tertiary">No users authorized in-app. (Anyone in AUTHORIZED_TELEGRAM_USER_IDS env still applies.)</p>
           ) : (
             <div className="space-y-1.5">
               {users.map((u) => (
@@ -295,7 +298,7 @@ function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => v
                     <span className="font-mono text-text-primary">{u.telegramUserId}</span>
                     {u.label && <span className="text-text-tertiary">· {u.label}</span>}
                   </div>
-                  <Button variant="danger" size="sm" onClick={() => handleDelete(u.id)} loading={deleting === u.id}>Remove</Button>
+                  <Button variant="danger" size="sm" onClick={() => remove('access', u.id)} loading={busy === u.id}>Remove</Button>
                 </div>
               ))}
             </div>

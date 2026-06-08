@@ -3,7 +3,6 @@ import { loadHitlConfig } from '@/lib/hitl/config';
 import { secretMatches, deriveSignalId, getHitlNotifier } from '@/lib/hitl/webhook';
 import { parseAlert, type AlertInfo } from '@/lib/hitl/alert';
 import { resolveBrokerSymbolLive } from '@/lib/hitl/symbol-map';
-import { loadOperatorChatId } from '@/lib/hitl/access';
 import * as session from '@/lib/hitl/session';
 
 /**
@@ -103,7 +102,6 @@ export async function POST(request: NextRequest) {
       entryRef: alert.price,
       action: alert.direction,
       rawAlert: { text: rawBody, parsed: alert, tvSymbol: alert.symbol },
-      operatorChatId: await loadOperatorChatId(cfg),
     });
   } catch (err) {
     console.warn('[hitl/tv-alert] insert failed (likely dedupe race):', err);

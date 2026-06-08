@@ -71,6 +71,13 @@
       "when": 1780898904589,
       "tag": "0009_hitl_access",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780904471767,
+      "tag": "0010_hitl_chats",
+      "breakpoints": true
     }
   ]
 }

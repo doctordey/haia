@@ -9,10 +9,11 @@
 
 import { asc, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { hitlAuthorizedUsers, hitlSettings } from '@/lib/db/schema';
+import { hitlAuthorizedUsers, hitlChats, hitlSettings } from '@/lib/db/schema';
 import type { HitlConfig } from './config';
 
 export type AuthorizedUserRow = typeof hitlAuthorizedUsers.$inferSelect;
+export type ChatRow = typeof hitlChats.$inferSelect;
 
 const OPERATOR_CHAT_KEY = 'operatorChatId';
 
@@ -31,10 +32,43 @@ export async function isUserAuthorized(cfg: HitlConfig, userId: number): Promise
   return (await loadAuthorizedUserIds(cfg)).has(userId);
 }
 
-/** DB operator/group chat id overrides the env seed. */
-export async function loadOperatorChatId(cfg: HitlConfig): Promise<string> {
-  const [row] = await db.select().from(hitlSettings).where(eq(hitlSettings.key, OPERATOR_CHAT_KEY)).limit(1);
-  return row?.value || cfg.operatorChatId;
+/**
+ * All operator destinations: the env seed (HITL_OPERATOR_CHAT_ID), the legacy
+ * single setting (if any), and every hitl_chats row — deduped. Prompts and
+ * notifications fan out to all of these.
+ */
+export async function loadChatIds(cfg: HitlConfig): Promise<string[]> {
+  const ids = new Set<string>();
+  if (cfg.operatorChatId) ids.add(cfg.operatorChatId.trim());
+
+  const [legacy] = await db.select().from(hitlSettings).where(eq(hitlSettings.key, OPERATOR_CHAT_KEY)).limit(1);
+  if (legacy?.value) ids.add(legacy.value.trim());
+
+  const rows = await db.select().from(hitlChats);
+  for (const r of rows) ids.add(r.chatId.trim());
+
+  return [...ids].filter(Boolean);
+}
+
+// ── chat destinations CRUD ──
+
+export async function listChats(): Promise<ChatRow[]> {
+  return db.select().from(hitlChats).orderBy(asc(hitlChats.createdAt));
+}
+
+export async function addChat(chatId: string, label?: string): Promise<ChatRow> {
+  const id = chatId.trim();
+  const lbl = label?.trim() || null;
+  const [row] = await db
+    .insert(hitlChats)
+    .values({ chatId: id, label: lbl })
+    .onConflictDoUpdate({ target: hitlChats.chatId, set: { label: lbl } })
+    .returning();
+  return row;
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  await db.delete(hitlChats).where(eq(hitlChats.id, id));
 }
 
 // ── CRUD (Settings UI / API) ──
@@ -56,17 +90,4 @@ export async function addAuthorizedUser(telegramUserId: string, label?: string):
 
 export async function deleteAuthorizedUser(id: string): Promise<void> {
   await db.delete(hitlAuthorizedUsers).where(eq(hitlAuthorizedUsers.id, id));
-}
-
-export async function getOperatorChatSetting(): Promise<string | null> {
-  const [row] = await db.select().from(hitlSettings).where(eq(hitlSettings.key, OPERATOR_CHAT_KEY)).limit(1);
-  return row?.value ?? null;
-}
-
-export async function setOperatorChatSetting(value: string): Promise<void> {
-  const v = value.trim();
-  await db
-    .insert(hitlSettings)
-    .values({ key: OPERATOR_CHAT_KEY, value: v })
-    .onConflictDoUpdate({ target: hitlSettings.key, set: { value: v } });
 }

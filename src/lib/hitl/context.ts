@@ -14,9 +14,11 @@ export interface TargetAccount {
 
 export interface HitlContext {
   cfg: HitlConfig;
-  operatorChatId: string;
 
-  /** Operator-facing notification (Telegram). */
+  /** All operator destinations (DM + group(s)); prompts/notifications fan out to all. */
+  getChatIds(): Promise<string[]>;
+
+  /** Operator-facing notification (Telegram) — broadcast to all destinations. */
   notify(text: string): Promise<void>;
 
   /** Broker adapter for an account whose streaming connection is live. */

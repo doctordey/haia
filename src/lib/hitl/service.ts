@@ -25,24 +25,21 @@ export class HitlService implements HitlBotDeps {
     return isUserAuthorized(this.ctx.cfg, userId);
   }
 
-  async resolveDialogSession(
-    chatId: string,
-    replyToMessageId?: number,
-  ): Promise<{ id: string; state: string } | undefined> {
+  getChatIds(): Promise<string[]> {
+    return this.ctx.getChatIds();
+  }
+
+  async resolveDialogSession(replyToMessageId?: number): Promise<{ id: string; state: string } | undefined> {
     if (replyToMessageId != null) {
       const byReply = await session.findByPromptMessageId(replyToMessageId);
       if (byReply) return { id: byReply.id, state: byReply.state };
     }
-    const newest = await session.newestAwaitingForChat(chatId);
+    const newest = await session.newestAwaiting();
     return newest ? { id: newest.id, state: newest.state } : undefined;
   }
 
-  async recordPromptMessage(sessionId: string, messageId: number): Promise<void> {
-    await session.patch(sessionId, { promptMessageId: String(messageId) });
-  }
-
-  async recordConfirmMessage(sessionId: string, messageId: number): Promise<void> {
-    await session.patch(sessionId, { confirmMessageId: String(messageId) });
+  async recordPromptMessageIds(sessionId: string, messageIds: number[]): Promise<void> {
+    await session.recordPromptMessageIds(sessionId, messageIds);
   }
 
   /** Opening prompt text for a freshly received alert. */

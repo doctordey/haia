@@ -61,9 +61,8 @@ export class HitlManager {
     for (const s of rows) {
       const claimed = await session.transition(s.id, [STATES.RECEIVED], STATES.AWAITING_RANGE);
       if (!claimed) continue; // someone else handled it
-      const chatId = s.operatorChatId ?? this.ctx.operatorChatId;
       try {
-        await this.bot.sendPrompt(chatId, s.id, this.service.promptText(s.symbol, s.entryRef));
+        await this.bot.sendPrompt(s.id, this.service.promptText(s.symbol, s.entryRef));
       } catch (err) {
         console.error(`[hitl/manager] prompt send failed for ${s.id}:`, err);
       }

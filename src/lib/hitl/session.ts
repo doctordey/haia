@@ -104,30 +104,36 @@ export async function inCooldown(symbol: string, cooldownSeconds: number): Promi
   return Boolean(row);
 }
 
-/** Route a text reply: find the session whose current prompt is this message. */
+/**
+ * Route a text reply: find the awaiting session whose prompt (in any chat) has
+ * this message id. Prompts are broadcast to all destinations, so each session
+ * carries the message ids it was sent as across chats.
+ */
 export async function findByPromptMessageId(messageId: number): Promise<HitlSession | undefined> {
+  const rows = await db
+    .select()
+    .from(hitlSessions)
+    .where(inArray(hitlSessions.state, [STATES.AWAITING_RANGE, STATES.AWAITING_DIRECTION]));
+  return rows.find((r) => Array.isArray(r.promptMessageIds) && r.promptMessageIds.includes(messageId));
+}
+
+/** Fallback routing: the single newest session awaiting operator input (any chat). */
+export async function newestAwaiting(): Promise<HitlSession | undefined> {
   const [row] = await db
     .select()
     .from(hitlSessions)
-    .where(eq(hitlSessions.promptMessageId, String(messageId)))
+    .where(inArray(hitlSessions.state, [STATES.AWAITING_RANGE, STATES.AWAITING_DIRECTION]))
+    .orderBy(desc(hitlSessions.receivedAt))
     .limit(1);
   return row;
 }
 
-/** Fallback routing: newest session awaiting operator input on this chat. */
-export async function newestAwaitingForChat(operatorChatId: string): Promise<HitlSession | undefined> {
-  const [row] = await db
-    .select()
-    .from(hitlSessions)
-    .where(
-      and(
-        eq(hitlSessions.operatorChatId, operatorChatId),
-        inArray(hitlSessions.state, [STATES.AWAITING_RANGE, STATES.AWAITING_DIRECTION]),
-      ),
-    )
-    .orderBy(desc(hitlSessions.receivedAt))
-    .limit(1);
-  return row;
+/** Append prompt message ids (from a broadcast) for reply routing. */
+export async function recordPromptMessageIds(id: string, messageIds: number[]): Promise<void> {
+  const current = await getById(id);
+  const existing = (current?.promptMessageIds as number[] | null) ?? [];
+  const merged = [...new Set([...existing, ...messageIds])];
+  await patch(id, { promptMessageIds: merged });
 }
 
 export async function listByState(states: HitlState[]): Promise<HitlSession[]> {

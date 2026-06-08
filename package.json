@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "npx drizzle-kit migrate; npx tsx src/workers/trade-sync.ts & npx tsx src/workers/signal-listener.ts & next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "start": "npx tsx scripts/migrate.ts; npx tsx src/workers/trade-sync.ts & npx tsx src/workers/signal-listener.ts & next start -H 0.0.0.0 -p ${PORT:-3000}",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:prod": "npx tsx scripts/migrate.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "worker": "npx tsx src/workers/trade-sync.ts",

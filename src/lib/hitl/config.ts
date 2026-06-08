@@ -128,11 +128,12 @@ export function validateHitlConfig(cfg: HitlConfig): void {
 
   const problems: string[] = [];
 
+  // Secrets must come from env. The authorized-user list and operator chat id
+  // are optional here — they can be (and usually are) managed in-app under
+  // Settings → HITL → Access. Any ids set in env must still be numeric.
   if (!cfg.telegramBotToken) problems.push('HITL_TELEGRAM_BOT_TOKEN is required');
-  if (cfg.authorizedUserIds.length === 0) problems.push('AUTHORIZED_TELEGRAM_USER_IDS is required (comma-separated numeric ids)');
-  if (cfg.authorizedUserIds.some((id) => !Number.isInteger(id))) problems.push('AUTHORIZED_TELEGRAM_USER_IDS must be all numeric');
-  if (!cfg.operatorChatId) problems.push('HITL_OPERATOR_CHAT_ID is required');
   if (!cfg.webhookSecret) problems.push('HITL_WEBHOOK_SECRET is required');
+  if (cfg.authorizedUserIds.some((id) => !Number.isInteger(id))) problems.push('AUTHORIZED_TELEGRAM_USER_IDS must be all numeric');
 
   const enums: [string, string, readonly string[]][] = [
     ['SL_FROM', cfg.slFrom, ['range_size', 'protective_edge']],

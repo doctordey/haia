@@ -35,15 +35,16 @@ openssl rand -hex 16
 
 ## 5. Set environment variables (Railway) and redeploy
 
-Required:
+Required (secrets + switch):
 ```
 HITL_ENABLED=true
 HITL_ALLOW_LIVE=false                 # keep false until acceptance passes
 HITL_TELEGRAM_BOT_TOKEN=...
-AUTHORIZED_TELEGRAM_USER_IDS=123456789
-HITL_OPERATOR_CHAT_ID=123456789
 HITL_WEBHOOK_SECRET=...
 ```
+Authorized users and the operator/group chat are set **in-app** (step 6b), not
+in env. `AUTHORIZED_TELEGRAM_USER_IDS` / `HITL_OPERATOR_CHAT_ID` still work as
+optional seeds if you prefer env, but the UI is live (no redeploy).
 Symbol map (only symbols that differ from the broker) is managed in the app —
 **Settings → HITL → Symbol Map** (e.g. `UK10YBGBP → UKGILT`). `HITL_SYMBOL_MAP`
 still works as an optional seed, but the UI is the easy way and DB entries win.
@@ -58,6 +59,16 @@ one is missing or invalid.
 
 Settings → your demo account → **Enable HITL** (a HITL badge appears). This is
 the deliberate opt-in; connecting an account never auto-arms it.
+
+## 6b. Set HITL access (Settings → HITL → Access)
+
+- **Operator / group chat id**: your own Telegram id for a 1:1 DM, or a group's
+  chat id (negative, e.g. `-1001234567890`) so several traders share the bot.
+- **Authorized users**: add each Telegram user id allowed to respond/approve
+  (optional label). Add/remove anytime — it's live, no redeploy.
+- **For a group:** in BotFather run `/setprivacy → Disable` so the bot can read
+  replies, and have traders **reply to the prompt** they're answering (keeps
+  each high/low on the right trade).
 
 ## 7. Point TradingView at the webhook
 

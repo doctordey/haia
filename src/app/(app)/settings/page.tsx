@@ -33,6 +33,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="hitl" className="mt-4 space-y-4">
+          <HitlAccessSection toast={toast} />
           <HitlSection toast={toast} />
         </TabsContent>
 
@@ -165,6 +166,142 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
         </div>
       )}
     </>
+  );
+}
+
+type AuthorizedUser = { id: string; telegramUserId: string; label: string | null };
+
+function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [users, setUsers] = useState<AuthorizedUser[]>([]);
+  const [chatId, setChatId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [savingChat, setSavingChat] = useState(false);
+  const [form, setForm] = useState({ telegramUserId: '', label: '' });
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/hitl/access');
+      if (res.ok) {
+        const d = await res.json();
+        setUsers(d.users || []);
+        setChatId(d.operatorChatId || '');
+      }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleSaveChat() {
+    setSavingChat(true);
+    try {
+      const res = await fetch('/api/hitl/access', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorChatId: chatId }),
+      });
+      if (res.ok) toast('Operator chat saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setSavingChat(false); }
+  }
+
+  async function handleAdd() {
+    if (!form.telegramUserId.trim()) return;
+    setAdding(true);
+    try {
+      const res = await fetch('/api/hitl/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (res.ok) { toast('User authorized', 'success'); setForm({ telegramUserId: '', label: '' }); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add user', 'error'); }
+    } catch { toast('Failed to add user', 'error'); }
+    finally { setAdding(false); }
+  }
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/hitl/access/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('User removed', 'success'); load(); }
+      else toast('Failed to remove', 'error');
+    } catch { toast('Failed to remove', 'error'); }
+    finally { setDeleting(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Access</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Who can respond to and approve HITL prompts, and where the bot posts them. Changes take effect immediately.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Input
+                label="Operator / group chat id"
+                placeholder="123456789 (your id) or -1001234567890 (group)"
+                value={chatId}
+                onChange={(e) => setChatId(e.target.value)}
+              />
+            </div>
+            <Button onClick={handleSaveChat} loading={savingChat} disabled={!chatId.trim()}>Save</Button>
+          </div>
+          <p className="text-xs text-text-tertiary mt-1">
+            For a 1:1 DM use your own Telegram id; for a group use the group&apos;s chat id (negative). In a group, disable the bot&apos;s privacy mode in BotFather so it can read replies.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary">Authorized users</label>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Input
+                label="Telegram user id"
+                placeholder="123456789"
+                value={form.telegramUserId}
+                onChange={(e) => setForm({ ...form, telegramUserId: e.target.value })}
+              />
+            </div>
+            <div className="flex-1">
+              <Input
+                label="Label (optional)"
+                placeholder="e.g. Brandon"
+                value={form.label}
+                onChange={(e) => setForm({ ...form, label: e.target.value })}
+              />
+            </div>
+            <Button onClick={handleAdd} loading={adding} disabled={!form.telegramUserId.trim()}>Add</Button>
+          </div>
+
+          {loading ? (
+            <p className="text-xs text-text-tertiary">Loading…</p>
+          ) : users.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No users authorized in-app. (Anyone listed in AUTHORIZED_TELEGRAM_USER_IDS env still applies.)</p>
+          ) : (
+            <div className="space-y-1.5">
+              {users.map((u) => (
+                <div key={u.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono text-text-primary">{u.telegramUserId}</span>
+                    {u.label && <span className="text-text-tertiary">· {u.label}</span>}
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => handleDelete(u.id)} loading={deleting === u.id}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -16,6 +16,7 @@ import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
 import { fetchHistoricalDeals } from '@/lib/metaapi';
 import { getValidatedHitlConfig } from './config';
+import { loadOperatorChatId } from './access';
 import { buildHitlBroker, signalIdPrefix } from './metaapi';
 import type { HitlContext, TargetAccount } from './context';
 import { HitlService } from './service';
@@ -87,7 +88,7 @@ export async function setupHitl(): Promise<HitlHandle | null> {
     operatorChatId: cfg.operatorChatId,
 
     async notify(text) {
-      await bot.notify(cfg.operatorChatId, text);
+      await bot.notify(await loadOperatorChatId(cfg), text);
     },
 
     getBroker(accountId) {

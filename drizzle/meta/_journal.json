@@ -64,6 +64,13 @@
       "when": 1780894396543,
       "tag": "0008_hitl_symbol_maps",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780898904589,
+      "tag": "0009_hitl_access",
+      "breakpoints": true
     }
   ]
 }

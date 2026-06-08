@@ -9,6 +9,7 @@ import type { DialogResult, HitlBotDeps } from './bot';
 import { computeLevels, inferDirection, type Direction } from './levels';
 import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
+import { isUserAuthorized } from './access';
 import * as session from './session';
 import { STATES } from './session';
 
@@ -19,8 +20,8 @@ function fmt(n: number | null | undefined, dp = 2): string {
 export class HitlService implements HitlBotDeps {
   constructor(private readonly ctx: HitlContext) {}
 
-  isAuthorized(userId: number): boolean {
-    return this.ctx.cfg.authorizedUserIds.includes(userId);
+  isAuthorized(userId: number): Promise<boolean> {
+    return isUserAuthorized(this.ctx.cfg, userId);
   }
 
   async resolveDialogSession(

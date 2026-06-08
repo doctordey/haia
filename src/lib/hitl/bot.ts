@@ -21,7 +21,7 @@ export interface DialogResult {
 }
 
 export interface HitlBotDeps {
-  isAuthorized(userId: number): boolean;
+  isAuthorized(userId: number): Promise<boolean>;
   /** Find which session a text message belongs to (reply target → fallback to newest awaiting). */
   resolveDialogSession(
     chatId: string,
@@ -69,7 +69,7 @@ export class HitlBot {
       const chatId = ctx.chat?.id;
       if (userId == null || chatId == null) return;
 
-      if (!this.deps.isAuthorized(userId)) {
+      if (!(await this.deps.isAuthorized(userId))) {
         console.warn(`[hitl/bot] ignoring message from unauthorized user ${userId}`);
         return; // silent: ignore + log (acceptance requirement)
       }
@@ -109,7 +109,7 @@ export class HitlBot {
       const data = ctx.callbackQuery.data;
       const [action, sessionId] = data.split(':');
 
-      if (userId == null || !this.deps.isAuthorized(userId)) {
+      if (userId == null || !(await this.deps.isAuthorized(userId))) {
         await ctx.answerCallbackQuery({ text: 'Not authorized', show_alert: true }).catch(() => {});
         console.warn(`[hitl/bot] ignoring callback from unauthorized user ${userId}`);
         return;

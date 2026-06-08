@@ -559,3 +559,21 @@ export const hitlSymbolMaps = pgTable('hitl_symbol_maps', {
   createdAt:    timestamp('created_at').notNull().defaultNow(),
   updatedAt:    timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
 });
+
+// ─── HITL Access (operator-level, in-app managed) ──
+// Who may respond to / approve HITL prompts. Merged with the AUTHORIZED_TELEGRAM_USER_IDS
+// env seed; DB rows are live (no redeploy). Not secret — secrets stay in env.
+
+export const hitlAuthorizedUsers = pgTable('hitl_authorized_users', {
+  id:             text('id').primaryKey().$defaultFn(() => createId()),
+  telegramUserId: text('telegram_user_id').notNull().unique(),  // numeric id as text
+  label:          text('label'),
+  createdAt:      timestamp('created_at').notNull().defaultNow(),
+});
+
+// Singleton key/value config for HITL (currently: the operator/group chat id).
+export const hitlSettings = pgTable('hitl_settings', {
+  key:       text('key').primaryKey(),
+  value:     text('value').notNull(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow().$onUpdate(() => new Date()),
+});

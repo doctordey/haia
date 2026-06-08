@@ -11,6 +11,7 @@ import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
 import { isUserAuthorized } from './access';
 import { loadTpMultiples } from './targets';
+import { renderMessage } from './messages';
 import * as session from './session';
 import { STATES } from './session';
 
@@ -43,13 +44,8 @@ export class HitlService implements HitlBotDeps {
   }
 
   /** Opening prompt text for a freshly received alert. */
-  promptText(symbol: string, entry: number | null): string {
-    return (
-      `🔔 HITL alert: ${symbol} @ ${entry ?? '—'}\n` +
-      `Reply to THIS message with the range as two numbers — high then low ` +
-      `(e.g. for an alert near ${entry ?? 'X'}, the range's high and low).\n` +
-      `Replying to the specific alert keeps each one matched to the right trade.`
-    );
+  promptText(symbol: string, entry: number | null, direction: string | null): Promise<string> {
+    return renderMessage('prompt', { direction: direction ?? '', symbol, price: entry ?? '—' });
   }
 
   async submitRange(sessionId: string, a: number, b: number): Promise<DialogResult> {
@@ -72,7 +68,7 @@ export class HitlService implements HitlBotDeps {
       return {
         kind: 'need_direction',
         sessionId,
-        text: `Entry ${fmt(s.entryRef)} is inside the range ${fmt(rangeLow)}–${fmt(rangeHigh)}. Reply BUY or SELL.`,
+        text: await renderMessage('needDirection', { entry: fmt(s.entryRef), low: fmt(rangeLow), high: fmt(rangeHigh) }),
       };
     }
 
@@ -157,36 +153,45 @@ export class HitlService implements HitlBotDeps {
 
     const legLines = plan.legs
       .map((l) => `   • Leg ${l.leg}: ${fmt(l.volume)} lots → TP ${fmt(l.tp)}`)
-      .join('\n');
+      .join('\n') + (plan.collapsed ? `\n⚠️ ${plan.note}` : '');
 
-    const text =
-      `📋 Confirm ${input.direction} ${s.symbol}${target.isDemo ? ' (DEMO)' : ' (LIVE)'}\n` +
-      `Entry ${fmt(lv.levels.entry)} | SL ${fmt(lv.levels.sl)} | R ${fmt(lv.levels.r)}\n` +
-      `TP1 ${fmt(lv.levels.tp1)} · TP2 ${fmt(lv.levels.tp2)} · TP3 ${fmt(lv.levels.tp3)}\n` +
-      `Total ${fmt(sized.lots)} lots (risk ${fmt(cfg.riskPct)}% ≈ $${fmt(sized.riskAmount)})\n` +
-      `${legLines}` +
-      (plan.collapsed ? `\n⚠️ ${plan.note}` : '');
+    const text = await renderMessage('confirm', {
+      direction: input.direction,
+      symbol: s.symbol,
+      account: target.isDemo ? 'DEMO' : 'LIVE',
+      entry: fmt(lv.levels.entry),
+      sl: fmt(lv.levels.sl),
+      r: fmt(lv.levels.r),
+      tp1: fmt(lv.levels.tp1),
+      tp2: fmt(lv.levels.tp2),
+      tp3: fmt(lv.levels.tp3),
+      lots: fmt(sized.lots),
+      risk: fmt(cfg.riskPct),
+      riskAmount: fmt(sized.riskAmount),
+      legs: legLines,
+    });
 
     return { kind: 'confirm', sessionId, text };
   }
 
-  async approve(sessionId: string): Promise<{ ok: boolean; message: string }> {
+  async approve(sessionId: string): Promise<{ ok: boolean; message: string; symbol: string }> {
     // Guarded transition prevents double-dispatch (race / double-tap).
     const s = await session.transition(sessionId, [STATES.AWAITING_APPROVAL], STATES.DISPATCHING, {
       approvedAt: new Date(),
     });
-    if (!s) return { ok: false, message: 'Already actioned or expired.' };
+    if (!s) return { ok: false, message: 'Already actioned or expired.', symbol: '' };
+    const symbol = s.symbol;
 
     if (!s.accountId || !s.legs || s.entryRef == null || s.sl == null || !s.direction) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: 'incomplete session at dispatch' });
-      return { ok: false, message: 'Session incomplete — cannot dispatch.' };
+      return { ok: false, message: 'Session incomplete — cannot dispatch.', symbol };
     }
 
     const target = await this.ctx.resolveTargetAccount();
     const broker = this.ctx.getBroker(s.accountId);
     if (!broker || !target) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: 'broker unavailable at dispatch' });
-      return { ok: false, message: 'Broker unavailable — not dispatched.' };
+      return { ok: false, message: 'Broker unavailable — not dispatched.', symbol };
     }
 
     // Re-run pre-dispatch gates against fresh equity/spec.
@@ -196,7 +201,7 @@ export class HitlService implements HitlBotDeps {
       equity = broker.getEquity();
     } catch (err) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: `broker not ready: ${err}` });
-      return { ok: false, message: 'Broker not ready — not dispatched.' };
+      return { ok: false, message: 'Broker not ready — not dispatched.', symbol };
     }
 
     const gate = preDispatchGates({
@@ -209,7 +214,7 @@ export class HitlService implements HitlBotDeps {
     });
     if (!gate.ok) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: gate.reason });
-      return { ok: false, message: `Blocked by safety gate: ${gate.reason}` };
+      return { ok: false, message: `Blocked by safety gate: ${gate.reason}`, symbol };
     }
 
     const result = await openLegs(broker, {
@@ -229,20 +234,20 @@ export class HitlService implements HitlBotDeps {
         dispatchedAt: new Date(),
         failureReason: result.alert ?? null,
       });
-      if (result.alert) await this.ctx.notify(result.alert);
-      return { ok: true, message: result.message };
+      if (result.alert) await this.ctx.notify(await renderMessage('partialFill', { symbol, detail: result.message }));
+      return { ok: true, message: result.message, symbol };
     }
 
     await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, {
       legs: result.legs,
       failureReason: result.message,
     });
-    await this.ctx.notify(`❌ HITL dispatch FAILED for ${s.symbol}: ${result.message}`);
-    return { ok: false, message: result.message };
+    await this.ctx.notify(await renderMessage('dispatchFailed', { symbol, reason: result.message }));
+    return { ok: false, message: result.message, symbol };
   }
 
-  async reject(sessionId: string): Promise<{ message: string }> {
+  async reject(sessionId: string): Promise<{ message: string; symbol: string }> {
     const s = await session.transition(sessionId, [STATES.AWAITING_APPROVAL], STATES.REJECTED);
-    return { message: s ? 'Trade rejected.' : 'Already actioned or expired.' };
+    return { message: s ? 'Trade rejected.' : 'Already actioned or expired.', symbol: s?.symbol ?? '' };
   }
 }

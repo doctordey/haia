@@ -35,6 +35,7 @@ export default function SettingsPage() {
         <TabsContent value="hitl" className="mt-4 space-y-4">
           <HitlAccessSection toast={toast} />
           <HitlTargetsSection toast={toast} />
+          <HitlMessagesSection toast={toast} />
           <HitlSection toast={toast} />
         </TabsContent>
 
@@ -369,6 +370,98 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
               Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
             </p>
           </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+type HitlMessage = { key: string; label: string; description: string; variables: string[]; default: string; value: string };
+
+function HitlMessagesSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [messages, setMessages] = useState<HitlMessage[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/hitl/messages');
+      if (res.ok) {
+        const d = await res.json();
+        setMessages(d.messages || []);
+        setDrafts(Object.fromEntries((d.messages || []).map((m: HitlMessage) => [m.key, m.value])));
+      }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save(key: string) {
+    setBusy(key);
+    try {
+      const res = await fetch('/api/hitl/messages', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, template: drafts[key] }),
+      });
+      if (res.ok) toast('Message saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function reset(key: string) {
+    setBusy(key);
+    try {
+      const res = await fetch(`/api/hitl/messages/${key}`, { method: 'DELETE' });
+      if (res.ok) { const d = await res.json(); setDrafts((p) => ({ ...p, [key]: d.value })); toast('Reset to default', 'success'); }
+      else toast('Failed to reset', 'error');
+    } catch { toast('Failed to reset', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Messages</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Customise the text the bot sends. Use <span className="font-mono">{'{variable}'}</span> placeholders — the available
+          ones are listed under each. Changes apply to new messages immediately.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          messages.map((m) => {
+            const dirty = drafts[m.key] !== m.value;
+            const isDefault = m.value === m.default;
+            return (
+              <div key={m.key} className="space-y-1.5 border-b border-border-primary pb-3 last:border-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-primary">{m.label}</span>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => reset(m.key)} loading={busy === m.key} disabled={isDefault}>Reset</Button>
+                    <Button size="sm" onClick={() => save(m.key)} loading={busy === m.key} disabled={!dirty}>Save</Button>
+                  </div>
+                </div>
+                <p className="text-xs text-text-tertiary">{m.description}</p>
+                <textarea
+                  value={drafts[m.key] ?? ''}
+                  onChange={(e) => setDrafts((p) => ({ ...p, [m.key]: e.target.value }))}
+                  rows={Math.min(6, (drafts[m.key] ?? '').split('\n').length + 1)}
+                  className="w-full px-3 py-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-md)] text-sm text-text-primary font-mono"
+                />
+                <div className="flex flex-wrap gap-1">
+                  {m.variables.map((v) => (
+                    <span key={v} className="text-xs font-mono px-1.5 py-0.5 bg-bg-elevated rounded text-text-secondary">{`{${v}}`}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })
         )}
       </CardContent>
     </Card>

@@ -11,6 +11,7 @@
  */
 
 import { Bot, InlineKeyboard } from 'grammy';
+import { renderMessage } from './messages';
 
 export type DialogResultKind = 'need_direction' | 'confirm' | 'error' | 'ack';
 
@@ -28,8 +29,8 @@ export interface HitlBotDeps {
   resolveDialogSession(replyToMessageId?: number): Promise<{ id: string; state: string } | undefined>;
   submitRange(sessionId: string, a: number, b: number): Promise<DialogResult>;
   submitDirection(sessionId: string, dir: 'BUY' | 'SELL'): Promise<DialogResult>;
-  approve(sessionId: string): Promise<{ ok: boolean; message: string }>;
-  reject(sessionId: string): Promise<{ message: string }>;
+  approve(sessionId: string): Promise<{ ok: boolean; message: string; symbol: string }>;
+  reject(sessionId: string): Promise<{ message: string; symbol: string }>;
   /** Append prompt message ids (from a broadcast) so replies in any chat route correctly. */
   recordPromptMessageIds(sessionId: string, messageIds: number[]): Promise<void>;
 }
@@ -137,14 +138,20 @@ export class HitlBot {
       if (action === 'a') {
         await ctx.answerCallbackQuery({ text: 'Approving…' }).catch(() => {});
         const res = await this.deps.approve(sessionId);
-        await ctx.editMessageText(`${res.ok ? '✅ Approved' : '⚠️ Approval failed'} (by ${who})\n${res.message}`).catch(() => {});
-        // Keep the other destinations in sync (their cards still show buttons).
-        await this.broadcast(`${res.ok ? '✅ Approved' : '⚠️ Approval failed'} by ${who}: ${res.message}`);
+        if (res.ok) {
+          const text = await renderMessage('approved', { who, symbol: res.symbol, result: res.message });
+          await ctx.editMessageText(text).catch(() => {});
+          await this.broadcast(text); // keep other destinations in sync
+        } else {
+          // Detailed failure (dispatchFailed/partialFill) is broadcast by the service.
+          await ctx.editMessageText(`⚠️ Approval failed (by ${who}): ${res.message}`).catch(() => {});
+        }
       } else if (action === 'r') {
         await ctx.answerCallbackQuery({ text: 'Rejected' }).catch(() => {});
         const res = await this.deps.reject(sessionId);
-        await ctx.editMessageText(`❌ Rejected (by ${who})\n${res.message}`).catch(() => {});
-        await this.broadcast(`❌ Rejected by ${who}: ${res.message}`);
+        const text = await renderMessage('rejected', { who, symbol: res.symbol, result: res.message });
+        await ctx.editMessageText(text).catch(() => {});
+        await this.broadcast(text);
       } else {
         await ctx.answerCallbackQuery().catch(() => {});
       }

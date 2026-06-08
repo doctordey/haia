@@ -16,6 +16,7 @@ import type { HitlBot } from './bot';
 import type { HitlService } from './service';
 import type { Direction } from './levels';
 import type { HitlBroker } from './metaapi';
+import { renderMessage } from './messages';
 import * as session from './session';
 import { STATES, PRE_FILL_STATES, type HitlSession } from './session';
 
@@ -62,7 +63,7 @@ export class HitlManager {
       const claimed = await session.transition(s.id, [STATES.RECEIVED], STATES.AWAITING_RANGE);
       if (!claimed) continue; // someone else handled it
       try {
-        await this.bot.sendPrompt(s.id, this.service.promptText(s.symbol, s.entryRef));
+        await this.bot.sendPrompt(s.id, await this.service.promptText(s.symbol, s.entryRef, s.action));
       } catch (err) {
         console.error(`[hitl/manager] prompt send failed for ${s.id}:`, err);
       }
@@ -78,7 +79,7 @@ export class HitlManager {
         failureReason: 'pre-fill timeout',
       });
       if (expired) {
-        await this.ctx.notify(`⏱️ HITL ${s.symbol} expired (no approval within ${this.ctx.cfg.signalTimeoutSeconds}s).`);
+        await this.ctx.notify(await renderMessage('expired', { symbol: s.symbol, timeout: this.ctx.cfg.signalTimeoutSeconds }));
       }
     }
   }
@@ -114,10 +115,7 @@ export class HitlManager {
       if (!valid) {
         if (!this.beAlerted.has(s.id)) {
           this.beAlerted.add(s.id);
-          await this.ctx.notify(
-            `⚠️ HITL ${s.symbol}: breakeven was triggered, but the trade isn't in profit yet — ` +
-            `the stop can't move to entry until price reaches TP1. I'll apply it automatically when it does.`,
-          );
+          await this.ctx.notify(await renderMessage('beNotReady', { symbol: s.symbol }));
         }
         continue;
       }
@@ -132,14 +130,14 @@ export class HitlManager {
           await broker.modifySl(pos.id, s.entryRef, pos.takeProfit ?? undefined);
         }
         this.beAlerted.delete(s.id);
-        await this.ctx.notify(`🟦 HITL ${s.symbol}: TP1 reached — stop moved to breakeven (${positions.length} leg(s)).`);
+        await this.ctx.notify(await renderMessage('breakeven', { symbol: s.symbol, legs: positions.length }));
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         console.error(`[hitl/manager] BE move failed for ${s.id}, reverting claim:`, reason);
         await session.patch(s.id, { beApplied: false, beAppliedAt: null });
         if (!this.beAlerted.has(s.id)) {
           this.beAlerted.add(s.id);
-          await this.ctx.notify(`⚠️ HITL ${s.symbol}: breakeven move was rejected — ${reason}. Will retry.`);
+          await this.ctx.notify(await renderMessage('beRejected', { symbol: s.symbol, reason }));
         }
       }
     }
@@ -166,7 +164,7 @@ export class HitlManager {
       });
       if (closed) {
         const pnl = realizedPnl == null ? '' : ` P/L ${realizedPnl >= 0 ? '+' : ''}${realizedPnl.toFixed(2)}`;
-        await this.ctx.notify(`✅ HITL ${s.symbol} closed.${pnl}`);
+        await this.ctx.notify(await renderMessage('closed', { symbol: s.symbol, pnl }));
       }
     }
   }

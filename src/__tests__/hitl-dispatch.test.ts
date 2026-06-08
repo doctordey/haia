@@ -79,6 +79,7 @@ function mockBroker(openImpl: (p: OpenOrderParams) => Promise<{ ticket: string }
   return {
     isDemo: () => true,
     getEquity: () => 100000,
+    ensureSymbol: async () => {},
     getSymbolSpec: () => spec,
     getPrice: () => ({ bid: 5000, ask: 5000 }),
     openOrder: vi.fn(openImpl),

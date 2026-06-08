@@ -77,6 +77,25 @@ export async function PATCH(
     }
   }
 
+  // Toggle HITL (human-in-the-loop) execution for this account.
+  if (typeof body.hitlEnabled === 'boolean') {
+    // Arming requires full trading access — an investor (read-only) login can't place orders.
+    if (body.hitlEnabled && account.accessMode !== 'trading') {
+      return NextResponse.json(
+        { error: 'This account is read-only (investor access). Upgrade to a trading password before enabling HITL.' },
+        { status: 400 },
+      );
+    }
+
+    const [updated] = await db
+      .update(tradingAccounts)
+      .set({ hitlEnabled: body.hitlEnabled })
+      .where(eq(tradingAccounts.id, id))
+      .returning();
+
+    return NextResponse.json(updated);
+  }
+
   return NextResponse.json({ error: 'No update fields provided' }, { status: 400 });
 }
 

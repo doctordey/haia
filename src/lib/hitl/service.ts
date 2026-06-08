@@ -115,6 +115,7 @@ export class HitlService implements HitlBotDeps {
 
     let spec, equity;
     try {
+      await broker.ensureSymbol(s.symbol);
       spec = broker.getSymbolSpec(s.symbol);
       equity = broker.getEquity();
     } catch (err) {

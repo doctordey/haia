@@ -43,6 +43,8 @@ export interface HitlBroker {
   /** Demo accounts only until §7 acceptance passes — the dispatcher checks this. */
   isDemo(): boolean;
   getEquity(): number;
+  /** Subscribe to a symbol so its spec/price become available in terminalState. */
+  ensureSymbol(symbol: string): Promise<void>;
   getSymbolSpec(symbol: string): HitlSymbolSpec;
   getPrice(symbol: string): { bid: number; ask: number } | null;
   openOrder(params: OpenOrderParams): Promise<{ ticket: string }>;
@@ -86,6 +88,14 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
       const info = term()?.accountInformation;
       if (!info) throw new Error('account information not yet synchronized');
       return info.equity;
+    },
+
+    async ensureSymbol(symbol) {
+      try {
+        await connection.subscribeToMarketData(symbol);
+      } catch (err) {
+        console.warn(`[hitl/broker] subscribeToMarketData(${symbol}) failed:`, err instanceof Error ? err.message : err);
+      }
     },
 
     getSymbolSpec(symbol) {

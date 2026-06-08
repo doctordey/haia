@@ -29,6 +29,7 @@ import { executePipeline } from '../lib/signals/execute';
 import { handleCancellation } from '../lib/signals/cancel';
 import { onPositionClosed } from '../lib/signals/breakeven';
 import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
+import { setupHitl, type HitlHandle } from '../lib/hitl/worker-setup';
 
 // ─── Globals ──────────────────────────────────────────
 
@@ -715,6 +716,14 @@ async function main(): Promise<void> {
     await loadLastOffset();
   }, 60_000);
 
+  // Boot HITL alongside the pipeline (no-op unless HITL_ENABLED=true).
+  let hitlHandle: HitlHandle | null = null;
+  try {
+    hitlHandle = await setupHitl();
+  } catch (error) {
+    console.error('[worker] HITL setup failed (pipeline continues):', error);
+  }
+
   console.log('[worker] Signal listener running. Press Ctrl+C to stop.');
   await new Promise<void>((resolve) => {
     const shutdown = async () => {
@@ -722,6 +731,10 @@ async function main(): Promise<void> {
       isShuttingDown = true;
       console.log('\n[worker] Shutting down...');
       clearInterval(offsetRefreshInterval);
+
+      if (hitlHandle) {
+        await hitlHandle.teardown().catch(() => {});
+      }
 
       if (telegramClient) {
         await telegramClient.disconnect().catch(() => {});

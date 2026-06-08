@@ -50,6 +50,26 @@ export default function SettingsPage() {
 function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRefetch: () => void; toast: (msg: string, type?: string) => void }) {
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
+
+  async function handleToggleHitl(id: string, next: boolean) {
+    setTogglingHitl(id);
+    try {
+      const res = await fetch(`/api/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hitlEnabled: next }),
+      });
+      if (res.ok) {
+        toast(next ? 'HITL enabled for this account' : 'HITL disabled', 'success');
+        onRefetch();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || 'Failed to update HITL', 'error');
+      }
+    } catch { toast('Failed to update HITL', 'error'); }
+    finally { setTogglingHitl(null); }
+  }
 
   async function handleSync(id: string) {
     setSyncing(id);
@@ -116,6 +136,17 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   <Badge variant={acc.syncStatus === 'synced' ? 'profit' : acc.syncStatus === 'error' ? 'loss' : acc.syncStatus === 'syncing' ? 'info' : 'default'}>
                     {acc.syncStatus}
                   </Badge>
+                  {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  <Button
+                    variant={acc.hitlEnabled ? 'danger' : 'secondary'}
+                    size="sm"
+                    onClick={() => handleToggleHitl(acc.id, !acc.hitlEnabled)}
+                    loading={togglingHitl === acc.id}
+                    disabled={!acc.hitlEnabled && acc.accessMode !== 'trading'}
+                    title={!acc.hitlEnabled && acc.accessMode !== 'trading' ? 'Requires a trading password (read-only account)' : 'Enable approved-trade execution on this account'}
+                  >
+                    {acc.hitlEnabled ? 'Disable HITL' : 'Enable HITL'}
+                  </Button>
                   <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id)} loading={syncing === acc.id}>
                     Re-sync
                   </Button>

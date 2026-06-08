@@ -1,5 +1,5 @@
 {
-  "id": "df1094ce-4bb5-407c-87ca-94a4c558c288",
+  "id": "0b3c1939-92a4-4dd5-8061-3e91cf08630b",
   "prevId": "c48c0afc-0d36-4c21-8174-4cd39df9af1c",
   "version": "7",
   "dialect": "postgresql",
@@ -692,6 +692,19 @@
         "confirm_message_id": {
           "name": "confirm_message_id",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "be_requested": {
+          "name": "be_requested",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "be_requested_at": {
+          "name": "be_requested_at",
+          "type": "timestamp",
           "primaryKey": false,
           "notNull": false
         },

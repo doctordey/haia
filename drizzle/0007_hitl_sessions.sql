@@ -24,6 +24,8 @@ CREATE TABLE "hitl_sessions" (
 	"operator_chat_id" text,
 	"prompt_message_id" text,
 	"confirm_message_id" text,
+	"be_requested" boolean DEFAULT false NOT NULL,
+	"be_requested_at" timestamp,
 	"be_applied" boolean DEFAULT false NOT NULL,
 	"be_applied_at" timestamp,
 	"dispatched_at" timestamp,

@@ -524,6 +524,8 @@ export const hitlSessions = pgTable('hitl_sessions', {
   confirmMessageId: text('confirm_message_id'),
 
   // ── lifecycle ──
+  beRequested:   boolean('be_requested').notNull().default(false),  // set by /tp1-hit webhook; worker acts on it
+  beRequestedAt: timestamp('be_requested_at'),
   beApplied:     boolean('be_applied').notNull().default(false),
   beAppliedAt:   timestamp('be_applied_at'),
   dispatchedAt:  timestamp('dispatched_at'),

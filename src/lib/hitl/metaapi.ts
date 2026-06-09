@@ -120,11 +120,26 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
     },
 
     async ensureSymbol(symbol) {
+      let subErr: string | null = null;
       try {
         await connection.subscribeToMarketData(symbol);
       } catch (err) {
-        console.warn(`[hitl/broker] subscribeToMarketData(${symbol}) failed:`, err instanceof Error ? err.message : err);
+        subErr = err instanceof Error ? err.message : String(err);
+        console.warn(`[hitl/broker] subscribeToMarketData(${symbol}) failed:`, subErr);
       }
+      // The specification lands in terminalState asynchronously after the
+      // subscribe (sync lag) — especially the first time a symbol is touched.
+      // Reading it synchronously races and returns undefined, so poll briefly.
+      const deadline = Date.now() + 6000;
+      while (Date.now() < deadline) {
+        if (term()?.specification(symbol)) return;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      // Never materialised — give the operator something actionable.
+      const hint = subErr
+        ? `broker rejected the symbol (${subErr})`
+        : 'the broker may list it under a different name — check the exact symbol in MT4/5 Market Watch and add a mapping in Settings → HITL → Symbol mapping';
+      throw new Error(`symbol "${symbol}" is not available: ${hint}`);
     },
 
     getSymbolSpec(symbol) {

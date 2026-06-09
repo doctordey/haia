@@ -14,10 +14,11 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
-import { fetchHistoricalDeals } from '@/lib/metaapi';
+import { fetchHistoricalDeals, fetchBrokerSymbols } from '@/lib/metaapi';
 import { getValidatedHitlConfig } from './config';
 import { loadChatIds } from './access';
 import { buildHitlBroker, signalIdPrefix } from './metaapi';
+import { suggestSymbolMatches } from './symbol-suggest';
 import type { HitlContext, TargetAccount } from './context';
 import { HitlService } from './service';
 import { HitlBot } from './bot';
@@ -33,6 +34,19 @@ interface HitlConnection {
 
 function isDemoServer(server: string): boolean {
   return /demo/i.test(server);
+}
+
+// The broker symbol list is large and rarely changes — cache it per account so
+// "did you mean" hints don't spin up an RPC connection on every miss.
+const SYMBOLS_TTL_MS = 10 * 60_000;
+const symbolCache = new Map<string, { symbols: string[]; at: number }>();
+
+async function getCachedSymbols(metaApiId: string): Promise<string[]> {
+  const hit = symbolCache.get(metaApiId);
+  if (hit && Date.now() - hit.at < SYMBOLS_TTL_MS) return hit.symbols;
+  const symbols = await fetchBrokerSymbols(metaApiId);
+  symbolCache.set(metaApiId, { symbols, at: Date.now() });
+  return symbols;
 }
 
 export interface HitlHandle {
@@ -135,6 +149,18 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       } catch (err) {
         console.warn(`[hitl] realizedPnl lookup failed for ${signalId}:`, err);
         return null;
+      }
+    },
+
+    async suggestSymbols(query): Promise<string[]> {
+      const c = [...connections.values()][0];
+      if (!c) return [];
+      try {
+        const symbols = await getCachedSymbols(c.metaApiId);
+        return suggestSymbolMatches(query, symbols, 5);
+      } catch (err) {
+        console.warn('[hitl] symbol suggestion lookup failed:', err);
+        return [];
       }
     },
   };

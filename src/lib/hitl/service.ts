@@ -119,7 +119,16 @@ export class HitlService implements HitlBotDeps {
       spec = broker.getSymbolSpec(s.symbol);
       equity = broker.getEquity();
     } catch (err) {
-      return { kind: 'error', text: `Broker not ready: ${err instanceof Error ? err.message : String(err)}` };
+      const msg = err instanceof Error ? err.message : String(err);
+      let text = `Broker not ready: ${msg}`;
+      // When it's a symbol-availability problem, offer the broker's closest names.
+      if (/not available|specification/i.test(msg) && this.ctx.suggestSymbols) {
+        const matches = await this.ctx.suggestSymbols(s.symbol).catch(() => []);
+        if (matches.length > 0) {
+          text += `\nDid you mean: ${matches.join(', ')}? Add a mapping in Settings → HITL → Symbol mapping.`;
+        }
+      }
+      return { kind: 'error', text };
     }
 
     const risk = await loadRiskSettings(cfg);

@@ -135,10 +135,8 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
         if (term()?.specification(symbol)) return;
         await new Promise((r) => setTimeout(r, 250));
       }
-      // Never materialised — give the operator something actionable.
-      const hint = subErr
-        ? `broker rejected the symbol (${subErr})`
-        : 'the broker may list it under a different name — check the exact symbol in MT4/5 Market Watch and add a mapping in Settings → HITL → Symbol mapping';
+      // Never materialised — surface why; the caller appends close-match hints.
+      const hint = subErr ? `broker rejected the symbol (${subErr})` : 'the broker may list it under a different name';
       throw new Error(`symbol "${symbol}" is not available: ${hint}`);
     },
 

@@ -69,6 +69,25 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   return deals;
 }
 
+/** All tradable symbol names on the account (RPC; used for "did you mean" hints). */
+export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {
+  const api = await getMetaApi();
+  const account = await api.metatraderAccountApi.getAccount(metaApiId);
+
+  if (account.state !== 'DEPLOYED') {
+    await account.waitDeployed();
+  }
+
+  const connection = account.getRPCConnection();
+  await connection.connect();
+  await connection.waitSynchronized();
+
+  const symbols = await connection.getSymbols();
+  await connection.close();
+
+  return Array.isArray(symbols) ? (symbols as string[]) : [];
+}
+
 export async function removeMetaApiAccount(metaApiId: string) {
   const api = await getMetaApi();
   const account = await api.metatraderAccountApi.getAccount(metaApiId);

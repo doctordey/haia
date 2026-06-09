@@ -28,5 +28,5 @@ export interface HitlContext {
   resolveTargetAccount(): Promise<TargetAccount | null>;
 
   /** Realized P/L for a closed signal, if the worker can source it (else null). */
-  realizedPnlForSignal?(signalId: string, since: Date): Promise<number | null>;
+  realizedPnlForSignal?(signalId: string, since: Date, tickets: string[]): Promise<number | null>;
 }

@@ -156,7 +156,10 @@ export class HitlManager {
 
       let realizedPnl: number | null = null;
       if (this.ctx.realizedPnlForSignal) {
-        realizedPnl = await this.ctx.realizedPnlForSignal(s.signalId, s.dispatchedAt).catch(() => null);
+        // Match deals by position ticket — broker-generated TP/SL close deals
+        // don't carry our clientId, so a clientId-only match misses the P/L.
+        const tickets = (s.legs ?? []).map((l) => l.ticket).filter((t): t is string => !!t);
+        realizedPnl = await this.ctx.realizedPnlForSignal(s.signalId, s.dispatchedAt, tickets).catch(() => null);
       }
       const closed = await session.transition(s.id, [STATES.OPEN], STATES.CLOSED, {
         closedAt: new Date(),

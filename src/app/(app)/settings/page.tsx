@@ -34,6 +34,7 @@ export default function SettingsPage() {
 
         <TabsContent value="hitl" className="mt-4 space-y-4">
           <HitlAccessSection toast={toast} />
+          <HitlRiskSection toast={toast} />
           <HitlTargetsSection toast={toast} />
           <HitlMessagesSection toast={toast} />
           <HitlSection toast={toast} />
@@ -368,6 +369,96 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
             </div>
             <p className="text-xs text-text-tertiary">
               Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [risk, setRisk] = useState({ mode: 'percent', riskPct: '1', fixedAmount: '50', maxRiskPct: '5' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/risk')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setRisk({ mode: d.mode, riskPct: String(d.riskPct), fixedAmount: String(d.fixedAmount || ''), maxRiskPct: String(d.maxRiskPct) });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/risk', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: risk.mode,
+          riskPct: Number(risk.riskPct),
+          fixedAmount: Number(risk.fixedAmount),
+          maxRiskPct: Number(risk.maxRiskPct),
+        }),
+      });
+      if (res.ok) toast('Risk saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save risk', 'error'); }
+    } catch { toast('Failed to save risk', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Risk per trade</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          How much each trade risks (the distance from entry to the 1R stop). The max-risk cap is a hard limit —
+          a signal that would exceed it is blocked at dispatch. Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              {(['percent', 'fixed'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setRisk({ ...risk, mode: m })}
+                  className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
+                    risk.mode === m
+                      ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                      : 'border-border-primary text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {m === 'percent' ? 'Percent of equity' : 'Fixed dollar amount'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                {risk.mode === 'percent' ? (
+                  <Input label="Risk % per trade" type="number" step="0.1" value={risk.riskPct}
+                    onChange={(e) => setRisk({ ...risk, riskPct: e.target.value })} />
+                ) : (
+                  <Input label="Risk $ per trade" type="number" step="1" value={risk.fixedAmount}
+                    onChange={(e) => setRisk({ ...risk, fixedAmount: e.target.value })} />
+                )}
+              </div>
+              <div className="flex-1">
+                <Input label="Max risk % (cap)" type="number" step="0.1" value={risk.maxRiskPct}
+                  onChange={(e) => setRisk({ ...risk, maxRiskPct: e.target.value })} />
+              </div>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              {risk.mode === 'percent'
+                ? 'Lots are sized so the loss at the stop equals this % of equity.'
+                : 'Lots are sized so the loss at the stop equals this dollar amount — still capped by the max-risk %.'}
             </p>
           </>
         )}

@@ -11,6 +11,7 @@ import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
 import { isUserAuthorized } from './access';
 import { loadTpMultiples } from './targets';
+import { loadRiskSettings } from './risk';
 import { renderMessage, directionLabel } from './messages';
 import * as session from './session';
 import { STATES } from './session';
@@ -121,14 +122,19 @@ export class HitlService implements HitlBotDeps {
       return { kind: 'error', text: `Broker not ready: ${err instanceof Error ? err.message : String(err)}` };
     }
 
+    const risk = await loadRiskSettings(cfg);
     const sized = computeLots({
       equity,
-      riskPct: cfg.riskPct,
-      maxRiskPct: cfg.maxRiskPerTrade,
+      riskPct: risk.riskPct,
+      maxRiskPct: risk.maxRiskPct,
       entry: lv.levels.entry,
       sl: lv.levels.sl,
       spec,
+      riskMode: risk.mode,
+      fixedRiskAmount: risk.fixedAmount,
     });
+    // Display the *actual* risk taken (works for both modes).
+    const riskPctDisplay = equity > 0 ? (sized.riskAmount / equity) * 100 : 0;
 
     const plan = buildLegPlan(s.signalId, lv.levels, sized.lots, cfg, spec);
 
@@ -147,7 +153,7 @@ export class HitlService implements HitlBotDeps {
       slFrom: cfg.slFrom,
       positionModel: cfg.positionModel,
       entryMode: cfg.entryMode,
-      riskPct: cfg.riskPct,
+      riskPct: riskPctDisplay,
       rangeReceivedAt: s.rangeReceivedAt ?? new Date(),
     });
 
@@ -166,7 +172,7 @@ export class HitlService implements HitlBotDeps {
       tp2: fmt(lv.levels.tp2),
       tp3: fmt(lv.levels.tp3),
       lots: fmt(sized.lots),
-      risk: fmt(cfg.riskPct),
+      risk: fmt(riskPctDisplay),
       riskAmount: fmt(sized.riskAmount),
       legs: legLines,
     });
@@ -211,6 +217,7 @@ export class HitlService implements HitlBotDeps {
       spec,
       cfg: this.ctx.cfg,
       isDemo: broker.isDemo(),
+      maxRiskPct: (await loadRiskSettings(this.ctx.cfg)).maxRiskPct,
     });
     if (!gate.ok) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: gate.reason });

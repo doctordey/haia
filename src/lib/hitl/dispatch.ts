@@ -66,6 +66,7 @@ export interface GateInput {
   spec: HitlSymbolSpec;
   cfg: HitlConfig;
   isDemo: boolean;
+  maxRiskPct?: number; // effective cap (in-app override); defaults to cfg.maxRiskPerTrade
 }
 
 export type GateResult = { ok: true } | { ok: false; reason: string };
@@ -92,11 +93,12 @@ export function preDispatchGates(input: GateInput): GateResult {
     : entry > tp1 && tp1 > tp2 && tp2 > tp3;
   if (!ordered) return { ok: false, reason: 'TP ladder is not ordered beyond entry' };
 
-  // Computed risk must respect the hard cap.
+  // Computed risk must respect the hard cap (in-app override or env default).
+  const maxRiskPct = input.maxRiskPct ?? cfg.maxRiskPerTrade;
   const riskAmount = lots * r * valuePerPoint(spec);
   const riskPct = equity > 0 ? (riskAmount / equity) * 100 : Infinity;
-  if (riskPct > cfg.maxRiskPerTrade + 1e-9) {
-    return { ok: false, reason: `risk ${riskPct.toFixed(2)}% exceeds cap ${cfg.maxRiskPerTrade}%` };
+  if (riskPct > maxRiskPct + 1e-9) {
+    return { ok: false, reason: `risk ${riskPct.toFixed(2)}% exceeds cap ${maxRiskPct}%` };
   }
 
   return { ok: true };

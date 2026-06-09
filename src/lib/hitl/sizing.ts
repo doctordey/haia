@@ -27,6 +27,8 @@ export interface ComputeLotsInput {
   entry: number;
   sl: number;
   spec: HitlSymbolSpec;
+  riskMode?: 'percent' | 'fixed';
+  fixedRiskAmount?: number; // $ per trade when riskMode === 'fixed'
 }
 
 export interface ComputeLotsResult {
@@ -50,12 +52,20 @@ export function computeLots(input: ComputeLotsInput): ComputeLotsResult {
     maxOrderSize: spec.volumeMax,
   };
 
+  // Fixed-$ mode maps onto the same percent_equity path by expressing the
+  // dollar amount as a percent of live equity — so the max-risk cap and all
+  // the lot clamps/rounding apply identically to both modes.
+  const effectiveRiskPct =
+    input.riskMode === 'fixed' && input.fixedRiskAmount && input.fixedRiskAmount > 0 && equity > 0
+      ? (input.fixedRiskAmount / equity) * 100
+      : riskPct;
+
   // Map HITL's risk-percent model onto the existing percent_equity path.
   const sizingConfig: SizingConfig = {
     mode: 'percent_equity',
     executionMode: 'single',          // HITL does its own two-leg split
     strictLots: {},
-    baseRiskPercent: riskPct,
+    baseRiskPercent: effectiveRiskPct,
     sizeMultipliers: { Small: 1, Medium: 1, Large: 1 },
     maxRiskPercent: maxRiskPct,
     minStopDistance: 0,               // R is already validated > 0 by computeLevels

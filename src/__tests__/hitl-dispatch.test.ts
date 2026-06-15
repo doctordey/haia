@@ -3,7 +3,7 @@ import { buildLegPlan, preDispatchGates, openLegs } from '@/lib/hitl/dispatch';
 import { loadHitlConfig, type HitlConfig } from '@/lib/hitl/config';
 import type { ComputedLevels } from '@/lib/hitl/levels';
 import type { HitlSymbolSpec } from '@/lib/hitl/sizing';
-import { clientIdFor, signalIdPrefix, type HitlBroker, type HitlPosition, type OpenOrderParams } from '@/lib/hitl/metaapi';
+import { buildHitlBroker, clientIdFor, signalIdPrefix, type HitlBroker, type HitlPosition, type OpenOrderParams } from '@/lib/hitl/metaapi';
 
 const spec: HitlSymbolSpec = { tickValue: 1, tickSize: 1, volumeMin: 0.01, volumeMax: 100, volumeStep: 0.01 };
 
@@ -128,6 +128,29 @@ function mockBroker(openImpl: (p: OpenOrderParams) => Promise<{ ticket: string }
 }
 
 const twoLegs = () => buildLegPlan('sigX', buyLevels, 2.5, cfg(), spec).legs;
+
+describe('broker realizedPnl (from streaming history)', () => {
+  // sigABC → clientId prefix hh_sigABC_ ; entry deal carries it, close deal doesn't.
+  const deals = [
+    { positionId: '100', clientId: clientIdFor('sigABC', 'A'), profit: 0, commission: -1, swap: 0 },   // entry
+    { positionId: '100', clientId: 'BROKER_TP', profit: 50, commission: 0, swap: -0.5 },                // TP close
+    { positionId: '999', clientId: null, profit: 9999 },                                                // unrelated
+  ];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const broker = buildHitlBroker({ historyStorage: { deals } } as any, true);
+
+  it('sums all deals for the signal, found via the clientId-tagged entry deal', () => {
+    expect(broker.realizedPnl!('sigABC', [])).toBeCloseTo(48.5);
+  });
+
+  it('also matches by recorded position ticket', () => {
+    expect(broker.realizedPnl!('sigABC', ['100'])).toBeCloseTo(48.5);
+  });
+
+  it('returns null when nothing matches', () => {
+    expect(broker.realizedPnl!('sigNONE', [])).toBeNull();
+  });
+});
 
 describe('openLegs', () => {
   it('opens both legs → OPEN', async () => {

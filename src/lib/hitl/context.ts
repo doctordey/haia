@@ -27,9 +27,6 @@ export interface HitlContext {
   /** The opted-in HITL account (tradingAccounts.hitlEnabled). null → none armed. */
   resolveTargetAccount(): Promise<TargetAccount | null>;
 
-  /** Realized P/L for a closed signal, if the worker can source it (else null). */
-  realizedPnlForSignal?(signalId: string, since: Date, tickets: string[]): Promise<number | null>;
-
   /** Broker symbol names similar to `query`, for "did you mean" hints (else []). */
   suggestSymbols?(query: string): Promise<string[]>;
 }

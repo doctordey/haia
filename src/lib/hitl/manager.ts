@@ -154,12 +154,14 @@ export class HitlManager {
       const positions = broker.positionsBySignal(s.signalId);
       if (positions.length > 0) continue;
 
+      // Realized P/L from the broker's live history storage. Match by position
+      // ticket — broker-generated TP/SL close deals don't carry our clientId.
+      const tickets = (s.legs ?? []).map((l) => l.ticket).filter((t): t is string => !!t);
       let realizedPnl: number | null = null;
-      if (this.ctx.realizedPnlForSignal) {
-        // Match deals by position ticket — broker-generated TP/SL close deals
-        // don't carry our clientId, so a clientId-only match misses the P/L.
-        const tickets = (s.legs ?? []).map((l) => l.ticket).filter((t): t is string => !!t);
-        realizedPnl = await this.ctx.realizedPnlForSignal(s.signalId, s.dispatchedAt, tickets).catch(() => null);
+      try {
+        realizedPnl = broker.realizedPnl?.(s.signalId, tickets) ?? null;
+      } catch (err) {
+        console.warn(`[hitl] realizedPnl lookup failed for ${s.signalId}:`, err);
       }
       const closed = await session.transition(s.id, [STATES.OPEN], STATES.CLOSED, {
         closedAt: new Date(),

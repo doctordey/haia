@@ -52,6 +52,8 @@ export interface HitlBroker {
   partialClose(ticket: string, volume: number): Promise<void>;
   /** Live positions whose clientId belongs to this signal (prefix match). */
   positionsBySignal(signalId: string): HitlPosition[];
+  /** Realized P/L for a signal's positions from the streaming history (null if unknown). */
+  realizedPnl?(signalId: string, tickets: string[]): number | null;
 }
 
 // MetaApi stores clientId inside the platform comment, so it must (a) match a
@@ -230,6 +232,31 @@ export function buildHitlBroker(connection: any, isDemoAccount: boolean): HitlBr
           takeProfit: p.takeProfit != null ? Number(p.takeProfit) : null,
           profit: Number(p.profit ?? 0),
         }));
+    },
+
+    realizedPnl(signalId, tickets) {
+      // Use the streaming connection's in-memory history storage — it's already
+      // synchronised and receives close deals live, so no extra RPC connection
+      // (which is slow and often returns empty right after a close).
+      const hs = connection.historyStorage;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const deals: any[] = hs?.deals ?? [];
+      if (deals.length === 0) return null;
+
+      const prefix = signalIdPrefix(signalId);
+      // Candidate position ids: the tickets we recorded at open, PLUS any
+      // discovered from entry deals carrying our clientId (close deals — TP/SL —
+      // don't carry it, but share the positionId).
+      const ids = new Set(tickets.map(String));
+      for (const d of deals) {
+        if (typeof d.clientId === 'string' && d.clientId.startsWith(prefix) && d.positionId != null) {
+          ids.add(String(d.positionId));
+        }
+      }
+
+      const matched = deals.filter((d) => d.positionId != null && ids.has(String(d.positionId)));
+      if (matched.length === 0) return null;
+      return matched.reduce((sum, d) => sum + Number(d.profit ?? 0) + Number(d.commission ?? 0) + Number(d.swap ?? 0), 0);
     },
   };
 }

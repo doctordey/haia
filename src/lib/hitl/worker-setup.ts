@@ -14,10 +14,10 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
-import { fetchHistoricalDeals, fetchBrokerSymbols } from '@/lib/metaapi';
+import { fetchBrokerSymbols } from '@/lib/metaapi';
 import { getValidatedHitlConfig } from './config';
 import { loadChatIds } from './access';
-import { buildHitlBroker, signalIdPrefix } from './metaapi';
+import { buildHitlBroker } from './metaapi';
 import { suggestSymbolMatches } from './symbol-suggest';
 import type { HitlContext, TargetAccount } from './context';
 import { HitlService } from './service';
@@ -125,31 +125,6 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       }
       const c = connections.get(armed[0].id)!;
       return { accountId: armed[0].id, isDemo: c.isDemo };
-    },
-
-    async realizedPnlForSignal(signalId, since, tickets): Promise<number | null> {
-      const c = [...connections.values()][0];
-      if (!c) return null;
-      try {
-        // Fetch slightly before dispatch to be safe against clock skew.
-        const from = new Date(since.getTime() - 60_000);
-        const deals = await fetchHistoricalDeals(c.metaApiId, from, new Date());
-        const prefix = signalIdPrefix(signalId);
-        const ticketSet = new Set(tickets.map(String));
-        // Sum every deal for this signal's positions: entry deals carry our
-        // clientId; broker close deals (TP/SL) only share the positionId.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const matched = (deals as any[]).filter(
-          (d) =>
-            (d.positionId != null && ticketSet.has(String(d.positionId))) ||
-            (typeof d.clientId === 'string' && d.clientId.startsWith(prefix)),
-        );
-        if (matched.length === 0) return null;
-        return matched.reduce((sum, d) => sum + Number(d.profit ?? 0) + Number(d.commission ?? 0) + Number(d.swap ?? 0), 0);
-      } catch (err) {
-        console.warn(`[hitl] realizedPnl lookup failed for ${signalId}:`, err);
-        return null;
-      }
     },
 
     async suggestSymbols(query): Promise<string[]> {

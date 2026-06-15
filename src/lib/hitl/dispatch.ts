@@ -31,7 +31,9 @@ export function buildLegPlan(
   lots: number,
   cfg: HitlConfig,
   spec: HitlSymbolSpec,
+  opts: { tp3Enabled?: boolean } = {},
 ): LegPlan {
+  const tp3Enabled = opts.tp3Enabled ?? true;
   const mk = (leg: 'A' | 'B', volume: number, tp: number): HitlLeg => ({
     leg,
     tp,
@@ -41,9 +43,13 @@ export function buildLegPlan(
     status: 'pending',
   });
 
-  // Single-position model: one position straight to TP3.
-  if (cfg.positionModel === 'single') {
-    return { legs: [mk('A', lots, levels.tp3)], collapsed: false, note: 'single-position model → TP3' };
+  // The final/only target is TP3 when the runner is enabled, otherwise TP2.
+  const finalTp = tp3Enabled ? levels.tp3 : levels.tp2;
+  const finalLabel = tp3Enabled ? 'TP3' : 'TP2';
+
+  // Single-position model (or no runner): one position straight to the final TP.
+  if (cfg.positionModel === 'single' || !tp3Enabled) {
+    return { legs: [mk('A', lots, finalTp)], collapsed: false, note: `single-position model → ${finalLabel}` };
   }
 
   const split = splitLegs(lots, cfg.legSplit, spec);

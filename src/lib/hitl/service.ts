@@ -12,6 +12,7 @@ import { buildLegPlan, preDispatchGates, openLegs } from './dispatch';
 import { isUserAuthorized } from './access';
 import { loadTpMultiples } from './targets';
 import { loadRiskSettings } from './risk';
+import { loadExecutionSettings } from './execution';
 import { renderMessage, directionLabel } from './messages';
 import * as session from './session';
 import { STATES } from './session';
@@ -145,7 +146,9 @@ export class HitlService implements HitlBotDeps {
     // Display the *actual* risk taken (works for both modes).
     const riskPctDisplay = equity > 0 ? (sized.riskAmount / equity) * 100 : 0;
 
-    const plan = buildLegPlan(s.signalId, lv.levels, sized.lots, cfg, spec);
+    const exec = await loadExecutionSettings(cfg);
+    const effCfg = { ...cfg, positionModel: exec.positionModel };
+    const plan = buildLegPlan(s.signalId, lv.levels, sized.lots, effCfg, spec, { tp3Enabled: exec.tp3Enabled });
 
     await session.transition(sessionId, [STATES.AWAITING_RANGE, STATES.AWAITING_DIRECTION], STATES.AWAITING_APPROVAL, {
       accountId: target.accountId,
@@ -156,11 +159,11 @@ export class HitlService implements HitlBotDeps {
       r: lv.levels.r,
       tp1: lv.levels.tp1,
       tp2: lv.levels.tp2,
-      tp3: lv.levels.tp3,
+      tp3: lv.levels.tp3, // always stored for ladder geometry; toggle changes the leg target, not the gate
       lots: sized.lots,
       legs: plan.legs,
       slFrom: cfg.slFrom,
-      positionModel: cfg.positionModel,
+      positionModel: exec.positionModel,
       entryMode: cfg.entryMode,
       riskPct: riskPctDisplay,
       rangeReceivedAt: s.rangeReceivedAt ?? new Date(),
@@ -179,7 +182,7 @@ export class HitlService implements HitlBotDeps {
       r: fmt(lv.levels.r),
       tp1: fmt(lv.levels.tp1),
       tp2: fmt(lv.levels.tp2),
-      tp3: fmt(lv.levels.tp3),
+      tp3: exec.tp3Enabled ? fmt(lv.levels.tp3) : 'off',
       lots: fmt(sized.lots),
       risk: fmt(riskPctDisplay),
       riskAmount: fmt(sized.riskAmount),

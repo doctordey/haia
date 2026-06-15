@@ -35,6 +35,7 @@ export default function SettingsPage() {
         <TabsContent value="hitl" className="mt-4 space-y-4">
           <HitlAccessSection toast={toast} />
           <HitlRiskSection toast={toast} />
+          <HitlExecutionSection toast={toast} />
           <HitlTargetsSection toast={toast} />
           <HitlMessagesSection toast={toast} />
           <HitlSection toast={toast} />
@@ -370,6 +371,91 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
             <p className="text-xs text-text-tertiary">
               Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
             </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [model, setModel] = useState<'single' | 'two_position'>('two_position');
+  const [tp3, setTp3] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/execution')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) { setModel(d.positionModel); setTp3(d.tp3Enabled); } })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Two-position needs a TP3 runner; keep the two in sync.
+  function pickModel(m: 'single' | 'two_position') {
+    setModel(m);
+    if (m === 'two_position') setTp3(true);
+  }
+  function pickTp3(on: boolean) {
+    setTp3(on);
+    if (!on && model === 'two_position') setModel('single');
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/execution', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionModel: model, tp3Enabled: tp3 }),
+      });
+      if (res.ok) toast('Execution saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  const summary = model === 'two_position'
+    ? 'Two positions: Leg A → TP2, Leg B → TP3. Both move to breakeven at TP1.'
+    : tp3
+      ? 'One position → TP3. Moves to breakeven at TP1.'
+      : 'One position → TP2 (full profit). Moves to breakeven at TP1.';
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Execution</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          How many positions to open and whether to use TP3 (the runner). Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div>
+              <label className="text-xs text-text-secondary">Positions</label>
+              <div className="flex gap-2 mt-1">
+                {([['two_position', 'Two positions'], ['single', 'Single position']] as const).map(([m, label]) => (
+                  <button key={m} onClick={() => pickModel(m)}
+                    className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
+                      model === m ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                        : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className={`flex items-center gap-2 text-sm ${model === 'two_position' ? 'opacity-50' : ''}`}>
+              <input type="checkbox" checked={tp3} disabled={model === 'two_position'}
+                onChange={(e) => pickTp3(e.target.checked)} />
+              <span className="text-text-secondary">Include TP3 (runner). Uncheck to take full profit at TP2.</span>
+            </label>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-text-tertiary">{summary}</p>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
           </>
         )}
       </CardContent>

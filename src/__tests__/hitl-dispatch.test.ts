@@ -56,6 +56,23 @@ describe('buildLegPlan', () => {
     expect(plan.legs).toHaveLength(1);
     expect(plan.legs[0]).toMatchObject({ leg: 'A', tp: 5060, volume: 2.5 });
   });
+
+  it('single-position with TP3 disabled: one leg → TP2 (full profit at TP2)', () => {
+    const plan = buildLegPlan('sig4', buyLevels, 2.5, cfg({ positionModel: 'single' }), spec, { tp3Enabled: false });
+    expect(plan.legs).toHaveLength(1);
+    expect(plan.legs[0]).toMatchObject({ leg: 'A', tp: 5040, volume: 2.5 });
+  });
+
+  it('TP3 disabled forces a single position even in two-position mode', () => {
+    const plan = buildLegPlan('sig5', buyLevels, 2.5, cfg({ positionModel: 'two_position' }), spec, { tp3Enabled: false });
+    expect(plan.legs).toHaveLength(1);
+    expect(plan.legs[0]).toMatchObject({ leg: 'A', tp: 5040, volume: 2.5 });
+  });
+
+  it('two-position with TP3 enabled is unchanged (default)', () => {
+    const plan = buildLegPlan('sig6', buyLevels, 2.5, cfg(), spec, { tp3Enabled: true });
+    expect(plan.legs.map((l) => l.tp)).toEqual([5040, 5060]);
+  });
 });
 
 describe('preDispatchGates', () => {

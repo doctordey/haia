@@ -121,7 +121,14 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       const armed = enabled.filter((r) => connections.has(r.id));
       if (armed.length === 0) return null;
       if (armed.length > 1) {
-        console.warn(`[hitl] ${armed.length} HITL accounts armed — targeting first (${armed[0].name}).`);
+        // Ambiguous target — refuse to dispatch rather than guess and hit the
+        // wrong account. The API enforces a single armed account; this is the
+        // last-line guard against a residual/races/manual-edit multi-armed state.
+        console.error(
+          `[hitl] ${armed.length} HITL accounts armed (${armed.map((a) => a.name).join(', ')}) — refusing to dispatch. ` +
+          'Disable HITL on all but one account in Settings.',
+        );
+        return null;
       }
       const c = connections.get(armed[0].id)!;
       return { accountId: armed[0].id, isDemo: c.isDemo };

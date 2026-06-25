@@ -50,6 +50,34 @@
       "when": 1775510585757,
       "tag": "0006_powerful_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780890066111,
+      "tag": "0007_hitl_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780894396543,
+      "tag": "0008_hitl_symbol_maps",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780898904589,
+      "tag": "0009_hitl_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780904471767,
+      "tag": "0010_hitl_chats",
+      "breakpoints": true
     }
   ]
 }

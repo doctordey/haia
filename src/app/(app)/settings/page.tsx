@@ -22,6 +22,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="hitl">HITL</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -29,6 +30,15 @@ export default function SettingsPage() {
 
         <TabsContent value="accounts" className="mt-4 space-y-4">
           <AccountsSection accounts={accounts} onRefetch={refetch} toast={toast} />
+        </TabsContent>
+
+        <TabsContent value="hitl" className="mt-4 space-y-4">
+          <HitlAccessSection toast={toast} />
+          <HitlRiskSection toast={toast} />
+          <HitlExecutionSection toast={toast} />
+          <HitlTargetsSection toast={toast} />
+          <HitlMessagesSection toast={toast} />
+          <HitlSection toast={toast} />
         </TabsContent>
 
         <TabsContent value="profile" className="mt-4 space-y-4">
@@ -50,6 +60,26 @@ export default function SettingsPage() {
 function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRefetch: () => void; toast: (msg: string, type?: string) => void }) {
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
+
+  async function handleToggleHitl(id: string, next: boolean) {
+    setTogglingHitl(id);
+    try {
+      const res = await fetch(`/api/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hitlEnabled: next }),
+      });
+      if (res.ok) {
+        toast(next ? 'HITL enabled for this account' : 'HITL disabled', 'success');
+        onRefetch();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || 'Failed to update HITL', 'error');
+      }
+    } catch { toast('Failed to update HITL', 'error'); }
+    finally { setTogglingHitl(null); }
+  }
 
   async function handleSync(id: string) {
     setSyncing(id);
@@ -116,6 +146,17 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   <Badge variant={acc.syncStatus === 'synced' ? 'profit' : acc.syncStatus === 'error' ? 'loss' : acc.syncStatus === 'syncing' ? 'info' : 'default'}>
                     {acc.syncStatus}
                   </Badge>
+                  {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  <Button
+                    variant={acc.hitlEnabled ? 'danger' : 'secondary'}
+                    size="sm"
+                    onClick={() => handleToggleHitl(acc.id, !acc.hitlEnabled)}
+                    loading={togglingHitl === acc.id}
+                    disabled={!acc.hitlEnabled && acc.accessMode !== 'trading'}
+                    title={!acc.hitlEnabled && acc.accessMode !== 'trading' ? 'Requires a trading password (read-only account)' : 'Enable approved-trade execution on this account'}
+                  >
+                    {acc.hitlEnabled ? 'Disable HITL' : 'Enable HITL'}
+                  </Button>
                   <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id)} loading={syncing === acc.id}>
                     Re-sync
                   </Button>
@@ -129,6 +170,611 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
         </div>
       )}
     </>
+  );
+}
+
+type AuthorizedUser = { id: string; telegramUserId: string; label: string | null };
+type ChatDest = { id: string; chatId: string; label: string | null };
+
+function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [users, setUsers] = useState<AuthorizedUser[]>([]);
+  const [chats, setChats] = useState<ChatDest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [userForm, setUserForm] = useState({ telegramUserId: '', label: '' });
+  const [chatForm, setChatForm] = useState({ chatId: '', label: '' });
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [a, c] = await Promise.all([fetch('/api/hitl/access'), fetch('/api/hitl/chats')]);
+      if (a.ok) setUsers((await a.json()).users || []);
+      if (c.ok) setChats((await c.json()).chats || []);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addChat() {
+    if (!chatForm.chatId.trim()) return;
+    setBusy('add-chat');
+    try {
+      const res = await fetch('/api/hitl/chats', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(chatForm),
+      });
+      if (res.ok) { toast('Destination added', 'success'); setChatForm({ chatId: '', label: '' }); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add destination', 'error'); }
+    } catch { toast('Failed to add destination', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function addUser() {
+    if (!userForm.telegramUserId.trim()) return;
+    setBusy('add-user');
+    try {
+      const res = await fetch('/api/hitl/access', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(userForm),
+      });
+      if (res.ok) { toast('User authorized', 'success'); setUserForm({ telegramUserId: '', label: '' }); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add user', 'error'); }
+    } catch { toast('Failed to add user', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function remove(kind: 'chats' | 'access', id: string) {
+    setBusy(id);
+    try {
+      const res = await fetch(`/api/hitl/${kind}/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Removed', 'success'); load(); }
+      else toast('Failed to remove', 'error');
+    } catch { toast('Failed to remove', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Access</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Where the bot posts prompts, and who can respond/approve. Prompts and confirm cards fan out to every
+          destination — add a DM and a group to use both. Changes take effect immediately.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary">Destinations (DM + group(s))</label>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Input label="Chat id" placeholder="123456789 (DM) or -1001234567890 (group)"
+                value={chatForm.chatId} onChange={(e) => setChatForm({ ...chatForm, chatId: e.target.value })} />
+            </div>
+            <div className="flex-1">
+              <Input label="Label (optional)" placeholder="e.g. Desk group"
+                value={chatForm.label} onChange={(e) => setChatForm({ ...chatForm, label: e.target.value })} />
+            </div>
+            <Button onClick={addChat} loading={busy === 'add-chat'} disabled={!chatForm.chatId.trim()}>Add</Button>
+          </div>
+          <p className="text-xs text-text-tertiary">
+            Tip: send the bot <span className="font-mono">/id</span> in a DM or group to get the chat id (groups are negative).
+          </p>
+          {loading ? null : chats.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No destinations yet (HITL_OPERATOR_CHAT_ID env still applies if set).</p>
+          ) : (
+            <div className="space-y-1.5">
+              {chats.map((c) => (
+                <div key={c.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono text-text-primary">{c.chatId}</span>
+                    {Number(c.chatId) < 0 && <Badge variant="info">group</Badge>}
+                    {c.label && <span className="text-text-tertiary">· {c.label}</span>}
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => remove('chats', c.id)} loading={busy === c.id}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-text-secondary">Authorized users</label>
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Input label="Telegram user id" placeholder="123456789"
+                value={userForm.telegramUserId} onChange={(e) => setUserForm({ ...userForm, telegramUserId: e.target.value })} />
+            </div>
+            <div className="flex-1">
+              <Input label="Label (optional)" placeholder="e.g. Brandon"
+                value={userForm.label} onChange={(e) => setUserForm({ ...userForm, label: e.target.value })} />
+            </div>
+            <Button onClick={addUser} loading={busy === 'add-user'} disabled={!userForm.telegramUserId.trim()}>Add</Button>
+          </div>
+          {loading ? (
+            <p className="text-xs text-text-tertiary">Loading…</p>
+          ) : users.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No users authorized in-app. (Anyone in AUTHORIZED_TELEGRAM_USER_IDS env still applies.)</p>
+          ) : (
+            <div className="space-y-1.5">
+              {users.map((u) => (
+                <div key={u.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono text-text-primary">{u.telegramUserId}</span>
+                    {u.label && <span className="text-text-tertiary">· {u.label}</span>}
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => remove('access', u.id)} loading={busy === u.id}>Remove</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [targets, setTargets] = useState({ tp1: '1', tp2: '2', tp3: '5' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/targets')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setTargets({ tp1: String(d.tp1), tp2: String(d.tp2), tp3: String(d.tp3) }); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/targets', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tp1: Number(targets.tp1), tp2: Number(targets.tp2), tp3: Number(targets.tp3) }),
+      });
+      if (res.ok) toast('Targets saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save targets', 'error'); }
+    } catch { toast('Failed to save targets', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Targets (R multiples)</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Distance of each target from entry, in multiples of R (the range width). TP1 is the breakeven trigger,
+          TP2 is Leg A&apos;s take-profit, TP3 is Leg B&apos;s. Must be strictly increasing. Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Input label="TP1 — breakeven" type="number" step="0.1" value={targets.tp1}
+                  onChange={(e) => setTargets({ ...targets, tp1: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="TP2 — Leg A" type="number" step="0.1" value={targets.tp2}
+                  onChange={(e) => setTargets({ ...targets, tp2: e.target.value })} />
+              </div>
+              <div className="flex-1">
+                <Input label="TP3 — Leg B" type="number" step="0.1" value={targets.tp3}
+                  onChange={(e) => setTargets({ ...targets, tp3: e.target.value })} />
+              </div>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [model, setModel] = useState<'single' | 'two_position'>('two_position');
+  const [tp3, setTp3] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/execution')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) { setModel(d.positionModel); setTp3(d.tp3Enabled); } })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Two-position needs a TP3 runner; keep the two in sync.
+  function pickModel(m: 'single' | 'two_position') {
+    setModel(m);
+    if (m === 'two_position') setTp3(true);
+  }
+  function pickTp3(on: boolean) {
+    setTp3(on);
+    if (!on && model === 'two_position') setModel('single');
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/execution', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionModel: model, tp3Enabled: tp3 }),
+      });
+      if (res.ok) toast('Execution saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  const summary = model === 'two_position'
+    ? 'Two positions: Leg A → TP2, Leg B → TP3. Both move to breakeven at TP1.'
+    : tp3
+      ? 'One position → TP3. Moves to breakeven at TP1.'
+      : 'One position → TP2 (full profit). Moves to breakeven at TP1.';
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Execution</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          How many positions to open and whether to use TP3 (the runner). Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div>
+              <label className="text-xs text-text-secondary">Positions</label>
+              <div className="flex gap-2 mt-1">
+                {([['two_position', 'Two positions'], ['single', 'Single position']] as const).map(([m, label]) => (
+                  <button key={m} onClick={() => pickModel(m)}
+                    className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
+                      model === m ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                        : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className={`flex items-center gap-2 text-sm ${model === 'two_position' ? 'opacity-50' : ''}`}>
+              <input type="checkbox" checked={tp3} disabled={model === 'two_position'}
+                onChange={(e) => pickTp3(e.target.checked)} />
+              <span className="text-text-secondary">Include TP3 (runner). Uncheck to take full profit at TP2.</span>
+            </label>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-text-tertiary">{summary}</p>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [risk, setRisk] = useState({ mode: 'percent', riskPct: '1', fixedAmount: '50', maxRiskPct: '5' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/hitl/risk')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setRisk({ mode: d.mode, riskPct: String(d.riskPct), fixedAmount: String(d.fixedAmount || ''), maxRiskPct: String(d.maxRiskPct) });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/risk', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: risk.mode,
+          riskPct: Number(risk.riskPct),
+          fixedAmount: Number(risk.fixedAmount),
+          maxRiskPct: Number(risk.maxRiskPct),
+        }),
+      });
+      if (res.ok) toast('Risk saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save risk', 'error'); }
+    } catch { toast('Failed to save risk', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Risk per trade</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          How much each trade risks (the distance from entry to the 1R stop). The max-risk cap is a hard limit —
+          a signal that would exceed it is blocked at dispatch. Applies to new signals only.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              {(['percent', 'fixed'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setRisk({ ...risk, mode: m })}
+                  className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
+                    risk.mode === m
+                      ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                      : 'border-border-primary text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {m === 'percent' ? 'Percent of equity' : 'Fixed dollar amount'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                {risk.mode === 'percent' ? (
+                  <Input label="Risk % per trade" type="number" step="0.1" value={risk.riskPct}
+                    onChange={(e) => setRisk({ ...risk, riskPct: e.target.value })} />
+                ) : (
+                  <Input label="Risk $ per trade" type="number" step="1" value={risk.fixedAmount}
+                    onChange={(e) => setRisk({ ...risk, fixedAmount: e.target.value })} />
+                )}
+              </div>
+              <div className="flex-1">
+                <Input label="Max risk % (cap)" type="number" step="0.1" value={risk.maxRiskPct}
+                  onChange={(e) => setRisk({ ...risk, maxRiskPct: e.target.value })} />
+              </div>
+              <Button onClick={handleSave} loading={saving}>Save</Button>
+            </div>
+            <p className="text-xs text-text-tertiary">
+              {risk.mode === 'percent'
+                ? 'Lots are sized so the loss at the stop equals this % of equity.'
+                : 'Lots are sized so the loss at the stop equals this dollar amount — still capped by the max-risk %.'}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+type HitlMessage = { key: string; label: string; description: string; variables: string[]; default: string; value: string };
+
+function HitlMessagesSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [messages, setMessages] = useState<HitlMessage[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [dir, setDir] = useState({ BUY: '🟢 BUY', SELL: '🔴 SELL' });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [m, d] = await Promise.all([fetch('/api/hitl/messages'), fetch('/api/hitl/direction-labels')]);
+      if (m.ok) {
+        const data = await m.json();
+        setMessages(data.messages || []);
+        setDrafts(Object.fromEntries((data.messages || []).map((x: HitlMessage) => [x.key, x.value])));
+      }
+      if (d.ok) { const dl = await d.json(); setDir({ BUY: dl.BUY, SELL: dl.SELL }); }
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function saveDir() {
+    setBusy('dir');
+    try {
+      const res = await fetch('/api/hitl/direction-labels', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dir),
+      });
+      if (res.ok) toast('Direction labels saved', 'success');
+      else { const e = await res.json().catch(() => ({})); toast(e.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function save(key: string) {
+    setBusy(key);
+    try {
+      const res = await fetch('/api/hitl/messages', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, template: drafts[key] }),
+      });
+      if (res.ok) toast('Message saved', 'success');
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function reset(key: string) {
+    setBusy(key);
+    try {
+      const res = await fetch(`/api/hitl/messages/${key}`, { method: 'DELETE' });
+      if (res.ok) { const d = await res.json(); setDrafts((p) => ({ ...p, [key]: d.value })); toast('Reset to default', 'success'); }
+      else toast('Failed to reset', 'error');
+    } catch { toast('Failed to reset', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Messages</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Customise the text the bot sends. Use <span className="font-mono">{'{variable}'}</span> placeholders — the available
+          ones are listed under each. Changes apply to new messages immediately.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-1.5 border-b border-border-primary pb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-text-primary">Direction label</span>
+            <Button size="sm" onClick={saveDir} loading={busy === 'dir'}>Save</Button>
+          </div>
+          <p className="text-xs text-text-tertiary">What <span className="font-mono">{'{direction}'}</span> renders as.</p>
+          <div className="flex items-end gap-2">
+            <div className="flex-1"><Input label="BUY (bullish)" value={dir.BUY} onChange={(e) => setDir({ ...dir, BUY: e.target.value })} /></div>
+            <div className="flex-1"><Input label="SELL (bearish)" value={dir.SELL} onChange={(e) => setDir({ ...dir, SELL: e.target.value })} /></div>
+          </div>
+        </div>
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : (
+          messages.map((m) => {
+            const dirty = drafts[m.key] !== m.value;
+            const isDefault = m.value === m.default;
+            return (
+              <div key={m.key} className="space-y-1.5 border-b border-border-primary pb-3 last:border-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-text-primary">{m.label}</span>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => reset(m.key)} loading={busy === m.key} disabled={isDefault}>Reset</Button>
+                    <Button size="sm" onClick={() => save(m.key)} loading={busy === m.key} disabled={!dirty}>Save</Button>
+                  </div>
+                </div>
+                <p className="text-xs text-text-tertiary">{m.description}</p>
+                <textarea
+                  value={drafts[m.key] ?? ''}
+                  onChange={(e) => setDrafts((p) => ({ ...p, [m.key]: e.target.value }))}
+                  rows={Math.min(6, (drafts[m.key] ?? '').split('\n').length + 1)}
+                  className="w-full px-3 py-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-md)] text-sm text-text-primary font-mono"
+                />
+                <div className="flex flex-wrap gap-1">
+                  {m.variables.map((v) => (
+                    <span key={v} className="text-xs font-mono px-1.5 py-0.5 bg-bg-elevated rounded text-text-secondary">{`{${v}}`}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+type SymbolMap = { id: string; tvSymbol: string; brokerSymbol: string };
+
+function HitlSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [maps, setMaps] = useState<SymbolMap[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ tvSymbol: '', brokerSymbol: '' });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/hitl/symbol-map');
+      if (res.ok) setMaps(await res.json());
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleAdd() {
+    if (!form.tvSymbol.trim() || !form.brokerSymbol.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch('/api/hitl/symbol-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (res.ok) {
+        toast('Mapping saved', 'success');
+        setForm({ tvSymbol: '', brokerSymbol: '' });
+        load();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast(d.error || 'Failed to save mapping', 'error');
+      }
+    } catch { toast('Failed to save mapping', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: string) {
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/hitl/symbol-map/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Mapping removed', 'success'); load(); }
+      else toast('Failed to remove', 'error');
+    } catch { toast('Failed to remove', 'error'); }
+    finally { setDeleting(null); }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-medium">Symbol Map</h3>
+        <p className="text-xs text-text-tertiary mt-1">
+          Map TradingView tickers to the symbol names on your broker. Anything not listed is used as-is.
+          Example: <span className="font-mono">UK10YBGBP → UKGILT</span>.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <Input
+              label="TradingView ticker"
+              placeholder="UK10YBGBP"
+              value={form.tvSymbol}
+              onChange={(e) => setForm({ ...form, tvSymbol: e.target.value.toUpperCase() })}
+            />
+          </div>
+          <div className="flex-1">
+            <Input
+              label="Broker symbol"
+              placeholder="UKGILT"
+              value={form.brokerSymbol}
+              onChange={(e) => setForm({ ...form, brokerSymbol: e.target.value })}
+            />
+          </div>
+          <Button onClick={handleAdd} loading={saving} disabled={!form.tvSymbol.trim() || !form.brokerSymbol.trim()}>
+            Add
+          </Button>
+        </div>
+
+        {loading ? (
+          <p className="text-xs text-text-tertiary">Loading…</p>
+        ) : maps.length === 0 ? (
+          <p className="text-xs text-text-tertiary">No mappings yet — tickers are used exactly as TradingView sends them.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {maps.map((m) => (
+              <div key={m.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                <div className="flex items-center gap-2 font-mono text-sm">
+                  <span className="text-text-primary">{m.tvSymbol}</span>
+                  <span className="text-text-tertiary">→</span>
+                  <span className="text-accent-primary">{m.brokerSymbol}</span>
+                </div>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(m.id)} loading={deleting === m.id}>
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

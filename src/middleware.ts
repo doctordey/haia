@@ -5,6 +5,11 @@ import { decode } from '@auth/core/jwt';
 const publicPaths = [
   '/', '/login', '/register', '/api/auth', '/api/health',
   '/api/signals/offset/webhook',
+  // Public REST API — authenticated per-request by API key (Authorization:
+  // Bearer / X-API-Key) inside each route, not by session cookie. The /haia/v1
+  // pretty path is rewritten to /api/v1 (next.config); middleware runs before
+  // the rewrite so both prefixes must be allowed here.
+  '/api/v1', '/haia/v1',
   // HITL webhooks — authenticated by their own shared secret (TradingView can't
   // do session auth). The /api/hitl/symbol-map and /api/hitl/access management
   // routes are intentionally NOT public. Both the /api/* routes and the

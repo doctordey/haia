@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades } from '@/lib/db/schema';
 import { eq, and, desc, gte, lte, sql, like, or } from 'drizzle-orm';
+import { normalizeTrade, upsertTrades } from '@/lib/trades/ingest';
+import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
 export async function GET(
   request: Request,
@@ -140,4 +142,67 @@ export async function GET(
       totalPages: Math.ceil(Number(countResult[0].count) / limit),
     },
   });
+}
+
+// Manually enter a trade/position (source = "manual"). Web-app counterpart of
+// the public POST /api/v1/accounts/:id/trades endpoint.
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ accountId: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { accountId } = await params;
+  const account = await db.query.tradingAccounts.findFirst({
+    where: and(eq(tradingAccounts.id, accountId), eq(tradingAccounts.userId, session.user.id)),
+  });
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const body = await request.json().catch(() => null);
+  if (!body) return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+
+  try {
+    const normalized = normalizeTrade(accountId, body, 'manual');
+    await upsertTrades([normalized]);
+    await recomputeAccountAggregates(accountId);
+    return NextResponse.json({ success: true, ticket: normalized.ticket }, { status: 201 });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : 'Invalid trade' }, { status: 400 });
+  }
+}
+
+// Delete a manual trade by id (?tradeId=). Only manual entries can be removed —
+// live (broker-synced) rows are owned by the sync and would just reappear.
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ accountId: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { accountId } = await params;
+  const account = await db.query.tradingAccounts.findFirst({
+    where: and(eq(tradingAccounts.id, accountId), eq(tradingAccounts.userId, session.user.id)),
+  });
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const tradeId = new URL(request.url).searchParams.get('tradeId');
+  if (!tradeId) return NextResponse.json({ error: 'tradeId is required' }, { status: 400 });
+
+  const deleted = await db
+    .delete(trades)
+    .where(and(eq(trades.id, tradeId), eq(trades.accountId, accountId), eq(trades.source, 'manual')))
+    .returning({ id: trades.id });
+
+  if (deleted.length === 0) {
+    return NextResponse.json({ error: 'Manual trade not found (live trades cannot be deleted)' }, { status: 404 });
+  }
+
+  await recomputeAccountAggregates(accountId);
+  return NextResponse.json({ success: true });
 }

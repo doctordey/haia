@@ -1,6 +1,8 @@
 export type Platform = 'MT4' | 'MT5';
 export type Direction = 'BUY' | 'SELL';
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'error';
+export type AccountKind = 'live' | 'demo';
+export type TradeSource = 'live' | 'manual';
 
 export interface Trade {
   id: string;
@@ -22,6 +24,7 @@ export interface Trade {
   isOpen: boolean;
   magicNumber: number | null;
   comment: string | null;
+  source: TradeSource;
 }
 
 export interface DailySnapshot {
@@ -84,12 +87,27 @@ export interface TradingAccount {
   broker: string | null;
   leverage: number | null;
   currency: string;
+  accountType: AccountKind | null;
+  labelName: string | null;
+  labelLogin: string | null;
+  labelType: AccountKind | null;
+  distinguishManual: boolean;
   isActive: boolean;
   lastSyncAt: Date | null;
   syncStatus: SyncStatus;
   syncError: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string;
+  lastUsedAt: Date | null;
+  expiresAt: Date | null;
+  createdAt: Date;
 }
 
 export interface EquityPoint {

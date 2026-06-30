@@ -26,6 +26,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   signalSources: many(signalSources),
   signalConfigs: many(signalConfigs),
   journalEntries: many(tradeJournal),
+  apiKeys:       many(apiKeys),
 }));
 
 // ─── Sessions ────────────────────────────────────────
@@ -54,8 +55,24 @@ export const tradingAccounts = pgTable('trading_accounts', {
   broker:     text('broker'),
   leverage:   integer('leverage'),
   currency:   text('currency').notNull().default('USD'),
+  accountType: text('account_type'),                              // detected/declared: "live" | "demo" | null (unknown)
   accessMode: text('access_mode').notNull().default('investor'),  // "investor" (read-only) | "trading" (full access)
   hitlEnabled: boolean('hitl_enabled').notNull().default(false),   // opt-in: this account receives approved HITL trades
+
+  // ── Public-endpoint label overrides ──
+  // What the REST distribute endpoints expose for the identifying fields. When a
+  // label is null the real value (name / login / accountType) is exposed instead.
+  // Lets an operator publish an account under a pseudonym without changing the
+  // underlying broker credentials.
+  labelName:  text('label_name'),
+  labelLogin: text('label_login'),
+  labelType:  text('label_type'),                                 // override: "live" | "demo" | null
+
+  // When true, manual entries are kept distinguishable from live (broker-synced)
+  // ones — surfaced as a `source` field and filterable. When false the two are
+  // pooled and reported together everywhere.
+  distinguishManual: boolean('distinguish_manual').notNull().default(true),
+
   isActive:   boolean('is_active').notNull().default(true),
   lastSyncAt: timestamp('last_sync_at'),
   syncStatus: text('sync_status').notNull().default('pending'),
@@ -96,11 +113,13 @@ export const trades = pgTable('trades', {
   isOpen:      boolean('is_open').notNull().default(false),
   magicNumber: integer('magic_number'),
   comment:     text('comment'),
+  source:      text('source').notNull().default('live'),  // "live" (broker sync) | "manual" (hand-entered / imported)
 }, (table) => [
   unique('trades_account_ticket_uniq').on(table.accountId, table.ticket),
   index('trades_account_close_time_idx').on(table.accountId, table.closeTime),
   index('trades_account_symbol_idx').on(table.accountId, table.symbol),
   index('trades_account_is_open_idx').on(table.accountId, table.isOpen),
+  index('trades_account_source_idx').on(table.accountId, table.source),
 ]);
 
 export const tradesRelations = relations(trades, ({ one, many }) => ({
@@ -215,6 +234,31 @@ export const userRoles = pgTable('user_roles', {
 export const userRolesRelations = relations(userRoles, ({ one }) => ({
   user:    one(users, { fields: [userRoles.userId], references: [users.id] }),
   granter: one(users, { fields: [userRoles.grantedBy], references: [users.id], relationName: 'grantedRoles' }),
+}));
+
+// ─── API Keys (programmatic ingest/distribute auth) ──
+// Per-user keys for the public REST API (/api/v1/*). The plaintext key is shown
+// once at creation and never stored — only its SHA-256 hash. `prefix` is a short,
+// non-secret identifier shown in the UI so a key can be recognised/revoked.
+
+export const apiKeys = pgTable('api_keys', {
+  id:         text('id').primaryKey().$defaultFn(() => createId()),
+  userId:     text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name:       text('name').notNull(),
+  prefix:     text('prefix').notNull(),                      // e.g. "hk_a1b2c3" (non-secret display id)
+  keyHash:    text('key_hash').notNull().unique(),           // sha256(plaintext key), hex
+  scopes:     text('scopes').notNull().default('read'),      // comma-separated: "read", "write"
+  lastUsedAt: timestamp('last_used_at'),
+  expiresAt:  timestamp('expires_at'),
+  revokedAt:  timestamp('revoked_at'),
+  createdAt:  timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  index('api_keys_user_id_idx').on(table.userId),
+  index('api_keys_key_hash_idx').on(table.keyHash),
+]);
+
+export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
+  user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
 }));
 
 // ─── Signal Sources ───────────────────────────────

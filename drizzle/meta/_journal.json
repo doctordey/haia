@@ -78,6 +78,13 @@
       "when": 1780904471767,
       "tag": "0010_hitl_chats",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782854806535,
+      "tag": "0011_api_and_manual_trades",
+      "breakpoints": true
     }
   ]
 }

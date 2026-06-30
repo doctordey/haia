@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
 import { eq, and, ne } from 'drizzle-orm';
 import { removeMetaApiAccount } from '@/lib/metaapi';
+import { buildLabelUpdate } from '@/app/api/v1/accounts/[id]/route';
 
 export async function GET(
   _request: Request,
@@ -114,6 +115,23 @@ export async function PATCH(
     }
 
     return NextResponse.json(updated);
+  }
+
+  // Label overrides (account name / number / live-demo exposed via the REST API)
+  // and the manual/live distinction toggle. Shares the validation used by the
+  // public v1 PATCH so the rules stay identical.
+  const labelKeys = ['labelName', 'labelLogin', 'labelType', 'accountType', 'distinguishManual'];
+  if (labelKeys.some((k) => k in body)) {
+    const result = buildLabelUpdate(body);
+    if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
+    if (Object.keys(result.set).length > 0) {
+      const [updated] = await db
+        .update(tradingAccounts)
+        .set(result.set)
+        .where(eq(tradingAccounts.id, id))
+        .returning();
+      return NextResponse.json(updated);
+    }
   }
 
   return NextResponse.json({ error: 'No update fields provided' }, { status: 400 });

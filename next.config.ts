@@ -9,6 +9,8 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/haia/hitl/:path*", destination: "/api/hitl/:path*" },
+      // Pretty public path for the REST API: /haia/v1/* → /api/v1/*.
+      { source: "/haia/v1/:path*", destination: "/api/v1/:path*" },
     ];
   },
 };

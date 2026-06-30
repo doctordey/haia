@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Modal } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useToast } from '@/hooks/useToast';
@@ -22,6 +23,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="api">API</TabsTrigger>
           <TabsTrigger value="hitl">HITL</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
@@ -30,6 +32,10 @@ export default function SettingsPage() {
 
         <TabsContent value="accounts" className="mt-4 space-y-4">
           <AccountsSection accounts={accounts} onRefetch={refetch} toast={toast} />
+        </TabsContent>
+
+        <TabsContent value="api" className="mt-4 space-y-4">
+          <ApiKeysSection toast={toast} />
         </TabsContent>
 
         <TabsContent value="hitl" className="mt-4 space-y-4">
@@ -61,6 +67,8 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
+  // Per-account modals: which account + which action ('labels' | 'trade' | 'import')
+  const [manage, setManage] = useState<{ account: any; mode: 'labels' | 'trade' | 'import' } | null>(null);
 
   async function handleToggleHitl(id: string, next: boolean) {
     setTogglingHitl(id);
@@ -135,18 +143,36 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                     {acc.platform}
                   </Badge>
                   <div>
-                    <p className="text-sm font-medium text-text-primary">{acc.name}</p>
+                    <p className="text-sm font-medium text-text-primary">
+                      {acc.labelName || acc.name}
+                      {acc.labelName && <span className="text-text-tertiary font-normal"> ({acc.name})</span>}
+                    </p>
                     <p className="text-xs text-text-tertiary">
-                      {acc.server} · #{acc.login}
+                      {acc.server} · #{acc.labelLogin || acc.login}
                       {acc.lastSyncAt && ` · Last sync: ${new Date(acc.lastSyncAt).toLocaleString()}`}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {(acc.labelType || acc.accountType) && (
+                    <Badge variant={(acc.labelType || acc.accountType) === 'live' ? 'profit' : 'default'}>
+                      {acc.labelType || acc.accountType}
+                    </Badge>
+                  )}
+                  {(acc.labelName || acc.labelLogin || acc.labelType) && <Badge variant="info">labeled</Badge>}
                   <Badge variant={acc.syncStatus === 'synced' ? 'profit' : acc.syncStatus === 'error' ? 'loss' : acc.syncStatus === 'syncing' ? 'info' : 'default'}>
                     {acc.syncStatus}
                   </Badge>
                   {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'labels' })}>
+                    Edit
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'trade' })}>
+                    + Trade
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'import' })}>
+                    Import
+                  </Button>
                   <Button
                     variant={acc.hitlEnabled ? 'danger' : 'secondary'}
                     size="sm"
@@ -169,6 +195,330 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
           ))}
         </div>
       )}
+
+      {manage?.mode === 'labels' && (
+        <AccountLabelsModal account={manage.account} onClose={() => setManage(null)} onSaved={() => { setManage(null); onRefetch(); }} toast={toast} />
+      )}
+      {manage?.mode === 'trade' && (
+        <ManualTradeModal account={manage.account} onClose={() => setManage(null)} onSaved={() => { setManage(null); onRefetch(); }} toast={toast} />
+      )}
+      {manage?.mode === 'import' && (
+        <ImportModal account={manage.account} onClose={() => setManage(null)} onSaved={() => { setManage(null); onRefetch(); }} toast={toast} />
+      )}
+    </>
+  );
+}
+
+type ManageModalProps = {
+  account: any;
+  onClose: () => void;
+  onSaved: () => void;
+  toast: (msg: string, type?: string) => void;
+};
+
+// Override the identifying data exposed via the REST API + toggle the
+// manual/live distinction.
+function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalProps) {
+  const [form, setForm] = useState({
+    labelName: account.labelName || '',
+    labelLogin: account.labelLogin || '',
+    labelType: account.labelType || account.accountType || '',
+    distinguishManual: account.distinguishManual !== false,
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/accounts/${account.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          labelName: form.labelName.trim() || null,
+          labelLogin: form.labelLogin.trim() || null,
+          labelType: form.labelType || null,
+          distinguishManual: form.distinguishManual,
+        }),
+      });
+      if (res.ok) { toast('Account labels saved', 'success'); onSaved(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
+    } catch { toast('Failed to save', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Edit account labels">
+      <p className="text-xs text-text-secondary mb-4">
+        Override what the REST API exposes for this account. Leave a field blank to expose the real value.
+        These do not change your broker credentials.
+      </p>
+      <div className="space-y-3">
+        <Input label="Display name" placeholder={account.name}
+          value={form.labelName} onChange={(e) => setForm({ ...form, labelName: e.target.value })} />
+        <Input label="Display account number" placeholder={account.login}
+          value={form.labelLogin} onChange={(e) => setForm({ ...form, labelLogin: e.target.value })} />
+        <Select label="Account type (live / demo)" value={form.labelType}
+          onChange={(e) => setForm({ ...form, labelType: e.target.value })}
+          options={[{ value: '', label: 'Unset' }, { value: 'live', label: 'Live' }, { value: 'demo', label: 'Demo' }]} />
+        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pt-1">
+          <input type="checkbox" checked={form.distinguishManual}
+            onChange={(e) => setForm({ ...form, distinguishManual: e.target.checked })} />
+          Distinguish manual vs live entries (expose <span className="font-mono text-xs">source</span> and allow filtering)
+        </label>
+      </div>
+      <div className="flex gap-2 mt-5">
+        <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
+        <Button onClick={save} loading={saving} className="flex-1">Save</Button>
+      </div>
+    </Modal>
+  );
+}
+
+// Hand-enter a single trade/position (source = manual).
+function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps) {
+  const [form, setForm] = useState({
+    symbol: '', direction: 'BUY', lots: '', entryPrice: '', closePrice: '',
+    stopLoss: '', takeProfit: '', openTime: '', closeTime: '', profit: '', commission: '', swap: '', comment: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  function set(k: string, v: string) { setForm((f) => ({ ...f, [k]: v })); }
+
+  async function save() {
+    if (!form.symbol.trim() || !form.lots || !form.entryPrice || !form.openTime) {
+      toast('Symbol, lots, entry price and open time are required', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        symbol: form.symbol, direction: form.direction,
+        lots: Number(form.lots), entryPrice: Number(form.entryPrice),
+        openTime: form.openTime,
+      };
+      if (form.closeTime) payload.closeTime = form.closeTime;
+      if (form.closePrice) payload.closePrice = Number(form.closePrice);
+      if (form.stopLoss) payload.stopLoss = Number(form.stopLoss);
+      if (form.takeProfit) payload.takeProfit = Number(form.takeProfit);
+      if (form.profit) payload.profit = Number(form.profit);
+      if (form.commission) payload.commission = Number(form.commission);
+      if (form.swap) payload.swap = Number(form.swap);
+      if (form.comment) payload.comment = form.comment;
+
+      const res = await fetch(`/api/trades/${account.id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      if (res.ok) { toast('Trade added', 'success'); onSaved(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add trade', 'error'); }
+    } catch { toast('Failed to add trade', 'error'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Add manual trade — ${account.labelName || account.name}`} className="max-w-lg">
+      <p className="text-xs text-text-secondary mb-4">
+        Leave close time / price blank for an open position. Profit is optional; pips are derived from prices when possible.
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <Input label="Symbol" placeholder="EURUSD" value={form.symbol} onChange={(e) => set('symbol', e.target.value)} />
+        <Select label="Direction" value={form.direction} onChange={(e) => set('direction', e.target.value)}
+          options={[{ value: 'BUY', label: 'BUY' }, { value: 'SELL', label: 'SELL' }]} />
+        <Input label="Lots" type="number" step="0.01" value={form.lots} onChange={(e) => set('lots', e.target.value)} />
+        <Input label="Profit ($)" type="number" step="0.01" value={form.profit} onChange={(e) => set('profit', e.target.value)} />
+        <Input label="Entry price" type="number" step="any" value={form.entryPrice} onChange={(e) => set('entryPrice', e.target.value)} />
+        <Input label="Close price" type="number" step="any" value={form.closePrice} onChange={(e) => set('closePrice', e.target.value)} />
+        <Input label="Open time" type="datetime-local" value={form.openTime} onChange={(e) => set('openTime', e.target.value)} />
+        <Input label="Close time" type="datetime-local" value={form.closeTime} onChange={(e) => set('closeTime', e.target.value)} />
+        <Input label="Stop loss" type="number" step="any" value={form.stopLoss} onChange={(e) => set('stopLoss', e.target.value)} />
+        <Input label="Take profit" type="number" step="any" value={form.takeProfit} onChange={(e) => set('takeProfit', e.target.value)} />
+        <Input label="Commission" type="number" step="0.01" value={form.commission} onChange={(e) => set('commission', e.target.value)} />
+        <Input label="Swap" type="number" step="0.01" value={form.swap} onChange={(e) => set('swap', e.target.value)} />
+      </div>
+      <div className="mt-3">
+        <Input label="Comment" value={form.comment} onChange={(e) => set('comment', e.target.value)} />
+      </div>
+      <div className="flex gap-2 mt-5">
+        <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
+        <Button onClick={save} loading={saving} className="flex-1">Add trade</Button>
+      </div>
+    </Modal>
+  );
+}
+
+// Backfill from an MT5 history export (CSV paste/upload or JSON array).
+function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
+  const [text, setText] = useState('');
+  const [openingBalance, setOpeningBalance] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) setText(await file.text());
+  }
+
+  async function run() {
+    if (!text.trim()) { toast('Paste or upload some data first', 'error'); return; }
+    setImporting(true);
+    try {
+      const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
+      const qs = openingBalance ? `?openingBalance=${encodeURIComponent(openingBalance)}` : '';
+      const res = await fetch(`/api/accounts/${account.id}/import${qs}`, {
+        method: 'POST',
+        headers: { 'Content-Type': isJson ? 'application/json' : 'text/csv' },
+        body: text,
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast(`Imported ${d.imported} trade(s)${d.skipped ? `, skipped ${d.skipped}` : ''}`, 'success');
+        onSaved();
+      } else {
+        toast(d.error || 'Import failed', 'error');
+      }
+    } catch { toast('Import failed', 'error'); }
+    finally { setImporting(false); }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Import history — ${account.labelName || account.name}`} className="max-w-lg">
+      <p className="text-xs text-text-secondary mb-3">
+        Upload or paste your MT5 <span className="font-mono">History → Report (CSV)</span> export, or a JSON array of trades.
+        Columns are matched by header name. Imported trades are tagged <span className="font-mono">manual</span>.
+      </p>
+      <div className="space-y-3">
+        <input type="file" accept=".csv,.txt,.json,text/csv,application/json"
+          onChange={handleFile}
+          className="block w-full text-xs text-text-secondary file:mr-3 file:py-2 file:px-3 file:rounded-[var(--radius-md)] file:border-0 file:bg-bg-elevated file:text-text-primary file:cursor-pointer" />
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="…or paste CSV / JSON here"
+          rows={6}
+          className="w-full px-3 py-2 bg-bg-tertiary border border-border-primary rounded-[var(--radius-md)] text-xs font-mono text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent-primary"
+        />
+        <Input label="Opening balance (optional)" type="number" step="0.01" placeholder="anchors the equity curve"
+          value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} />
+      </div>
+      <div className="flex gap-2 mt-5">
+        <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
+        <Button onClick={run} loading={importing} className="flex-1">Import</Button>
+      </div>
+    </Modal>
+  );
+}
+
+type ApiKey = {
+  id: string; name: string; prefix: string; scopes: string;
+  lastUsedAt: string | null; expiresAt: string | null; createdAt: string;
+};
+
+// Manage per-user API keys for the public REST API (/api/v1).
+function ApiKeysSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState('');
+  const [scope, setScope] = useState('read');
+  const [creating, setCreating] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/api-keys');
+      if (res.ok) setKeys(await res.json());
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function create() {
+    setCreating(true);
+    try {
+      const scopes = scope === 'write' ? ['read', 'write'] : ['read'];
+      const res = await fetch('/api/api-keys', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() || 'API key', scopes }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) { setNewKey(d.key); setName(''); toast('API key created', 'success'); load(); }
+      else { toast(d.error || 'Failed to create key', 'error'); }
+    } catch { toast('Failed to create key', 'error'); }
+    finally { setCreating(false); }
+  }
+
+  async function revoke(id: string) {
+    setRevoking(id);
+    try {
+      const res = await fetch(`/api/api-keys/${id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Key revoked', 'success'); load(); }
+      else toast('Failed to revoke', 'error');
+    } catch { toast('Failed to revoke', 'error'); }
+    finally { setRevoking(null); }
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <h3 className="text-sm font-medium">API keys</h3>
+          <p className="text-xs text-text-tertiary mt-1">
+            Authenticate calls to the REST API at <span className="font-mono">/api/v1</span> (or <span className="font-mono">/haia/v1</span>).
+            Send the key as <span className="font-mono">Authorization: Bearer &lt;key&gt;</span> or the <span className="font-mono">X-API-Key</span> header.
+            Read keys can fetch accounts/trades; write keys can also ingest trades, import history, and edit labels.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-end gap-2">
+            <div className="flex-1">
+              <Input label="Key name" placeholder="e.g. Sheets sync" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="w-32">
+              <Select label="Scope" value={scope} onChange={(e) => setScope(e.target.value)}
+                options={[{ value: 'read', label: 'Read' }, { value: 'write', label: 'Read + Write' }]} />
+            </div>
+            <Button onClick={create} loading={creating}>Create</Button>
+          </div>
+
+          {loading ? (
+            <p className="text-xs text-text-tertiary">Loading…</p>
+          ) : keys.length === 0 ? (
+            <p className="text-xs text-text-tertiary">No API keys yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {keys.map((k) => (
+                <div key={k.id} className="flex items-center justify-between py-2 px-3 bg-bg-tertiary rounded-[var(--radius-md)]">
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
+                    <span className="text-text-primary">{k.name}</span>
+                    <span className="font-mono text-xs text-text-tertiary">{k.prefix}…</span>
+                    {k.scopes.split(',').map((s) => <Badge key={s} variant={s === 'write' ? 'info' : 'default'}>{s}</Badge>)}
+                    <span className="text-xs text-text-tertiary">
+                      {k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'never used'}
+                    </span>
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => revoke(k.id)} loading={revoking === k.id}>Revoke</Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Modal open={!!newKey} onClose={() => setNewKey(null)} title="Copy your API key">
+        <p className="text-sm text-text-secondary mb-3">
+          This is the only time the key is shown. Copy it now and store it securely — you can&apos;t retrieve it later.
+        </p>
+        <div className="p-3 bg-bg-tertiary border border-border-primary rounded-[var(--radius-md)] font-mono text-xs text-text-primary break-all mb-4">
+          {newKey}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="secondary" className="flex-1"
+            onClick={() => { if (newKey) navigator.clipboard?.writeText(newKey); toast('Copied to clipboard', 'success'); }}>
+            Copy
+          </Button>
+          <Button className="flex-1" onClick={() => setNewKey(null)}>Done</Button>
+        </div>
+      </Modal>
     </>
   );
 }

@@ -56,18 +56,32 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
-    await account.waitDeployed();
+    await withTimeout(account.waitDeployed(), SYNC_STEP_TIMEOUT_MS, 'account deploy');
   }
 
   const connection = account.getRPCConnection();
-  await connection.connect();
-  await connection.waitSynchronized();
-
-  const deals = await connection.getDealsByTimeRange(startDate, endDate);
-  await connection.close();
-
-  return deals;
+  try {
+    await connection.connect();
+    await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'history sync');
+    return await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
+  } finally {
+    try { await connection.close(); } catch {}
+  }
 }
+
+/** Reject if `p` doesn't settle within `ms` — bounds slow MetaApi RPC steps so a
+ *  sync can't hang forever (which would leave the account stuck "syncing"). */
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms),
+    ),
+  ]);
+}
+
+/** Max wait for any single history-sync RPC step. */
+export const SYNC_STEP_TIMEOUT_MS = 4 * 60_000;
 
 /** All tradable symbol names on the account (RPC; used for "did you mean" hints). */
 export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {

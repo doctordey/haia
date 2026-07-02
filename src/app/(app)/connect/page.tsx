@@ -48,13 +48,22 @@ export default function ConnectPage() {
       setStep('syncing');
       setSyncStatus('Importing trade history...');
 
-      const syncRes = await fetch(`/api/accounts/${account.id}/sync`, { method: 'POST' });
-      if (syncRes.ok) {
-        setStep('success');
-      } else {
-        setSyncStatus('Sync started — you can check progress on the dashboard.');
-        setStep('success');
+      // The account already exists now. The history import can take a while for
+      // live accounts, so don't block the UI on it — give it a short window,
+      // then hand off to the background sync worker and show success either way.
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 25000);
+        const syncRes = await fetch(`/api/accounts/${account.id}/sync`, { method: 'POST', signal: controller.signal });
+        clearTimeout(timer);
+        if (!syncRes.ok) {
+          setSyncStatus('Import started — it will finish in the background. Check the dashboard shortly.');
+        }
+      } catch {
+        // Timed out / aborted — the worker picks it up within a few minutes.
+        setSyncStatus('Import is taking a while — it will finish in the background. Check the dashboard shortly.');
       }
+      setStep('success');
     } catch {
       setError('Connection failed. Please check your credentials and try again.');
       setStep('credentials');

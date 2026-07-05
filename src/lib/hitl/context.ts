@@ -25,6 +25,9 @@ export interface HitlContext {
   /** Broker adapter for an account whose streaming connection is live. */
   getBroker(accountId: string): HitlBroker | undefined;
 
+  /** Display name for a connected account (for per-account notifications). */
+  accountName?(accountId: string): string | undefined;
+
   /** The opted-in HITL account (tradingAccounts.hitlEnabled). null → none armed. */
   resolveTargetAccount(): Promise<TargetAccount | null>;
 

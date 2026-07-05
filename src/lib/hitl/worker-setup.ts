@@ -30,6 +30,7 @@ interface HitlConnection {
   connection: any;
   isDemo: boolean;
   metaApiId: string;
+  name: string;
 }
 
 function isDemoServer(server: string): boolean {
@@ -80,7 +81,7 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       const connection = account.getStreamingConnection();
       await connection.connect();
       await connection.waitSynchronized({ timeoutInSeconds: 120 });
-      connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId });
+      connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId, name: row.name });
       console.log(`[hitl] connected account ${row.name} (${row.id}) demo=${isDemoServer(row.server)}`);
     } catch (err) {
       console.error(`[hitl] failed to connect account ${row.name} (${row.id}):`, err);
@@ -111,6 +112,10 @@ export async function setupHitl(): Promise<HitlHandle | null> {
     getBroker(accountId) {
       const c = connections.get(accountId);
       return c ? buildHitlBroker(c.connection, c.isDemo) : undefined;
+    },
+
+    accountName(accountId) {
+      return connections.get(accountId)?.name;
     },
 
     async resolveTargetAccounts(): Promise<TargetAccount[]> {

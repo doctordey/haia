@@ -10,7 +10,7 @@
  * The max-risk % is always a hard cap, enforced again at dispatch time.
  */
 
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { hitlSettings } from '@/lib/db/schema';
 import type { HitlConfig } from './config';
@@ -55,4 +55,35 @@ export async function setRiskSettings(s: RiskSettings): Promise<void> {
   for (const [key, value] of entries) {
     await db.insert(hitlSettings).values({ key, value }).onConflictDoUpdate({ target: hitlSettings.key, set: { value } });
   }
+}
+
+// ── per-account risk override ──
+// One number per account, interpreted in the current global mode (percent → %,
+// fixed → $). Absent → the account uses the global risk. Stored as risk.acct.<id>.
+const ACCT_PREFIX = 'risk.acct.';
+
+export async function loadAccountRiskValues(): Promise<Record<string, number>> {
+  const rows = await db.select().from(hitlSettings);
+  const map: Record<string, number> = {};
+  for (const r of rows) {
+    if (!r.key.startsWith(ACCT_PREFIX)) continue;
+    const v = Number(r.value);
+    if (Number.isFinite(v) && v > 0) map[r.key.slice(ACCT_PREFIX.length)] = v;
+  }
+  return map;
+}
+
+export async function setAccountRiskValue(accountId: string, value: number | null): Promise<void> {
+  const key = `${ACCT_PREFIX}${accountId}`;
+  if (value == null) {
+    await db.delete(hitlSettings).where(eq(hitlSettings.key, key));
+    return;
+  }
+  await db.insert(hitlSettings).values({ key, value: String(value) }).onConflictDoUpdate({ target: hitlSettings.key, set: { value: String(value) } });
+}
+
+/** Apply a per-account override (if any) onto the global settings. */
+export function riskForAccount(global: RiskSettings, override: number | null | undefined): RiskSettings {
+  if (override == null) return global;
+  return global.mode === 'fixed' ? { ...global, fixedAmount: override } : { ...global, riskPct: override };
 }

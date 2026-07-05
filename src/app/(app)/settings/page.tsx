@@ -61,6 +61,31 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
+  const [riskInfo, setRiskInfo] = useState<{ mode: string; defaultValue: number; overrides: Record<string, number> } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/hitl/account-risk').then((r) => (r.ok ? r.json() : null)).then((d) => d && setRiskInfo(d)).catch(() => {});
+  }, []);
+
+  async function saveRisk(id: string, raw: string) {
+    const value = raw.trim() === '' ? null : Number(raw);
+    if (value != null && !(Number.isFinite(value) && value > 0)) { toast('Risk must be a positive number', 'error'); return; }
+    try {
+      const res = await fetch('/api/hitl/account-risk', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: id, value }),
+      });
+      if (res.ok) {
+        setRiskInfo((prev) => {
+          if (!prev) return prev;
+          const overrides = { ...prev.overrides };
+          if (value == null) delete overrides[id]; else overrides[id] = value;
+          return { ...prev, overrides };
+        });
+        toast('Account risk saved', 'success');
+      } else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save risk', 'error'); }
+    } catch { toast('Failed to save risk', 'error'); }
+  }
 
   async function handleToggleHitl(id: string, next: boolean) {
     setTogglingHitl(id);
@@ -147,6 +172,20 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                     {acc.syncStatus}
                   </Badge>
                   {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  {acc.hitlEnabled && (
+                    <div className="flex items-center gap-1" title="Risk for this account. Blank = use the default. Set per-account to size this account differently.">
+                      <span className="text-xs text-text-tertiary">{riskInfo?.mode === 'fixed' ? '$' : '%'}</span>
+                      <input
+                        key={`risk-${acc.id}-${riskInfo ? 'r' : 'l'}`}
+                        type="number"
+                        step="0.1"
+                        defaultValue={riskInfo?.overrides?.[acc.id] ?? ''}
+                        placeholder={riskInfo ? String(riskInfo.defaultValue) : ''}
+                        onBlur={(e) => saveRisk(acc.id, e.target.value)}
+                        className="w-14 px-2 py-1 bg-bg-tertiary border border-border-primary rounded text-xs text-text-primary"
+                      />
+                    </div>
+                  )}
                   <Button
                     variant={acc.hitlEnabled ? 'danger' : 'secondary'}
                     size="sm"

@@ -74,17 +74,22 @@ export async function setupHitl(): Promise<HitlHandle | null> {
 
   async function connectAccount(row: typeof tradingAccounts.$inferSelect): Promise<void> {
     if (connections.has(row.id)) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let connection: any = null;
     try {
       const account = await api.metatraderAccountApi.getAccount(row.metaApiId);
       if (account.state !== 'DEPLOYED') await account.waitDeployed();
       if (account.connectionStatus !== 'CONNECTED') await account.waitConnected();
-      const connection = account.getStreamingConnection();
+      connection = account.getStreamingConnection();
       await connection.connect();
       await connection.waitSynchronized({ timeoutInSeconds: 120 });
       connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId, name: row.name });
       console.log(`[hitl] connected account ${row.name} (${row.id}) demo=${isDemoServer(row.server)}`);
     } catch (err) {
-      console.error(`[hitl] failed to connect account ${row.name} (${row.id}):`, err);
+      console.error(`[hitl] failed to connect account ${row.name} (${row.id}):`, err instanceof Error ? err.message : err);
+      // Close the half-open connection so its websocket stops retry-looping in the
+      // background — otherwise failed attempts pile up and hammer MetaApi (429).
+      if (connection) { try { await connection.close(); } catch { /* ignore */ } }
     }
   }
 

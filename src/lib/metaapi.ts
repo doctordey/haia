@@ -93,13 +93,15 @@ export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {
   }
 
   const connection = account.getRPCConnection();
-  await connection.connect();
-  await connection.waitSynchronized();
-
-  const symbols = await connection.getSymbols();
-  await connection.close();
-
-  return Array.isArray(symbols) ? (symbols as string[]) : [];
+  try {
+    await connection.connect();
+    await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'symbol sync');
+    const symbols = await connection.getSymbols();
+    return Array.isArray(symbols) ? (symbols as string[]) : [];
+  } finally {
+    // Always close — a leaked RPC connection keeps retrying and adds to MetaApi load.
+    try { await connection.close(); } catch { /* ignore */ }
+  }
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {

@@ -9,7 +9,7 @@ import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
 import { eq, and, ne, or, lt } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
-import { withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
+import { getMetaApi, withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
 import { format } from 'date-fns';
 import { installMetaApiLogFilter } from '../lib/log-filter';
 
@@ -52,8 +52,9 @@ async function syncAccount(accountId: string) {
   let connection: any = null;
 
   try {
-    const MetaApi = require('metaapi.cloud-sdk').default;
-    const api = new MetaApi(process.env.METAAPI_TOKEN);
+    // Shared per-process SDK client — a new client per account per cycle
+    // multiplies websocket connections and rate-limits us (429).
+    const api = await getMetaApi();
     const metaAccount = await api.metatraderAccountApi.getAccount(account.metaApiId);
 
     if (metaAccount.state !== 'DEPLOYED') {

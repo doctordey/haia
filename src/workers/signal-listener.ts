@@ -31,6 +31,7 @@ import { onPositionClosed } from '../lib/signals/breakeven';
 import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 import { setupHitl, type HitlHandle } from '../lib/hitl/worker-setup';
 import { installMetaApiLogFilter } from '../lib/log-filter';
+import { getMetaApi } from '../lib/metaapi';
 
 // Drop MetaApi's engine.io reconnect spam before any connection is opened.
 installMetaApiLogFilter();
@@ -50,8 +51,8 @@ async function startPriceStreaming(accountId: string, metaApiId: string): Promis
 
   console.log(`[worker] Starting MetaApi streaming for account ${accountId} (${metaApiId})...`);
 
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  const api = new MetaApi(process.env.METAAPI_TOKEN);
+  // Shared per-process SDK client — one websocket pool for all accounts.
+  const api = await getMetaApi();
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {

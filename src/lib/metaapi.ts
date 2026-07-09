@@ -6,14 +6,27 @@ export interface ConnectAccountParams {
   name: string;
 }
 
-async function getMetaApi() {
+// The MetaApi SDK client is designed to be a per-process singleton: every
+// instance maintains its own websocket pool to MetaApi's servers, so creating
+// one per call/account multiplies connections and trips the shared-server rate
+// limit (HTTP 429). Cache it on globalThis so Next.js hot reload / route
+// isolation can't create duplicates either.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getMetaApi(): Promise<any> {
   if (!process.env.METAAPI_TOKEN) {
     throw new Error('METAAPI_TOKEN environment variable is not set');
   }
 
-  // Use the CJS entry point to avoid ESM issues in Next.js server runtime
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  return new MetaApi(process.env.METAAPI_TOKEN);
+  const g = globalThis as { __haiaMetaApi?: unknown };
+  if (!g.__haiaMetaApi) {
+    // Use the CJS entry point to avoid ESM issues in Next.js server runtime
+    const MetaApi = require('metaapi.cloud-sdk').default;
+    g.__haiaMetaApi = new MetaApi(process.env.METAAPI_TOKEN, {
+      // Gentler retries so a transient 429 doesn't snowball into a storm.
+      retryOpts: { retries: 3, minDelayInSeconds: 5, maxDelayInSeconds: 60 },
+    });
+  }
+  return g.__haiaMetaApi;
 }
 
 export async function connectMetaApiAccount(params: ConnectAccountParams) {

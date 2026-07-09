@@ -14,7 +14,7 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
-import { fetchBrokerSymbols } from '@/lib/metaapi';
+import { getMetaApi, fetchBrokerSymbols } from '@/lib/metaapi';
 import { getValidatedHitlConfig } from './config';
 import { loadChatIds } from './access';
 import { buildHitlBroker } from './metaapi';
@@ -72,9 +72,9 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   // onto MetaApi and spamming the logs).
   const connectBackoff = new Map<string, { attempts: number; nextRetry: number }>();
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  const api = new MetaApi(process.env.METAAPI_TOKEN);
+  // Shared per-process SDK client (same instance as the signal listener's
+  // price streaming) — one websocket pool instead of one per subsystem.
+  const api = await getMetaApi();
 
   async function connectAccount(row: typeof tradingAccounts.$inferSelect): Promise<void> {
     if (connections.has(row.id)) return;

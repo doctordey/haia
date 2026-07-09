@@ -30,6 +30,10 @@ import { handleCancellation } from '../lib/signals/cancel';
 import { onPositionClosed } from '../lib/signals/breakeven';
 import type { SignalConfig, MetaApiTradeInterface } from '../types/signals';
 import { setupHitl, type HitlHandle } from '../lib/hitl/worker-setup';
+import { installMetaApiLogFilter } from '../lib/log-filter';
+
+// Drop MetaApi's engine.io reconnect spam before any connection is opened.
+installMetaApiLogFilter();
 
 // ─── Globals ──────────────────────────────────────────
 

@@ -11,6 +11,10 @@ import { eq, and, ne, or, lt } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
 import { withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
 import { format } from 'date-fns';
+import { installMetaApiLogFilter } from '../lib/log-filter';
+
+// Drop MetaApi's engine.io reconnect spam before any connection is opened.
+installMetaApiLogFilter();
 
 // A "syncing" claim older than this is considered dead and can be reclaimed.
 const STALE_SYNC_MS = 15 * 60_000;

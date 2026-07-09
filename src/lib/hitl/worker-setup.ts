@@ -67,6 +67,10 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   console.log('[hitl] starting (demo-only: HITL_ALLOW_LIVE=' + cfg.allowLive + ')');
 
   const connections = new Map<string, HitlConnection>();
+  // Exponential backoff for accounts that fail to connect, so a persistently
+  // unreachable/rate-limited account isn't retried every 30s (piling more load
+  // onto MetaApi and spamming the logs).
+  const connectBackoff = new Map<string, { attempts: number; nextRetry: number }>();
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const MetaApi = require('metaapi.cloud-sdk').default;
@@ -74,6 +78,8 @@ export async function setupHitl(): Promise<HitlHandle | null> {
 
   async function connectAccount(row: typeof tradingAccounts.$inferSelect): Promise<void> {
     if (connections.has(row.id)) return;
+    const bo = connectBackoff.get(row.id);
+    if (bo && Date.now() < bo.nextRetry) return; // still backing off from a prior failure
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let connection: any = null;
     try {
@@ -84,9 +90,14 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       await connection.connect();
       await connection.waitSynchronized({ timeoutInSeconds: 120 });
       connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId, name: row.name });
+      connectBackoff.delete(row.id);
       console.log(`[hitl] connected account ${row.name} (${row.id}) demo=${isDemoServer(row.server)}`);
     } catch (err) {
-      console.error(`[hitl] failed to connect account ${row.name} (${row.id}):`, err instanceof Error ? err.message : err);
+      // Back off: 30s, 60s, 120s … capped at 10min.
+      const attempts = (bo?.attempts ?? 0) + 1;
+      const delayMs = Math.min(30_000 * 2 ** (attempts - 1), 10 * 60_000);
+      connectBackoff.set(row.id, { attempts, nextRetry: Date.now() + delayMs });
+      console.error(`[hitl] failed to connect account ${row.name} (${row.id}) — retrying in ${Math.round(delayMs / 1000)}s:`, err instanceof Error ? err.message : err);
       // Close the half-open connection so its websocket stops retry-looping in the
       // background — otherwise failed attempts pile up and hammer MetaApi (429).
       if (connection) { try { await connection.close(); } catch { /* ignore */ } }

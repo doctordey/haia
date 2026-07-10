@@ -17,7 +17,9 @@ describe('normalizeTrade', () => {
     expect(t.profit).toBe(25);
     expect(t.pips).toBeCloseTo(50, 1); // 0.005 * 10000
     expect(t.source).toBe('manual');
-    expect(t.ticket).toMatch(/^manual-/);
+    // Auto-generated tickets must look like broker tickets — purely numeric,
+    // no marker that would let an API consumer spot a manual entry.
+    expect(t.ticket).toMatch(/^\d{13,}$/);
   });
 
   it('treats a trade without close time as open', () => {

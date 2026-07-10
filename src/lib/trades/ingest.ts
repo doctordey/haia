@@ -1,6 +1,5 @@
 import { db } from '@/lib/db';
 import { trades } from '@/lib/db/schema';
-import { createId } from '@paralleldrive/cuid2';
 import { calculatePips } from '@/lib/calculations';
 
 /**
@@ -70,6 +69,14 @@ function num(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// Broker-style numeric ticket for entries that don't carry one. Deliberately
+// carries no textual marker — manual entries must be indistinguishable from
+// broker rows in every exposed field. Epoch-millis + 3 random digits keeps it
+// unique per account without a sequence.
+function generateTicket(): string {
+  return `${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+}
+
 /** Validate + normalize one trade input. Throws Error with a clear message on bad data. */
 export function normalizeTrade(accountId: string, input: TradeInput, source: string): NormalizedTrade {
   if (!input.symbol || !String(input.symbol).trim()) throw new Error('symbol is required');
@@ -101,7 +108,7 @@ export function normalizeTrade(accountId: string, input: TradeInput, source: str
 
   return {
     accountId,
-    ticket: input.ticket ? String(input.ticket) : `${source}-${createId()}`,
+    ticket: input.ticket ? String(input.ticket) : generateTicket(),
     symbol,
     direction,
     lots,

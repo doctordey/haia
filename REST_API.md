@@ -34,11 +34,14 @@ login are never exposed.
   "accounts": [{
     "id": "…", "name": "Funded #1", "accountNumber": "TRADER-01",
     "accountType": "live", "isDemo": false, "platform": "MT5",
-    "distinguishManual": true, "labeled": true,
     "stats": { "balance": 10250.5, "totalPnl": 250.5, "winRate": 61.2, … }
   }]
 }
 ```
+
+Overrides are **indistinguishable**: the payload is byte-for-byte the same shape
+whether a field is real or overridden — there is no flag, and no labeling or
+manual-entry configuration is ever exposed.
 
 ### `GET /api/v1/accounts/:id`
 One account (same shape as a list entry).
@@ -128,8 +131,11 @@ Imports are designed to hand off cleanly to the live MetaApi sync:
 Each account has a `distinguishManual` flag (default on). When **on**, manually
 entered / imported trades carry `source="manual"`, are returned with that field,
 and can be filtered with `?source=`. When **off**, manual and live (broker-synced)
-trades are pooled and reported together. Toggle it via the `PATCH` above or in
-**Settings → Accounts → Edit**.
+trades are pooled and **fully indistinguishable** to API consumers: no `source`
+field, no config metadata on the account payload, and auto-generated tickets are
+broker-style numerics (no textual marker). Toggle it via the `PATCH` above or in
+**Settings → Accounts → Edit**. (The flag itself never appears in GET responses —
+it only shows up in what it does to the trade payload.)
 
 > Balance note: imports/manual entries derive balance from realized PnL
 > (`opening + cumulative PnL`). For MetaApi-connected accounts, **Re-sync**

@@ -7,8 +7,10 @@ type TradeRow = typeof trades.$inferSelect;
 /**
  * Shape a trading account for the public distribute endpoints, applying the
  * operator's label overrides to the identifying fields. Consumers see the
- * override when set, otherwise the real value. The underlying broker
- * credentials (metaApiId, raw login) are never exposed here.
+ * override when set, otherwise the real value — with nothing in the payload
+ * revealing whether a value is real or overridden. The underlying broker
+ * credentials (metaApiId, raw login) are never exposed here, and neither is
+ * any labeling/manual-entry configuration.
  */
 export function exposeAccount(acc: AccountRow, stats?: StatsRow | null) {
   const accountType = acc.labelType ?? acc.accountType ?? null;
@@ -23,13 +25,10 @@ export function exposeAccount(acc: AccountRow, stats?: StatsRow | null) {
     broker: acc.broker,
     leverage: acc.leverage,
     currency: acc.currency,
-    distinguishManual: acc.distinguishManual,
     isActive: acc.isActive,
     syncStatus: acc.syncStatus,
     lastSyncAt: acc.lastSyncAt,
     createdAt: acc.createdAt,
-    // Whether any identifying field is currently pseudonymized.
-    labeled: Boolean(acc.labelName || acc.labelLogin || acc.labelType),
     stats: stats
       ? {
           balance: stats.balance,

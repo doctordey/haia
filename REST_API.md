@@ -81,20 +81,47 @@ auto-generated if absent (idempotent upsert on `accountId+ticket`). `pips` are
 derived from prices when not supplied.
 
 ### `POST /api/v1/accounts/:id/import` — MT5 history backfill
-Send the MT5 *History → Report (CSV)* export, or a JSON array of trades.
+Send the MT5 *History → Report* export (HTML **or** CSV), or a JSON array of
+trades. The format is auto-detected from Content-Type and the body itself:
 
-- `Content-Type: text/csv` (or `text/plain`) — raw CSV; columns matched by header
-  name (case-insensitive). MT5's repeated `Time`/`Price` columns are read as
-  open then close. Non-trade rows (balance/credit) are skipped.
-- `Content-Type: application/json` — `[ { …trade… } ]` or `{ "trades": [...] }`.
+- **HTML** (`text/html`, or body starts with `<`) — the MT5 report statement
+  (MT4 statements work too). The Positions table is located by its header row;
+  section titles, pending orders, and summary rows are skipped. UTF-16 encoded
+  files (MT5's default save format) are handled.
+- **CSV** (`text/csv` / `text/plain`) — columns matched by header name
+  (case-insensitive). MT5's repeated `Time`/`Price` columns are read as open
+  then close. Non-trade rows (balance/credit) are skipped.
+- **JSON** (`application/json`, or body starts with `[`/`{`) —
+  `[ { …trade… } ]` or `{ "trades": [...] }`.
 
-Optional `?openingBalance=10000` anchors the rebuilt equity curve. Imported rows
-are tagged `source="manual"`.
+Query params:
+
+- `?openingBalance=10000` — anchors the rebuilt equity curve.
+- `?advanceSync=false` — disables the automatic sync-cursor handoff (below).
 
 ```json
-{ "success": true, "imported": 42, "skipped": 3, "failed": 0,
-  "warnings": [], "totals": { "totalTrades": 42, "closedTrades": 40 } }
+{ "success": true, "format": "html", "imported": 42, "deduplicated": 0,
+  "skipped": 3, "failed": 0, "warnings": [],
+  "syncCursorAdvancedTo": "2026-06-30T21:15:00.000Z",
+  "totals": { "totalTrades": 42, "closedTrades": 40 } }
 ```
+
+#### Backfill → live-sync handoff
+Imports are designed to hand off cleanly to the live MetaApi sync:
+
+1. **Cursor advancement** — after a successful import, the account's sync cursor
+   (`lastSyncAt`) moves forward to the last imported trade's close time, so the
+   next **Re-sync** continues chronologically after the backfill instead of
+   re-pulling (and duplicating) the imported period. Forward-only: importing
+   *older* history than what's already synced never rewinds the cursor. Opt out
+   with `?advanceSync=false`.
+2. **Ticket merge** — rows are keyed on `accountId + ticket`. When the export
+   carries the broker's real position ids (MT5 reports do), a live sync that
+   re-sees those trades updates the same rows and flips them `manual → live`.
+3. **Duplicate sweep** — manual rows whose tickets *don't* match but that
+   duplicate a live row on symbol + direction + lots + open time (±2 min) are
+   removed automatically, on both import and sync (`deduplicated` /
+   `manualReconciled` in the respective responses). Broker data wins.
 
 ## Manual vs live distinction
 

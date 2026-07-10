@@ -360,16 +360,25 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
     if (!text.trim()) { toast('Paste or upload some data first', 'error'); return; }
     setImporting(true);
     try {
-      const isJson = text.trim().startsWith('[') || text.trim().startsWith('{');
+      // Mirror the server's sniffing (it re-detects anyway). MT5 saves HTML
+      // reports as UTF-16 — strip the NULs/BOM a UTF-8 read leaves behind.
+      const cleaned = text.replace(/\u0000/g, '').replace(/^[\uFEFF\uFFFD\s]+/, '');
+      const contentType = cleaned.startsWith('<') ? 'text/html'
+        : cleaned.startsWith('[') || cleaned.startsWith('{') ? 'application/json'
+        : 'text/csv';
       const qs = openingBalance ? `?openingBalance=${encodeURIComponent(openingBalance)}` : '';
       const res = await fetch(`/api/accounts/${account.id}/import${qs}`, {
         method: 'POST',
-        headers: { 'Content-Type': isJson ? 'application/json' : 'text/csv' },
-        body: text,
+        headers: { 'Content-Type': contentType },
+        body: cleaned,
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast(`Imported ${d.imported} trade(s)${d.skipped ? `, skipped ${d.skipped}` : ''}`, 'success');
+        const extras = [
+          d.deduplicated ? `${d.deduplicated} merged with live` : '',
+          d.skipped ? `skipped ${d.skipped}` : '',
+        ].filter(Boolean).join(', ');
+        toast(`Imported ${d.imported} trade(s)${extras ? ` (${extras})` : ''}`, 'success');
         onSaved();
       } else {
         toast(d.error || 'Import failed', 'error');
@@ -381,11 +390,12 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
   return (
     <Modal open onClose={onClose} title={`Import history — ${account.labelName || account.name}`} className="max-w-lg">
       <p className="text-xs text-text-secondary mb-3">
-        Upload or paste your MT5 <span className="font-mono">History → Report (CSV)</span> export, or a JSON array of trades.
-        Columns are matched by header name. Imported trades are tagged <span className="font-mono">manual</span>.
+        Upload or paste your MT5 <span className="font-mono">History → Report</span> export — HTML or CSV — or a JSON
+        array of trades. Columns are matched by header name; imported trades are tagged <span className="font-mono">manual</span>.
+        The next live re-sync continues after the last imported trade and merges any overlap.
       </p>
       <div className="space-y-3">
-        <input type="file" accept=".csv,.txt,.json,text/csv,application/json"
+        <input type="file" accept=".csv,.txt,.json,.html,.htm,text/csv,application/json,text/html"
           onChange={handleFile}
           className="block w-full text-xs text-text-secondary file:mr-3 file:py-2 file:px-3 file:rounded-[var(--radius-md)] file:border-0 file:bg-bg-elevated file:text-text-primary file:cursor-pointer" />
         <textarea

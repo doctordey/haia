@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
 import { eq, and, ne, sql } from 'drizzle-orm';
 import { fetchHistoricalDeals } from '@/lib/metaapi';
+import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
 
@@ -92,7 +93,8 @@ export async function POST(
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
-              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0 },
+              // source: broker confirmation converts a backfilled manual row to live
+              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0, source: 'live' },
             });
         } else if (isCloseDeal || isInOut) {
           // Close the existing position
@@ -107,7 +109,7 @@ export async function POST(
                 closePrice: deal.price || null, closeTime: dealTime,
                 profit: deal.profit || 0, pips: deal.pips || null,
                 commission: (existingTrade.commission || 0) + (deal.commission || 0),
-                swap: deal.swap || 0, isOpen: false,
+                swap: deal.swap || 0, isOpen: false, source: 'live',
               })
               .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
           } else {
@@ -129,6 +131,7 @@ export async function POST(
                   profit: deal.profit || 0, closePrice: deal.price || null,
                   closeTime: dealTime, isOpen: false,
                   commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
+                  source: 'live',
                 },
               });
           }
@@ -141,7 +144,7 @@ export async function POST(
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
                 entryPrice: deal.price || 0, openTime: dealTime,
                 closePrice: null, closeTime: null,
-                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true,
+                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true, source: 'live',
               })
               .where(and(eq(trades.accountId, id), eq(trades.ticket, ticket)));
           }
@@ -164,11 +167,17 @@ export async function POST(
                 profit: deal.profit || 0, closePrice: deal.price || null,
                 closeTime: dealTime, isOpen: false,
                 commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
+                source: 'live',
               },
             });
         }
       }
     }
+
+    // Backfill handoff: the upserts above only merge manual rows whose tickets
+    // match the broker's. Sweep the rest — manual rows duplicating a live row
+    // on symbol/direction/lots/open-time — so pooled history stays clean.
+    const manualReconciled = await reconcileManualDuplicates(id);
 
     // Aggregate daily snapshots
     const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, id) });
@@ -249,7 +258,7 @@ export async function POST(
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })
       .where(eq(tradingAccounts.id, id));
 
-    return NextResponse.json({ success: true, tradesImported: closedTrades.length });
+    return NextResponse.json({ success: true, tradesImported: closedTrades.length, manualReconciled });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Sync failed';
     console.error(`Sync error for account ${id}:`, message);

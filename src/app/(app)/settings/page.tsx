@@ -22,7 +22,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="hitl">HITL</TabsTrigger>
+          <TabsTrigger value="hitl">Unicorn</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -96,13 +96,13 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
         body: JSON.stringify({ hitlEnabled: next }),
       });
       if (res.ok) {
-        toast(next ? 'HITL enabled for this account' : 'HITL disabled', 'success');
+        toast(next ? 'Unicorn enabled for this account' : 'Unicorn disabled', 'success');
         onRefetch();
       } else {
         const data = await res.json().catch(() => ({}));
-        toast(data.error || 'Failed to update HITL', 'error');
+        toast(data.error || 'Failed to update Unicorn', 'error');
       }
-    } catch { toast('Failed to update HITL', 'error'); }
+    } catch { toast('Failed to update Unicorn', 'error'); }
     finally { setTogglingHitl(null); }
   }
 
@@ -171,7 +171,7 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   <Badge variant={acc.syncStatus === 'synced' ? 'profit' : acc.syncStatus === 'error' ? 'loss' : acc.syncStatus === 'syncing' ? 'info' : 'default'}>
                     {acc.syncStatus}
                   </Badge>
-                  {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  {acc.hitlEnabled && <Badge variant="info">Unicorn</Badge>}
                   {acc.hitlEnabled && (
                     <div className="flex items-center gap-1" title="Risk for this account. Blank = use the default. Set per-account to size this account differently.">
                       <span className="text-xs text-text-tertiary">{riskInfo?.mode === 'fixed' ? '$' : '%'}</span>
@@ -194,7 +194,7 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                     disabled={!acc.hitlEnabled && acc.accessMode !== 'trading'}
                     title={!acc.hitlEnabled && acc.accessMode !== 'trading' ? 'Requires a trading password (read-only account)' : 'Enable approved-trade execution on this account'}
                   >
-                    {acc.hitlEnabled ? 'Disable HITL' : 'Enable HITL'}
+                    {acc.hitlEnabled ? 'Disable Unicorn' : 'Enable Unicorn'}
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id)} loading={syncing === acc.id}>
                     Re-sync

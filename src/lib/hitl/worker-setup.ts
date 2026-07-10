@@ -185,7 +185,7 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   try {
     const dests = await loadChatIds(cfg);
     if (dests.length === 0) {
-      console.warn('[hitl] NO destinations configured — add a DM/group in Settings → HITL → Access (or set HITL_OPERATOR_CHAT_ID). Prompts have nowhere to go.');
+      console.warn('[hitl] NO destinations configured — add a DM/group in Settings → Unicorn → Access (or set HITL_OPERATOR_CHAT_ID). Prompts have nowhere to go.');
     } else {
       console.log(`[hitl] ${dests.length} destination(s): ${dests.join(', ')}`);
     }

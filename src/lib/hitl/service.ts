@@ -177,7 +177,7 @@ export class HitlService implements HitlBotDeps {
 
     const accounts = await this.ctx.resolveTargetAccounts();
     if (accounts.length === 0) {
-      return { kind: 'error', text: 'No HITL-enabled account is armed/connected. Enable HITL on an account in Settings.' };
+      return { kind: 'error', text: 'No Unicorn-enabled account is armed/connected. Enable Unicorn on an account in Settings.' };
     }
 
     const tpMultiples = await loadTpMultiples(cfg);
@@ -206,7 +206,7 @@ export class HitlService implements HitlBotDeps {
       const symErr = results.find((r) => !isPlan(r) && /not available|specification/i.test(r.error));
       if (symErr && this.ctx.suggestSymbols) {
         const matches = await this.ctx.suggestSymbols(s.symbol).catch(() => []);
-        if (matches.length > 0) text += `\nDid you mean: ${matches.join(', ')}? Add a mapping in Settings → HITL → Symbol mapping.`;
+        if (matches.length > 0) text += `\nDid you mean: ${matches.join(', ')}? Add a mapping in Settings → Unicorn → Symbol mapping.`;
       }
       return { kind: 'error', text };
     }
@@ -282,7 +282,7 @@ export class HitlService implements HitlBotDeps {
     const accounts = await this.ctx.resolveTargetAccounts();
     if (accounts.length === 0) {
       await session.transition(sessionId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: 'no armed account at dispatch' });
-      return { ok: false, message: 'No HITL account is armed/connected — not dispatched.', symbol };
+      return { ok: false, message: 'No Unicorn account is armed/connected — not dispatched.', symbol };
     }
 
     const direction = s.direction as Direction;

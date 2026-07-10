@@ -82,7 +82,7 @@ export async function PATCH(
     // Arming requires full trading access — an investor (read-only) login can't place orders.
     if (body.hitlEnabled && account.accessMode !== 'trading') {
       return NextResponse.json(
-        { error: 'This account is read-only (investor access). Upgrade to a trading password before enabling HITL.' },
+        { error: 'This account is read-only (investor access). Upgrade to a trading password before enabling Unicorn.' },
         { status: 400 },
       );
     }

@@ -92,6 +92,13 @@
       "when": 1783907737398,
       "tag": "0012_key_scope_exclusions_balance_ops",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1783923159347,
+      "tag": "0013_account_display_overrides",
+      "breakpoints": true
     }
   ]
 }

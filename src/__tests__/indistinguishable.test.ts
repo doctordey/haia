@@ -15,6 +15,7 @@ const account = {
   leverage: null, currency: 'USD', accountType: 'demo',
   accessMode: 'investor', hitlEnabled: false,
   labelName: 'Alpha Fund', labelLogin: 'FUND-001', labelType: 'live',
+  labelServer: null, labelBroker: null, labelLeverage: null, beginningDate: null,
   distinguishManual: false, isActive: true, lastSyncAt: null,
   syncStatus: 'synced', syncError: null,
   createdAt: new Date(), updatedAt: new Date(),
@@ -40,6 +41,33 @@ describe('exposeAccount indistinguishability', () => {
   it('produces the identical shape whether or not overrides are set', () => {
     const plain = exposeAccount({ ...account, labelName: null, labelLogin: null, labelType: null } as AccountRow);
     expect(Object.keys(plain).sort()).toEqual(Object.keys(exposeAccount(account)).sort());
+  });
+
+  it('applies server/broker/leverage overrides and exposes beginningDate', () => {
+    const out = exposeAccount({
+      ...account,
+      labelServer: 'Prime-Live', labelBroker: 'Prime Brokerage', labelLeverage: 500,
+      beginningDate: '2026-01-01',
+    } as AccountRow);
+    expect(out.server).toBe('Prime-Live');
+    expect(out.broker).toBe('Prime Brokerage');
+    expect(out.leverage).toBe(500);
+    expect(out.beginningDate).toBe('2026-01-01');
+    // real server value not leaked
+    expect(JSON.stringify(out)).not.toContain('Broker-Live');
+  });
+
+  it('omits winRate/profitFactor/maxDrawdownPct/createdAt from the payload', () => {
+    const out = exposeAccount(account, {
+      balance: 100, equity: 100, totalPnl: 10, realizedPnl: 10, unrealizedPnl: 0,
+      totalTrades: 3, winRate: 66, profitFactor: 2, maxDrawdownPct: 5, lastCalculatedAt: new Date(),
+    } as Parameters<typeof exposeAccount>[1]);
+    expect(out).not.toHaveProperty('createdAt');
+    expect(out.stats).not.toHaveProperty('winRate');
+    expect(out.stats).not.toHaveProperty('profitFactor');
+    expect(out.stats).not.toHaveProperty('maxDrawdownPct');
+    expect(out.stats?.balance).toBe(100);
+    expect(out.stats?.totalTrades).toBe(3);
   });
 });
 

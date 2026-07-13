@@ -81,6 +81,25 @@ export function buildLabelUpdate(body: Record<string, unknown>):
     else if (kind(body.accountType)) set.accountType = body.accountType;
     else return { error: 'accountType must be "live", "demo", or null' };
   }
+  if ('labelServer' in body) set.labelServer = body.labelServer == null ? null : String(body.labelServer).trim() || null;
+  if ('labelBroker' in body) set.labelBroker = body.labelBroker == null ? null : String(body.labelBroker).trim() || null;
+  if ('labelLeverage' in body) {
+    if (body.labelLeverage == null || body.labelLeverage === '') set.labelLeverage = null;
+    else {
+      const n = Number(body.labelLeverage);
+      if (!Number.isFinite(n) || n < 0) return { error: 'labelLeverage must be a non-negative number or null' };
+      set.labelLeverage = Math.trunc(n);
+    }
+  }
+  if ('beginningDate' in body) {
+    if (body.beginningDate == null || body.beginningDate === '') set.beginningDate = null;
+    else {
+      // Accept YYYY-MM-DD (or any parseable date); store as a date string.
+      const d = new Date(String(body.beginningDate));
+      if (Number.isNaN(d.getTime())) return { error: 'beginningDate must be a valid date (YYYY-MM-DD) or null' };
+      set.beginningDate = d.toISOString().slice(0, 10);
+    }
+  }
   if ('distinguishManual' in body) {
     if (typeof body.distinguishManual !== 'boolean') return { error: 'distinguishManual must be a boolean' };
     set.distinguishManual = body.distinguishManual;

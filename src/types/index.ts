@@ -91,6 +91,10 @@ export interface TradingAccount {
   labelName: string | null;
   labelLogin: string | null;
   labelType: AccountKind | null;
+  labelServer: string | null;
+  labelBroker: string | null;
+  labelLeverage: number | null;
+  beginningDate: string | null;
   distinguishManual: boolean;
   isActive: boolean;
   lastSyncAt: Date | null;

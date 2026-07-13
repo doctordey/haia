@@ -21,14 +21,14 @@ export function exposeAccount(acc: AccountRow, stats?: StatsRow | null) {
     accountType,                                    // "live" | "demo" | null
     isDemo: accountType ? accountType === 'demo' : null,
     platform: acc.platform,
-    server: acc.server,
-    broker: acc.broker,
-    leverage: acc.leverage,
+    server: acc.labelServer ?? acc.server,
+    broker: acc.labelBroker ?? acc.broker,
+    leverage: acc.labelLeverage ?? acc.leverage,
     currency: acc.currency,
+    beginningDate: acc.beginningDate,               // inception / tracking-start date (YYYY-MM-DD or null)
     isActive: acc.isActive,
     syncStatus: acc.syncStatus,
     lastSyncAt: acc.lastSyncAt,
-    createdAt: acc.createdAt,
     stats: stats
       ? {
           balance: stats.balance,
@@ -37,9 +37,6 @@ export function exposeAccount(acc: AccountRow, stats?: StatsRow | null) {
           realizedPnl: stats.realizedPnl,
           unrealizedPnl: stats.unrealizedPnl,
           totalTrades: stats.totalTrades,
-          winRate: stats.winRate,
-          profitFactor: stats.profitFactor,
-          maxDrawdownPct: stats.maxDrawdownPct,
           lastCalculatedAt: stats.lastCalculatedAt,
         }
       : null,

@@ -385,6 +385,10 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
     labelName: account.labelName || '',
     labelLogin: account.labelLogin || '',
     labelType: account.labelType || account.accountType || '',
+    labelServer: account.labelServer || '',
+    labelBroker: account.labelBroker || '',
+    labelLeverage: account.labelLeverage != null ? String(account.labelLeverage) : '',
+    beginningDate: account.beginningDate || '',
     distinguishManual: account.distinguishManual !== false,
   });
   const [saving, setSaving] = useState(false);
@@ -399,6 +403,10 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
           labelName: form.labelName.trim() || null,
           labelLogin: form.labelLogin.trim() || null,
           labelType: form.labelType || null,
+          labelServer: form.labelServer.trim() || null,
+          labelBroker: form.labelBroker.trim() || null,
+          labelLeverage: form.labelLeverage.trim() === '' ? null : Number(form.labelLeverage),
+          beginningDate: form.beginningDate || null,
           distinguishManual: form.distinguishManual,
         }),
       });
@@ -409,7 +417,7 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
   }
 
   return (
-    <Modal open onClose={onClose} title="Edit account labels">
+    <Modal open onClose={onClose} title="Edit account labels" className="max-w-lg">
       <p className="text-xs text-text-secondary mb-4">
         Override what the REST API exposes for this account. Leave a field blank to expose the real value.
         These do not change your broker credentials.
@@ -422,6 +430,16 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
         <Select label="Account type (live / demo)" value={form.labelType}
           onChange={(e) => setForm({ ...form, labelType: e.target.value })}
           options={[{ value: '', label: 'Unset' }, { value: 'live', label: 'Live' }, { value: 'demo', label: 'Demo' }]} />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Display server" placeholder={account.server || 'e.g. FusionMarkets-Live'}
+            value={form.labelServer} onChange={(e) => setForm({ ...form, labelServer: e.target.value })} />
+          <Input label="Display broker" placeholder={account.broker || 'e.g. FusionMarkets'}
+            value={form.labelBroker} onChange={(e) => setForm({ ...form, labelBroker: e.target.value })} />
+          <Input label="Display leverage" type="number" placeholder={account.leverage != null ? String(account.leverage) : 'e.g. 500'}
+            value={form.labelLeverage} onChange={(e) => setForm({ ...form, labelLeverage: e.target.value })} />
+          <Input label="Beginning date" type="date"
+            value={form.beginningDate} onChange={(e) => setForm({ ...form, beginningDate: e.target.value })} />
+        </div>
         <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pt-1">
           <input type="checkbox" checked={form.distinguishManual}
             onChange={(e) => setForm({ ...form, distinguishManual: e.target.checked })} />

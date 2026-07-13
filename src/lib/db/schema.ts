@@ -64,9 +64,13 @@ export const tradingAccounts = pgTable('trading_accounts', {
   // label is null the real value (name / login / accountType) is exposed instead.
   // Lets an operator publish an account under a pseudonym without changing the
   // underlying broker credentials.
-  labelName:  text('label_name'),
-  labelLogin: text('label_login'),
-  labelType:  text('label_type'),                                 // override: "live" | "demo" | null
+  labelName:    text('label_name'),
+  labelLogin:   text('label_login'),
+  labelType:    text('label_type'),                               // override: "live" | "demo" | null
+  labelServer:  text('label_server'),                             // override broker server string
+  labelBroker:  text('label_broker'),                             // override broker name
+  labelLeverage: integer('label_leverage'),                       // override leverage
+  beginningDate: date('beginning_date'),                          // inception / tracking-start date exposed via the API
 
   // When true, manual entries are kept distinguishable from live (broker-synced)
   // ones — surfaced as a `source` field and filterable. When false the two are

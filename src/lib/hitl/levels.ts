@@ -1,22 +1,22 @@
 /**
  * HITL level geometry — pure, no I/O.
  *
- * Given an entry reference and a range (high/low) plus a direction, derive
- * SL, R, and the TP ladder. The SL/R derivation is gated by `SL_FROM`
- * (HITL_DESIGN.md §D1); the locked default is `range_size` — the range width
- * *is* R and the stop sits one R from entry.
+ * Range-anchored: the operator's range defines every level, independent of the
+ * exact fill price.
+ *   • R (the projection unit) = range height (high − low)
+ *   • SL = the protective edge (BUY → range low, SELL → range high)
+ *   • TPn = far edge + multiple×R in the trade direction
+ *            (BUY → high + n×R, SELL → low − n×R)
  *
- * NOTE: the TP ladder multiples (1R/2R/3R) are reconstructed from the brief,
- * pending the authoritative `Haia_HITL_Execution_Spec.md`. They live in one
- * constant so reconciliation is a one-line change.
+ * The entry price plays no part in the ladder — it only drives lot sizing
+ * (risk = fill→SL distance) and the pre-dispatch sanity gates (SL on the
+ * protective side of the fill, TPs beyond it).
  */
-
-import type { SlFrom } from './config';
 
 export type Direction = 'BUY' | 'SELL';
 
 /** Default R-multiples for the TP ladder. TP1 = BE trigger, TP2 = Leg A, TP3 = Leg B.
- *  Configurable per-deployment (env HITL_TP{1,2,3}_R / Settings → HITL → Targets). */
+ *  Configurable per-deployment (env HITL_TP{1,2,3}_R / Settings → Unicorn → Targets). */
 export const TP_MULTIPLES = { tp1: 1, tp2: 2, tp3: 5 } as const;
 
 export interface TpMultiples { tp1: number; tp2: number; tp3: number }
@@ -50,12 +50,11 @@ export interface ComputeLevelsInput {
   rangeHigh: number;
   rangeLow: number;
   direction: Direction;
-  slFrom: SlFrom;
   tpMultiples?: TpMultiples;   // defaults to TP_MULTIPLES
 }
 
 export function computeLevels(input: ComputeLevelsInput): LevelsResult {
-  const { entry, rangeHigh, rangeLow, direction, slFrom } = input;
+  const { entry, rangeHigh, rangeLow, direction } = input;
   const mult = input.tpMultiples ?? TP_MULTIPLES;
 
   if (![entry, rangeHigh, rangeLow].every((n) => Number.isFinite(n))) {
@@ -65,27 +64,16 @@ export function computeLevels(input: ComputeLevelsInput): LevelsResult {
     return { ok: false, reason: `invalid range: high (${rangeHigh}) must be greater than low (${rangeLow})` };
   }
 
-  let sl: number;
-  let r: number;
-
-  if (slFrom === 'range_size') {
-    // Range width IS R; stop sits one R from entry on the protective side.
-    r = rangeHigh - rangeLow;
-    sl = direction === 'BUY' ? entry - r : entry + r;
-  } else {
-    // protective_edge: stop at the far edge of the range; R is the distance to it.
-    sl = direction === 'BUY' ? rangeLow : rangeHigh;
-    r = Math.abs(entry - sl);
-  }
-
-  if (!(r > 0)) {
-    return { ok: false, reason: `non-positive R (${r}) — entry/range/direction are inconsistent` };
-  }
+  // Range height is the projection unit.
+  const r = rangeHigh - rangeLow;
 
   const sign = direction === 'BUY' ? 1 : -1;
-  const tp1 = entry + sign * mult.tp1 * r;
-  const tp2 = entry + sign * mult.tp2 * r;
-  const tp3 = entry + sign * mult.tp3 * r;
+  const sl = direction === 'BUY' ? rangeLow : rangeHigh;    // protective edge
+  const far = direction === 'BUY' ? rangeHigh : rangeLow;   // projection origin
+
+  const tp1 = far + sign * mult.tp1 * r;
+  const tp2 = far + sign * mult.tp2 * r;
+  const tp3 = far + sign * mult.tp3 * r;
 
   return { ok: true, levels: { direction, entry, sl, r, tp1, tp2, tp3 } };
 }

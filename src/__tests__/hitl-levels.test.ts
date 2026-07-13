@@ -2,61 +2,57 @@ import { describe, it, expect } from 'vitest';
 import { computeLevels, inferDirection, TP_MULTIPLES } from '@/lib/hitl/levels';
 import { computeLots, splitLegs, valuePerPoint, type HitlSymbolSpec } from '@/lib/hitl/sizing';
 
-// ── Geometry: SL_FROM = range_size (locked default) ──
+// ── Geometry: range-anchored (SL at protective edge, TPs projected from the far edge) ──
 
-describe('computeLevels — range_size', () => {
-  it('BUY: range width is R, stop one R below entry, default TP ladder 1R/2R/5R', () => {
-    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'range_size' });
+describe('computeLevels — range-anchored', () => {
+  it('BUY: SL at range low, TPs projected from range high (1R/2R/5R)', () => {
+    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.levels).toMatchObject({ r: 20, sl: 4980, tp1: 5020, tp2: 5040, tp3: 5100 });
+    expect(r.levels).toMatchObject({ r: 20, sl: 4990, tp1: 5030, tp2: 5050, tp3: 5110 });
   });
 
-  it('SELL: stop one R above entry, TPs descend (1R/2R/5R)', () => {
-    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'SELL', slFrom: 'range_size' });
+  it('SELL: SL at range high, TPs projected down from range low', () => {
+    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'SELL' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.levels).toMatchObject({ r: 20, sl: 5020, tp1: 4980, tp2: 4960, tp3: 4900 });
+    expect(r.levels).toMatchObject({ r: 20, sl: 5010, tp1: 4970, tp2: 4950, tp3: 4890 });
+  });
+
+  it('the ladder is independent of the entry price (entry only recorded)', () => {
+    const a = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY' });
+    const b = computeLevels({ entry: 5007, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY' });
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.levels.sl).toBe(b.levels.sl);
+    expect(a.levels.tp1).toBe(b.levels.tp1);
+    expect(a.levels.tp3).toBe(b.levels.tp3);
+    expect(a.levels.entry).toBe(5000);
+    expect(b.levels.entry).toBe(5007);
   });
 
   it('default TP multiples are 1R/2R/5R', () => {
     expect(TP_MULTIPLES).toEqual({ tp1: 1, tp2: 2, tp3: 5 });
   });
 
-  it('honours custom TP multiples', () => {
-    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'range_size', tpMultiples: { tp1: 1, tp2: 3, tp3: 6 } });
+  it('honours custom TP multiples (from the far edge)', () => {
+    const r = computeLevels({ entry: 5000, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', tpMultiples: { tp1: 1, tp2: 3, tp3: 6 } });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.levels).toMatchObject({ tp1: 5020, tp2: 5060, tp3: 5120 });
-  });
-});
-
-describe('computeLevels — protective_edge (alt)', () => {
-  it('BUY: stop at range low, R is entry→low distance', () => {
-    const r = computeLevels({ entry: 5010, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'protective_edge' });
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.levels).toMatchObject({ sl: 4990, r: 20, tp1: 5030 });
-  });
-
-  it('rejects non-positive R when entry sits on the stop edge', () => {
-    const r = computeLevels({ entry: 4990, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'protective_edge' });
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toMatch(/non-positive R/);
+    expect(r.levels).toMatchObject({ tp1: 5030, tp2: 5070, tp3: 5130 });
   });
 });
 
 describe('computeLevels — validation', () => {
   it('rejects an inverted range', () => {
-    const r = computeLevels({ entry: 5000, rangeHigh: 4990, rangeLow: 5010, direction: 'BUY', slFrom: 'range_size' });
+    const r = computeLevels({ entry: 5000, rangeHigh: 4990, rangeLow: 5010, direction: 'BUY' });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toMatch(/invalid range/);
   });
 
   it('rejects non-finite inputs', () => {
-    const r = computeLevels({ entry: NaN, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY', slFrom: 'range_size' });
+    const r = computeLevels({ entry: NaN, rangeHigh: 5010, rangeLow: 4990, direction: 'BUY' });
     expect(r.ok).toBe(false);
   });
 });

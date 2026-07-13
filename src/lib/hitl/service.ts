@@ -215,7 +215,6 @@ export class HitlService implements HitlBotDeps {
       rangeHigh: input.rangeHigh,
       rangeLow: input.rangeLow,
       direction: input.direction,
-      slFrom: cfg.slFrom,
       tpMultiples,
     });
     if (!lv.ok) return { kind: 'error', text: `Cannot compute levels: ${lv.reason}` };
@@ -255,7 +254,7 @@ export class HitlService implements HitlBotDeps {
       tp3: lv.levels.tp3, // always stored for ladder geometry; toggle changes the leg target, not the gate
       lots: primary.lots,
       legs: primary.plan.legs,
-      slFrom: cfg.slFrom,
+      slFrom: 'range_anchored', // audit: SL at protective edge, TPs projected from the far edge
       positionModel: exec.positionModel,
       entryMode: cfg.entryMode,
       riskPct: primary.riskPctDisplay,

@@ -248,7 +248,7 @@ export function parseMt5Html(html: string): Mt5ParseResult {
   let skipped = 0;
 
   for (let i = best.idx + 1; i < allRows.length; i++) {
-    const cells = allRows[i];
+    let cells = allRows[i];
 
     // A short row (section title like "Orders", colspan summary) or another
     // header row marks the end of the trade table once we have data.
@@ -261,6 +261,18 @@ export function parseMt5Html(html: string): Mt5ParseResult {
     if (planHere.filter(Boolean).length >= 4 && planHere.includes('symbol') && planHere.includes('type')) {
       if (rows.length) break;
       continue;
+    }
+
+    // Real MT5 reports emit MORE cells in data rows than in the header (the
+    // header uses colspan; data rows add an empty spacer cell after Type),
+    // which shifts every column from Volume onward. Realign by dropping empty
+    // cells — leftmost first — until the row width matches the header plan.
+    if (cells.length > best.plan.length) {
+      let excess = cells.length - best.plan.length;
+      cells = cells.filter((cell) => {
+        if (excess > 0 && cell === '') { excess--; return false; }
+        return true;
+      });
     }
 
     const rec: Record<string, string> = {};

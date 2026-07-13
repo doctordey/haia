@@ -52,6 +52,31 @@ describe('parseMt5Html', () => {
     expect(rows).toHaveLength(0);
     expect(warnings.length).toBeGreaterThan(0);
   });
+
+  // Real MT5 ReportHistory exports (e.g. FusionMarkets): the header row has 13
+  // cells (last one colspan=2) while data rows have 14 — an empty spacer cell
+  // after Type — shifting every column from Volume onward. Regression for the
+  // realignment that drops excess empty cells.
+  it('realigns data rows that have an extra empty spacer cell (real broker report)', () => {
+    const html = `
+<table>
+<tr><td colspan="13"><b>Positions</b></td></tr>
+<tr><td>Time</td><td>Position</td><td>Symbol</td><td>Type</td><td>Volume</td><td>Price</td><td>S / L</td><td>T / P</td><td>Time</td><td>Price</td><td>Commission</td><td>Swap</td><td colspan="2">Profit</td></tr>
+<tr><td>2026.06.14 23:26:00</td><td>175373857</td><td>BTCUSD</td><td>buy</td><td></td><td>100</td><td>63891.00</td><td>63631.39</td><td>64710.05</td><td>2026.06.15 00:18:58</td><td>64710.05</td><td>-450.00</td><td>0.00</td><td>81&nbsp;905.00</td></tr>
+</table>`;
+    const { rows } = parseMt5Html(html);
+    expect(rows).toHaveLength(1);
+    const t = rows[0];
+    expect(t.ticket).toBe('175373857');
+    expect(t.lots).toBe(100);
+    expect(t.entryPrice).toBe(63891);
+    expect(t.stopLoss).toBe(63631.39);
+    expect(t.takeProfit).toBe(64710.05);
+    expect(t.closePrice).toBe(64710.05);
+    expect(t.closeTime).toBe('2026-06-15 00:18:58');
+    expect(t.profit).toBe(81905);
+    expect(t.commission).toBe(-450);
+  });
 });
 
 describe('cleanImportText', () => {

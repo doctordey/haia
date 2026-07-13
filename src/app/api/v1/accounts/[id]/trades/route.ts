@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { authenticateApiKey, keyAllowsAccount, type ApiIdentity } from '@/lib/api/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades } from '@/lib/db/schema';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, gte, lte } from 'drizzle-orm';
 import { exposeTrade } from '@/lib/api/serialize';
 import { normalizeTrade, upsertTrades, type TradeInput } from '@/lib/trades/ingest';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
+import { parseTimeParam } from '@/lib/api/time';
 
 // Ownership + key account-restriction; restricted keys 404 like a missing account.
 async function findAllowed(identity: ApiIdentity, id: string) {
@@ -37,6 +38,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const limit = Math.min(500, Math.max(1, parseInt(searchParams.get('limit') || '100')));
   const offset = (page - 1) * limit;
 
+  // Date range: `from`/`to` accept ISO 8601 or epoch (ms, or seconds if ≤10
+  // digits). `dateField` picks which timestamp to filter on — close (default,
+  // for realized history) or open.
+  const from = parseTimeParam(searchParams.get('from'));
+  const to = parseTimeParam(searchParams.get('to'));
+  if (from === 'invalid' || to === 'invalid') {
+    return NextResponse.json({ error: 'Invalid from/to — use ISO 8601 (2024-01-02T00:00:00Z) or epoch ms' }, { status: 400 });
+  }
+  const dateCol = searchParams.get('dateField') === 'open' ? trades.openTime : trades.closeTime;
+
   // Excluded trades never leave the system via the public API.
   const conditions = [eq(trades.accountId, id), eq(trades.isExcluded, false)];
   if (status === 'open') conditions.push(eq(trades.isOpen, true));
@@ -45,6 +56,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     conditions.push(eq(trades.source, source));
   }
   if (symbol) conditions.push(eq(trades.symbol, symbol.toUpperCase()));
+  if (from) conditions.push(gte(dateCol, from));
+  if (to) conditions.push(lte(dateCol, to));
 
   const [list, countResult] = await Promise.all([
     db.query.trades.findMany({

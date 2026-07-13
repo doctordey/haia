@@ -7,8 +7,9 @@ import { hashApiKey, type ApiScope } from '@/lib/api/keys';
 /**
  * Authentication for the public REST API (/api/v1/*).
  *
- * Callers present a key via either header:
+ * Callers present a key via any of:
  *   Authorization: Bearer hk_…
+ *   Authorization: Token hk_…
  *   X-API-Key: hk_…
  *
  * The key's SHA-256 hash is looked up; revoked/expired keys are rejected. On
@@ -36,8 +37,10 @@ export function keyAllowsAccount(identity: ApiIdentity, accountId: string): bool
 function extractKey(request: Request): string | null {
   const header = request.headers.get('authorization');
   if (header) {
-    const match = header.match(/^Bearer\s+(.+)$/i);
+    // Accept "Bearer <key>" and "Token <key>" schemes, or a bare key.
+    const match = header.match(/^(?:Bearer|Token)\s+(.+)$/i);
     if (match) return match[1].trim();
+    if (header.startsWith('hk_')) return header.trim();
   }
   const x = request.headers.get('x-api-key');
   if (x) return x.trim();
@@ -59,7 +62,7 @@ export async function authenticateApiKey(
   const plaintext = extractKey(request);
   if (!plaintext) {
     return NextResponse.json(
-      { error: 'Missing API key. Send it as "Authorization: Bearer <key>" or the "X-API-Key" header.' },
+      { error: 'Missing API key. Send it as "Authorization: Bearer <key>", "Authorization: Token <key>", or the "X-API-Key" header.' },
       { status: 401 },
     );
   }

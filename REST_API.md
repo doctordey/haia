@@ -17,13 +17,23 @@ serve app + API on every domain.
 
 ## Authentication
 
-Create keys in **Settings → API**. The plaintext key (`hk_…`) is shown once at
-creation and stored only as a SHA-256 hash. Send it on every request via either:
+Create keys in **Settings → API**. The plaintext key (`hk_…` — `hk_` followed by
+48 hex characters) is shown once at creation and stored only as a SHA-256 hash.
+Send it on every request via any of:
 
 ```
 Authorization: Bearer hk_xxxxxxxx…
+Authorization: Token hk_xxxxxxxx…
 X-API-Key: hk_xxxxxxxx…
 ```
+
+All responses are `application/json`. Timestamps in responses are ISO 8601 UTC
+(`2024-01-02T12:00:00.000Z`). Date filters (`from`/`to`) accept ISO 8601 **or**
+epoch (milliseconds; seconds if ≤10 digits).
+
+A public, no-auth **discovery endpoint** at `GET /api/v1` (or `/v1` on a
+dedicated API host) returns this same information as JSON — auth, endpoints, and
+a field data dictionary — so a consumer can self-serve without this file.
 
 Scopes:
 
@@ -77,9 +87,17 @@ The account's deposits and withdrawals (captured from broker sync):
 ```
 
 ### `GET /api/v1/accounts/:id/trades`
-Query params: `status=open|closed|all`, `source=live|manual|all`,
-`symbol=EURUSD`, `page`, `limit` (max 500). The `source` filter and the per-trade
-`source` field are only applied when the account has `distinguishManual` enabled.
+Trade/execution history. Query params: `status=open|closed|all`,
+`from`/`to` (ISO 8601 or epoch), `dateField=close|open` (default `close`),
+`source=live|manual|all`, `symbol=EURUSD`, `page`, `limit` (max 500). The
+`source` filter and the per-trade `source` field are only applied when the
+account has `distinguishManual` enabled.
+
+```bash
+# closed trades in January 2024
+curl -H "Authorization: Token hk_…" \
+  "https://api.yourdomain.com/v1/accounts/<ID>/trades?status=closed&from=2024-01-01T00:00:00Z&to=2024-02-01T00:00:00Z"
+```
 
 ```json
 { "trades": [ { "ticket": "101", "symbol": "EURUSD", "direction": "BUY", "profit": 50, "source": "manual" } ],

@@ -8,11 +8,21 @@ import { NextResponse } from 'next/server';
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  // Behind a proxy (Railway/Vercel/nginx) request.url carries the internal bind
+  // address — build the public base from the forwarded headers instead.
+  const host =
+    request.headers.get('x-forwarded-host')?.split(',')[0].trim() ||
+    request.headers.get('host') ||
+    url.host;
+  const proto =
+    request.headers.get('x-forwarded-proto')?.split(',')[0].trim() ||
+    url.protocol.replace(':', '');
   // Prefer the bare /v1 base on a dedicated API host; else the /api/v1 path.
-  const base = `${url.protocol}//${url.host}${url.pathname.replace(/\/$/, '') || '/api/v1'}`;
+  const base = `${proto}://${host}${url.pathname.replace(/\/$/, '') || '/api/v1'}`;
 
   return NextResponse.json({
-    name: 'Haia REST API',
+    // Branding: set API_NAME in the environment to publish under your own name.
+    name: process.env.API_NAME?.trim() || 'Haia REST API',
     version: 'v1',
     baseUrl: base,
     responseFormat: 'application/json',

@@ -137,9 +137,10 @@ export const tradesRelations = relations(trades, ({ one, many }) => ({
 // ─── Balance Operations ──────────────────────────────
 // Deposits/withdrawals as first-class rows (captured from MetaApi
 // DEAL_TYPE_BALANCE deals during sync). Stored so individual transactions can
-// be hidden from API transmission; previously they were folded into snapshots
-// on the fly and couldn't be referenced at all. All ops — hidden or not —
-// count toward the balance curve.
+// be excluded; previously they were folded into snapshots on the fly and
+// couldn't be referenced at all. A hidden op is omitted from both API
+// transmission and the balance curve (unlike trades.isExcluded, which is
+// transmission-only).
 
 export const balanceOps = pgTable('balance_ops', {
   id:         text('id').primaryKey().$defaultFn(() => createId()),
@@ -149,7 +150,7 @@ export const balanceOps = pgTable('balance_ops', {
   amount:     real('amount').notNull(),                        // signed: deposits +, withdrawals −
   time:       timestamp('time').notNull(),
   comment:    text('comment'),
-  isExcluded: boolean('is_excluded').notNull().default(false), // not transmitted via the public API (still counts toward balance)
+  isExcluded: boolean('is_excluded').notNull().default(false), // omitted from API transmission AND the balance curve
   createdAt:  timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   unique('balance_ops_account_deal_uniq').on(table.accountId, table.dealId),

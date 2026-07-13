@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, balanceOps } from '@/lib/db/schema';
 import { and, eq, desc } from 'drizzle-orm';
+import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
 async function findOwned(userId: string, id: string) {
   return db.query.tradingAccounts.findFirst({
@@ -37,9 +38,10 @@ export async function GET(
 }
 
 /**
- * PATCH /api/accounts/:id/balance-ops — toggle whether a transaction is
- * transmitted via the public API. Body: { opId, isExcluded }. Visibility only:
- * a hidden deposit still counts toward the balance — it just isn't sent.
+ * PATCH /api/accounts/:id/balance-ops — toggle a transaction's exclusion.
+ * Body: { opId, isExcluded }. A hidden deposit/withdrawal is removed from BOTH
+ * API transmission and the balance curve (unlike trades, whose hiding is
+ * transmission-only), so aggregates recompute here.
  */
 export async function PATCH(
   request: Request,
@@ -67,5 +69,6 @@ export async function PATCH(
 
   if (!updated) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
 
+  await recomputeAccountAggregates(id);
   return NextResponse.json({ success: true, ...updated });
 }

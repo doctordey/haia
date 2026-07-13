@@ -216,7 +216,8 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
 }
 
 // Control which trades and deposits/withdrawals are transmitted via the public
-// API. Visibility only — hidden items still count toward balance and stats.
+// API. Asymmetric: hiding a transaction also removes it from the balance;
+// hiding a trade is transmission-only (stats always include every trade).
 function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
   const [ops, setOps] = useState<any[]>([]);
   const [tradeList, setTradeList] = useState<any[]>([]);
@@ -245,7 +246,7 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ opId: op.id, isExcluded: !op.isExcluded }),
       });
-      if (res.ok) { toast(op.isExcluded ? 'Transaction visible via API again' : 'Transaction hidden from API', 'success'); load(); }
+      if (res.ok) { toast(op.isExcluded ? 'Transaction restored (transmitted + counted in balance)' : 'Transaction hidden and removed from balance', 'success'); load(); }
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
     } catch { toast('Failed to update', 'error'); }
     finally { setBusy(null); }
@@ -267,8 +268,10 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
   return (
     <Modal open onClose={onClose} title={`API visibility — ${account.labelName || account.name}`} className="max-w-2xl">
       <p className="text-xs text-text-secondary mb-3">
-        Hidden items are not transmitted via the API — consumers see no trace of them. Your account balance,
-        statistics, and in-app views are unaffected. Toggle again to transmit an item.
+        Hidden items are not transmitted via the API — consumers see no trace of them. Hiding a
+        <strong> deposit/withdrawal</strong> also removes it from the reported balance. Hiding a
+        <strong> trade</strong> affects transmission only — statistics and balance always include every trade.
+        Toggle again to restore.
       </p>
       {loading ? (
         <p className="text-xs text-text-tertiary">Loading…</p>

@@ -1,23 +1,25 @@
 import { db } from '@/lib/db';
 import { trades, dailySnapshots, accountStats, balanceOps, tradingAccounts } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
 
 /**
  * Rebuild a trading account's derived data — daily snapshots + account stats —
  * from its stored trades and balance operations. This is the single balance
- * authority: the MetaApi sync, imports, and manual entry all call it after
- * changing rows.
+ * authority: the MetaApi sync, imports, manual entry, and transaction-hiding
+ * toggles all call it after changing rows.
  *
- * Note on exclusions: the `isExcluded` flags on trades/balance ops are a
- * TRANSMISSION filter only — they hide items from public API output, and are
- * deliberately NOT consulted here. Hiding a deposit doesn't change the account
- * balance; the accounting always reflects what actually happened.
+ * Exclusion semantics are asymmetric by design:
+ *  • balance ops (deposits/withdrawals): a hidden op is omitted from BOTH API
+ *    transmission and the balance curve here — hiding a deposit removes it
+ *    from the reported balance.
+ *  • trades: `isExcluded` hides a trade from API transmission ONLY. Trades
+ *    always count toward stats and balance — performance numbers stay honest.
  *
  *   balance(day) = openingBalance
- *                + Σ deposits/withdrawals up to and incl. day
- *                + Σ realized PnL up to and incl. day
+ *                + Σ non-hidden deposits/withdrawals up to and incl. day
+ *                + Σ realized PnL (all trades) up to and incl. day
  *
  * `openingBalance` lives on the account row (set by the import
  * ?openingBalance= param); broker accounts normally leave it at 0 because
@@ -34,7 +36,9 @@ export async function recomputeAccountAggregates(
   const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, accountId) });
   const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
 
-  const ops = await db.query.balanceOps.findMany({ where: eq(balanceOps.accountId, accountId) });
+  const ops = await db.query.balanceOps.findMany({
+    where: and(eq(balanceOps.accountId, accountId), eq(balanceOps.isExcluded, false)),
+  });
 
   // Group by calendar day.
   const dailyMap = new Map<string, typeof closedTrades>();

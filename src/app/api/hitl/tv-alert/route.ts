@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadHitlConfig } from '@/lib/hitl/config';
 import { secretMatches, deriveSignalId, getHitlNotifier } from '@/lib/hitl/webhook';
-import { parseAlert, type AlertInfo } from '@/lib/hitl/alert';
+import { parseAnyAlert, type AlertInfo } from '@/lib/hitl/alert';
 import { resolveBrokerSymbolLive } from '@/lib/hitl/symbol-map';
+import { renderMessage } from '@/lib/hitl/messages';
+import { sendOperatorMessage } from '@/lib/hitl/notify';
 import * as session from '@/lib/hitl/session';
 
 /**
@@ -46,10 +48,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ accepted: false, reason: 'unauthorized' });
   }
 
-  // Normalize either source into AlertInfo.
+  // Normalize either source into AlertInfo (syntax decides the strategy).
   const alert: AlertInfo = jsonBody && (jsonBody.symbol || jsonBody.ticker)
     ? alertFromJson(jsonBody)
-    : parseAlert(rawBody);
+    : parseAnyAlert(rawBody);
+
+  // ── Notification-only events (e.g. Forever "ERL Hit") → forward to Telegram ──
+  // These may lack a symbol; they trigger no trading action so that's fine.
+  if (alert.type === 'notification') {
+    const text = await renderMessage('notification', { text: alert.raw.trim() });
+    const sent = await sendOperatorMessage(cfg, text);
+    console.log(`[hitl/tv-alert] notification forwarded (${alert.strategy}) → ${sent} chat(s)`);
+    return NextResponse.json({ accepted: true, forwarded: sent });
+  }
 
   if (!alert.symbol || alert.direction == null) {
     console.warn('[hitl/tv-alert] unparseable alert:', rawBody.slice(0, 120));
@@ -73,7 +84,9 @@ export async function POST(request: NextRequest) {
   if (alert.type !== 'activation') {
     return NextResponse.json({ accepted: false, reason: 'unknown_message_type' });
   }
-  if (alert.price == null) {
+  // Unicorn alerts always carry "@ price". Forever entries don't — the service
+  // resolves the live quote when the operator submits the range.
+  if (alert.price == null && alert.strategy === 'unicorn') {
     return NextResponse.json({ accepted: false, reason: 'missing_price' });
   }
 
@@ -101,7 +114,7 @@ export async function POST(request: NextRequest) {
       symbol,
       entryRef: alert.price,
       action: alert.direction,
-      rawAlert: { text: rawBody, parsed: alert, tvSymbol: alert.symbol },
+      rawAlert: { text: rawBody, parsed: alert, tvSymbol: alert.symbol, strategy: alert.strategy },
     });
   } catch (err) {
     console.warn('[hitl/tv-alert] insert failed (likely dedupe race):', err);
@@ -109,7 +122,7 @@ export async function POST(request: NextRequest) {
   }
 
   getHitlNotifier()?.onAlert?.(created.id);
-  console.log(`[hitl/tv-alert] accepted ${signalId} (${alert.direction} ${symbol} @ ${alert.price}) → ${created.id}`);
+  console.log(`[hitl/tv-alert] accepted ${signalId} (${alert.strategy} ${alert.direction} ${symbol} @ ${alert.price ?? 'mkt'}) → ${created.id}`);
   return NextResponse.json({ accepted: true, sessionId: created.id });
 }
 
@@ -126,5 +139,5 @@ function alertFromJson(body: Record<string, unknown>): AlertInfo {
   const symbol = str('symbol', 'ticker');
   const priceRaw = body.price ?? body.entry ?? body.entry_price ?? body.close;
   const price = priceRaw != null && Number.isFinite(Number(priceRaw)) ? Number(priceRaw) : null;
-  return { type, direction, symbol: symbol ? symbol.toUpperCase() : null, price, raw: JSON.stringify(body) };
+  return { strategy: 'unicorn', type, direction, symbol: symbol ? symbol.toUpperCase() : null, price, raw: JSON.stringify(body) };
 }

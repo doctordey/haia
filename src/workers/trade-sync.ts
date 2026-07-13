@@ -7,9 +7,17 @@
 
 import { db } from '../lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, or, lt } from 'drizzle-orm';
 import { calculateAccountStats } from '../lib/calculations';
+import { getMetaApi, withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
 import { format } from 'date-fns';
+import { installMetaApiLogFilter } from '../lib/log-filter';
+
+// Drop MetaApi's engine.io reconnect spam before any connection is opened.
+installMetaApiLogFilter();
+
+// A "syncing" claim older than this is considered dead and can be reclaimed.
+const STALE_SYNC_MS = 15 * 60_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,11 +30,15 @@ async function syncAccount(accountId: string) {
 
   if (!account || !account.isActive) return;
 
-  // Atomic claim
+  // Atomic claim — also reclaims a stale "syncing" (crashed/timed-out attempt).
+  const staleBefore = new Date(Date.now() - STALE_SYNC_MS);
   const claimed = await db
     .update(tradingAccounts)
     .set({ syncStatus: 'syncing' })
-    .where(and(eq(tradingAccounts.id, accountId), ne(tradingAccounts.syncStatus, 'syncing')))
+    .where(and(
+      eq(tradingAccounts.id, accountId),
+      or(ne(tradingAccounts.syncStatus, 'syncing'), lt(tradingAccounts.updatedAt, staleBefore)),
+    ))
     .returning({ id: tradingAccounts.id });
 
   if (claimed.length === 0) {
@@ -40,22 +52,24 @@ async function syncAccount(accountId: string) {
   let connection: any = null;
 
   try {
-    const MetaApi = require('metaapi.cloud-sdk').default;
-    const api = new MetaApi(process.env.METAAPI_TOKEN);
+    // Shared per-process SDK client — a new client per account per cycle
+    // multiplies websocket connections and rate-limits us (429).
+    const api = await getMetaApi();
     const metaAccount = await api.metatraderAccountApi.getAccount(account.metaApiId);
 
     if (metaAccount.state !== 'DEPLOYED') {
-      await metaAccount.waitDeployed();
+      await withTimeout(metaAccount.waitDeployed(), SYNC_STEP_TIMEOUT_MS, 'account deploy');
     }
 
     connection = metaAccount.getRPCConnection();
     await connection.connect();
-    await connection.waitSynchronized();
+    // Bound the slow RPC steps so one wedged account can't stall the serial loop.
+    await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'history sync');
 
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
-    const deals = await connection.getDealsByTimeRange(startDate, endDate);
+    const deals = await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
 
     // Track balance events by date
     const balanceByDate = new Map<string, number>();

@@ -42,7 +42,7 @@ export interface HitlConfig {
   tp3R: number;
 
   // ── behaviour switches (locked defaults per HITL_DESIGN.md) ──
-  slFrom: SlFrom;
+  slFrom: SlFrom;             // DEPRECATED — levels are range-anchored now (see levels.ts); kept for env compat
   positionModel: PositionModel;
   entryMode: EntryMode;
   beTrigger: BeTrigger;

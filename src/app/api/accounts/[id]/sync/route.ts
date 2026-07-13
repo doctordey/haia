@@ -2,10 +2,13 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, balanceOps } from '@/lib/db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, or, lt } from 'drizzle-orm';
 import { fetchHistoricalDeals } from '@/lib/metaapi';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
+
+// A "syncing" claim older than this is considered dead and can be reclaimed.
+const STALE_SYNC_MS = 15 * 60_000;
 
 export async function POST(
   _request: Request,
@@ -18,14 +21,17 @@ export async function POST(
 
   const { id } = await params;
 
-  // Atomic claim: only set syncing if not already syncing
+  // Atomic claim: set syncing unless a sync is already in flight. A claim older
+  // than STALE_SYNC_MS is treated as dead (crashed/timed-out request) and
+  // reclaimable, so an account can never get wedged in "syncing" forever.
+  const staleBefore = new Date(Date.now() - STALE_SYNC_MS);
   const claimed = await db
     .update(tradingAccounts)
     .set({ syncStatus: 'syncing' })
     .where(and(
       eq(tradingAccounts.id, id),
       eq(tradingAccounts.userId, session.user.id),
-      ne(tradingAccounts.syncStatus, 'syncing')
+      or(ne(tradingAccounts.syncStatus, 'syncing'), lt(tradingAccounts.updatedAt, staleBefore))
     ))
     .returning({ id: tradingAccounts.id });
 

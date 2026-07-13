@@ -72,10 +72,10 @@ export class HitlBot {
       const chatId = ctx.chat?.id;
       const userId = ctx.from?.id;
       await ctx.reply(
-        `HITL bot.\n` +
+        `Unicorn bot.\n` +
         `Chat id: ${chatId}\n` +
         `Your user id: ${userId}\n\n` +
-        `In Haia → Settings → HITL → Access, set the operator/group chat id to ${chatId} ` +
+        `In Haia → Settings → Unicorn → Access, set the operator/group chat id to ${chatId} ` +
         `and add ${userId} as an authorized user.`,
       );
     });
@@ -184,7 +184,7 @@ export class HitlBot {
   /** Send a message to every chat; returns the message ids that succeeded. */
   private async sendToAll(chatIds: string[], text: string, keyboard?: InlineKeyboard): Promise<number[]> {
     if (chatIds.length === 0) {
-      console.warn('[hitl/bot] nothing sent — no destinations configured (Settings → HITL → Access).');
+      console.warn('[hitl/bot] nothing sent — no destinations configured (Settings → Unicorn → Access).');
     }
     const ids: number[] = [];
     for (const chatId of chatIds) {

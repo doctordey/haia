@@ -24,7 +24,7 @@ export default function SettingsPage() {
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="api">API</TabsTrigger>
-          <TabsTrigger value="hitl">HITL</TabsTrigger>
+          <TabsTrigger value="hitl">Trading</TabsTrigger>
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="preferences">Preferences</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
@@ -69,6 +69,31 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
   // Per-account modals: which account + which action
   const [manage, setManage] = useState<{ account: any; mode: 'labels' | 'trade' | 'import' | 'exclusions' } | null>(null);
+  const [riskInfo, setRiskInfo] = useState<{ mode: string; defaultValue: number; overrides: Record<string, number> } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/hitl/account-risk').then((r) => (r.ok ? r.json() : null)).then((d) => d && setRiskInfo(d)).catch(() => {});
+  }, []);
+
+  async function saveRisk(id: string, raw: string) {
+    const value = raw.trim() === '' ? null : Number(raw);
+    if (value != null && !(Number.isFinite(value) && value > 0)) { toast('Risk must be a positive number', 'error'); return; }
+    try {
+      const res = await fetch('/api/hitl/account-risk', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountId: id, value }),
+      });
+      if (res.ok) {
+        setRiskInfo((prev) => {
+          if (!prev) return prev;
+          const overrides = { ...prev.overrides };
+          if (value == null) delete overrides[id]; else overrides[id] = value;
+          return { ...prev, overrides };
+        });
+        toast('Account risk saved', 'success');
+      } else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save risk', 'error'); }
+    } catch { toast('Failed to save risk', 'error'); }
+  }
 
   async function handleToggleHitl(id: string, next: boolean) {
     setTogglingHitl(id);
@@ -79,13 +104,13 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
         body: JSON.stringify({ hitlEnabled: next }),
       });
       if (res.ok) {
-        toast(next ? 'HITL enabled for this account' : 'HITL disabled', 'success');
+        toast(next ? 'Unicorn enabled for this account' : 'Unicorn disabled', 'success');
         onRefetch();
       } else {
         const data = await res.json().catch(() => ({}));
-        toast(data.error || 'Failed to update HITL', 'error');
+        toast(data.error || 'Failed to update Unicorn', 'error');
       }
-    } catch { toast('Failed to update HITL', 'error'); }
+    } catch { toast('Failed to update Unicorn', 'error'); }
     finally { setTogglingHitl(null); }
   }
 
@@ -163,7 +188,21 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   <Badge variant={acc.syncStatus === 'synced' ? 'profit' : acc.syncStatus === 'error' ? 'loss' : acc.syncStatus === 'syncing' ? 'info' : 'default'}>
                     {acc.syncStatus}
                   </Badge>
-                  {acc.hitlEnabled && <Badge variant="info">HITL</Badge>}
+                  {acc.hitlEnabled && <Badge variant="info">Unicorn</Badge>}
+                  {acc.hitlEnabled && (
+                    <div className="flex items-center gap-1" title="Risk for this account. Blank = use the default. Set per-account to size this account differently.">
+                      <span className="text-xs text-text-tertiary">{riskInfo?.mode === 'fixed' ? '$' : '%'}</span>
+                      <input
+                        key={`risk-${acc.id}-${riskInfo ? 'r' : 'l'}`}
+                        type="number"
+                        step="0.1"
+                        defaultValue={riskInfo?.overrides?.[acc.id] ?? ''}
+                        placeholder={riskInfo ? String(riskInfo.defaultValue) : ''}
+                        onBlur={(e) => saveRisk(acc.id, e.target.value)}
+                        className="w-14 px-2 py-1 bg-bg-tertiary border border-border-primary rounded text-xs text-text-primary"
+                      />
+                    </div>
+                  )}
                   <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'labels' })}>
                     Edit
                   </Button>
@@ -184,7 +223,7 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                     disabled={!acc.hitlEnabled && acc.accessMode !== 'trading'}
                     title={!acc.hitlEnabled && acc.accessMode !== 'trading' ? 'Requires a trading password (read-only account)' : 'Enable approved-trade execution on this account'}
                   >
-                    {acc.hitlEnabled ? 'Disable HITL' : 'Enable HITL'}
+                    {acc.hitlEnabled ? 'Disable Unicorn' : 'Enable Unicorn'}
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => handleSync(acc.id)} loading={syncing === acc.id}>
                     Re-sync
@@ -849,18 +888,49 @@ function HitlAccessSection({ toast }: { toast: (msg: string, type?: string) => v
   );
 }
 
+type Strat = 'unicorn' | 'forever';
+const STRATS: Strat[] = ['unicorn', 'forever'];
+const stratLabel = (s: Strat) => (s === 'unicorn' ? 'Unicorn' : 'Forever');
+
+function StrategyPicker({ value, onChange }: { value: Strat; onChange: (s: Strat) => void }) {
+  return (
+    <div className="flex gap-2">
+      {STRATS.map((s) => (
+        <button key={s} type="button" aria-pressed={value === s} onClick={() => onChange(s)}
+          className={`px-3 py-1 rounded-[var(--radius-md)] text-xs border ${
+            value === s ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+              : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
+          {stratLabel(s)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type TargetsDraft = { tp1: string; tp2: string; tp3: string };
+
 function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => void }) {
-  const [targets, setTargets] = useState({ tp1: '1', tp2: '2', tp3: '5' });
+  const empty: TargetsDraft = { tp1: '1', tp2: '2', tp3: '5' };
+  const [strat, setStrat] = useState<Strat>('unicorn');
+  const [targets, setTargets] = useState<Record<Strat, TargetsDraft>>({ unicorn: empty, forever: empty });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch('/api/hitl/targets')
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d) setTargets({ tp1: String(d.tp1), tp2: String(d.tp2), tp3: String(d.tp3) }); })
+      .then((d) => {
+        if (d?.unicorn && d?.forever) {
+          const s = (x: { tp1: number; tp2: number; tp3: number }): TargetsDraft => ({ tp1: String(x.tp1), tp2: String(x.tp2), tp3: String(x.tp3) });
+          setTargets({ unicorn: s(d.unicorn), forever: s(d.forever) });
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const t = targets[strat];
+  const setT = (patch: Partial<TargetsDraft>) => setTargets((prev) => ({ ...prev, [strat]: { ...prev[strat], ...patch } }));
 
   async function handleSave() {
     setSaving(true);
@@ -868,9 +938,9 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
       const res = await fetch('/api/hitl/targets', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tp1: Number(targets.tp1), tp2: Number(targets.tp2), tp3: Number(targets.tp3) }),
+        body: JSON.stringify({ strategy: strat, tp1: Number(t.tp1), tp2: Number(t.tp2), tp3: Number(t.tp3) }),
       });
-      if (res.ok) toast('Targets saved', 'success');
+      if (res.ok) toast(`${stratLabel(strat)} targets saved`, 'success');
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save targets', 'error'); }
     } catch { toast('Failed to save targets', 'error'); }
     finally { setSaving(false); }
@@ -881,8 +951,9 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
       <CardHeader>
         <h3 className="text-sm font-medium">Targets (R multiples)</h3>
         <p className="text-xs text-text-tertiary mt-1">
-          Distance of each target from entry, in multiples of R (the range width). TP1 is the breakeven trigger,
-          TP2 is Leg A&apos;s take-profit, TP3 is Leg B&apos;s. Must be strictly increasing. Applies to new signals only.
+          Per strategy. TPs project from the far edge of the range in multiples of R (the range height);
+          the stop sits at the protective edge. TP1 is the breakeven trigger, TP2 is Leg A&apos;s take-profit,
+          TP3 is Leg B&apos;s. Must be strictly increasing. Applies to new signals only.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -890,23 +961,24 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
           <p className="text-xs text-text-tertiary">Loading…</p>
         ) : (
           <>
+            <StrategyPicker value={strat} onChange={setStrat} />
             <div className="flex items-end gap-2">
               <div className="flex-1">
-                <Input label="TP1 — breakeven" type="number" step="0.1" value={targets.tp1}
-                  onChange={(e) => setTargets({ ...targets, tp1: e.target.value })} />
+                <Input label="TP1 — breakeven" type="number" step="0.1" value={t.tp1}
+                  onChange={(e) => setT({ tp1: e.target.value })} />
               </div>
               <div className="flex-1">
-                <Input label="TP2 — Leg A" type="number" step="0.1" value={targets.tp2}
-                  onChange={(e) => setTargets({ ...targets, tp2: e.target.value })} />
+                <Input label="TP2 — Leg A" type="number" step="0.1" value={t.tp2}
+                  onChange={(e) => setT({ tp2: e.target.value })} />
               </div>
               <div className="flex-1">
-                <Input label="TP3 — Leg B" type="number" step="0.1" value={targets.tp3}
-                  onChange={(e) => setTargets({ ...targets, tp3: e.target.value })} />
+                <Input label="TP3 — Leg B" type="number" step="0.1" value={t.tp3}
+                  onChange={(e) => setT({ tp3: e.target.value })} />
               </div>
               <Button onClick={handleSave} loading={saving}>Save</Button>
             </div>
             <p className="text-xs text-text-tertiary">
-              Stop-loss is fixed at 1R (the far side of the range). Default ladder: TP1 1R · TP2 2R · TP3 5R.
+              Editing {stratLabel(strat)} only. Default ladder: TP1 1R · TP2 2R · TP3 5R.
             </p>
           </>
         )}
@@ -915,28 +987,37 @@ function HitlTargetsSection({ toast }: { toast: (msg: string, type?: string) => 
   );
 }
 
+type ExecDraft = { model: 'single' | 'two_position'; tp3: boolean };
+
 function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) => void }) {
-  const [model, setModel] = useState<'single' | 'two_position'>('two_position');
-  const [tp3, setTp3] = useState(true);
+  const empty: ExecDraft = { model: 'two_position', tp3: true };
+  const [strat, setStrat] = useState<Strat>('unicorn');
+  const [exec, setExec] = useState<Record<Strat, ExecDraft>>({ unicorn: empty, forever: empty });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch('/api/hitl/execution')
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d) { setModel(d.positionModel); setTp3(d.tp3Enabled); } })
+      .then((d) => {
+        if (d?.unicorn && d?.forever) {
+          const s = (x: { positionModel: 'single' | 'two_position'; tp3Enabled: boolean }): ExecDraft => ({ model: x.positionModel, tp3: x.tp3Enabled });
+          setExec({ unicorn: s(d.unicorn), forever: s(d.forever) });
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
+  const e = exec[strat];
+  const setE = (patch: Partial<ExecDraft>) => setExec((prev) => ({ ...prev, [strat]: { ...prev[strat], ...patch } }));
+
   // Two-position needs a TP3 runner; keep the two in sync.
   function pickModel(m: 'single' | 'two_position') {
-    setModel(m);
-    if (m === 'two_position') setTp3(true);
+    setE(m === 'two_position' ? { model: m, tp3: true } : { model: m });
   }
   function pickTp3(on: boolean) {
-    setTp3(on);
-    if (!on && model === 'two_position') setModel('single');
+    setE(!on && e.model === 'two_position' ? { tp3: on, model: 'single' } : { tp3: on });
   }
 
   async function handleSave() {
@@ -944,17 +1025,17 @@ function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) =
     try {
       const res = await fetch('/api/hitl/execution', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ positionModel: model, tp3Enabled: tp3 }),
+        body: JSON.stringify({ strategy: strat, positionModel: e.model, tp3Enabled: e.tp3 }),
       });
-      if (res.ok) toast('Execution saved', 'success');
+      if (res.ok) toast(`${stratLabel(strat)} execution saved`, 'success');
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save', 'error'); }
     } catch { toast('Failed to save', 'error'); }
     finally { setSaving(false); }
   }
 
-  const summary = model === 'two_position'
+  const summary = e.model === 'two_position'
     ? 'Two positions: Leg A → TP2, Leg B → TP3. Both move to breakeven at TP1.'
-    : tp3
+    : e.tp3
       ? 'One position → TP3. Moves to breakeven at TP1.'
       : 'One position → TP2 (full profit). Moves to breakeven at TP1.';
 
@@ -963,7 +1044,7 @@ function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) =
       <CardHeader>
         <h3 className="text-sm font-medium">Execution</h3>
         <p className="text-xs text-text-tertiary mt-1">
-          How many positions to open and whether to use TP3 (the runner). Applies to new signals only.
+          Per strategy. How many positions to open and whether to use TP3 (the runner). Applies to new signals only.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -971,26 +1052,27 @@ function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) =
           <p className="text-xs text-text-tertiary">Loading…</p>
         ) : (
           <>
+            <StrategyPicker value={strat} onChange={setStrat} />
             <div>
               <label className="text-xs text-text-secondary">Positions</label>
               <div className="flex gap-2 mt-1">
                 {([['two_position', 'Two positions'], ['single', 'Single position']] as const).map(([m, label]) => (
-                  <button key={m} onClick={() => pickModel(m)}
+                  <button key={m} type="button" aria-pressed={e.model === m} onClick={() => pickModel(m)}
                     className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
-                      model === m ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
+                      e.model === m ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
                         : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
                     {label}
                   </button>
                 ))}
               </div>
             </div>
-            <label className={`flex items-center gap-2 text-sm ${model === 'two_position' ? 'opacity-50' : ''}`}>
-              <input type="checkbox" checked={tp3} disabled={model === 'two_position'}
-                onChange={(e) => pickTp3(e.target.checked)} />
+            <label className={`flex items-center gap-2 text-sm ${e.model === 'two_position' ? 'opacity-50' : ''}`}>
+              <input type="checkbox" checked={e.tp3} disabled={e.model === 'two_position'}
+                onChange={(ev) => pickTp3(ev.target.checked)} />
               <span className="text-text-secondary">Include TP3 (runner). Uncheck to take full profit at TP2.</span>
             </label>
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-text-tertiary">{summary}</p>
+              <p className="text-xs text-text-tertiary">{stratLabel(strat)}: {summary}</p>
               <Button onClick={handleSave} loading={saving}>Save</Button>
             </div>
           </>
@@ -1000,8 +1082,12 @@ function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) =
   );
 }
 
+type RiskDraft = { mode: string; riskPct: string; fixedAmount: string; maxRiskPct: string };
+
 function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => void }) {
-  const [risk, setRisk] = useState({ mode: 'percent', riskPct: '1', fixedAmount: '50', maxRiskPct: '5' });
+  const empty: RiskDraft = { mode: 'percent', riskPct: '1', fixedAmount: '50', maxRiskPct: '5' };
+  const [strat, setStrat] = useState<Strat>('unicorn');
+  const [risk, setRisk] = useState<Record<Strat, RiskDraft>>({ unicorn: empty, forever: empty });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -1009,11 +1095,18 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
     fetch('/api/hitl/risk')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setRisk({ mode: d.mode, riskPct: String(d.riskPct), fixedAmount: String(d.fixedAmount || ''), maxRiskPct: String(d.maxRiskPct) });
+        if (d?.unicorn && d?.forever) {
+          const s = (x: { mode: string; riskPct: number; fixedAmount: number; maxRiskPct: number }): RiskDraft =>
+            ({ mode: x.mode, riskPct: String(x.riskPct), fixedAmount: String(x.fixedAmount || ''), maxRiskPct: String(x.maxRiskPct) });
+          setRisk({ unicorn: s(d.unicorn), forever: s(d.forever) });
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const rk = risk[strat];
+  const setRk = (patch: Partial<RiskDraft>) => setRisk((prev) => ({ ...prev, [strat]: { ...prev[strat], ...patch } }));
 
   async function handleSave() {
     setSaving(true);
@@ -1021,13 +1114,14 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
       const res = await fetch('/api/hitl/risk', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mode: risk.mode,
-          riskPct: Number(risk.riskPct),
-          fixedAmount: Number(risk.fixedAmount),
-          maxRiskPct: Number(risk.maxRiskPct),
+          strategy: strat,
+          mode: rk.mode,
+          riskPct: Number(rk.riskPct),
+          fixedAmount: Number(rk.fixedAmount),
+          maxRiskPct: Number(rk.maxRiskPct),
         }),
       });
-      if (res.ok) toast('Risk saved', 'success');
+      if (res.ok) toast(`${stratLabel(strat)} risk saved`, 'success');
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to save risk', 'error'); }
     } catch { toast('Failed to save risk', 'error'); }
     finally { setSaving(false); }
@@ -1038,8 +1132,9 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
       <CardHeader>
         <h3 className="text-sm font-medium">Risk per trade</h3>
         <p className="text-xs text-text-tertiary mt-1">
-          How much each trade risks (the distance from entry to the 1R stop). The max-risk cap is a hard limit —
-          a signal that would exceed it is blocked at dispatch. Applies to new signals only.
+          Per strategy. How much each trade risks (loss if the stop at the protective range edge is hit).
+          The max-risk cap is a hard limit — a signal that would exceed it is blocked at dispatch.
+          Applies to new signals only.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -1047,13 +1142,16 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
           <p className="text-xs text-text-tertiary">Loading…</p>
         ) : (
           <>
+            <StrategyPicker value={strat} onChange={setStrat} />
             <div className="flex gap-2">
               {(['percent', 'fixed'] as const).map((m) => (
                 <button
                   key={m}
-                  onClick={() => setRisk({ ...risk, mode: m })}
+                  type="button"
+                  aria-pressed={rk.mode === m}
+                  onClick={() => setRk({ mode: m })}
                   className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
-                    risk.mode === m
+                    rk.mode === m
                       ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
                       : 'border-border-primary text-text-secondary hover:text-text-primary'
                   }`}
@@ -1064,22 +1162,22 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
             </div>
             <div className="flex items-end gap-2">
               <div className="flex-1">
-                {risk.mode === 'percent' ? (
-                  <Input label="Risk % per trade" type="number" step="0.1" value={risk.riskPct}
-                    onChange={(e) => setRisk({ ...risk, riskPct: e.target.value })} />
+                {rk.mode === 'percent' ? (
+                  <Input label="Risk % per trade" type="number" step="0.1" value={rk.riskPct}
+                    onChange={(e) => setRk({ riskPct: e.target.value })} />
                 ) : (
-                  <Input label="Risk $ per trade" type="number" step="1" value={risk.fixedAmount}
-                    onChange={(e) => setRisk({ ...risk, fixedAmount: e.target.value })} />
+                  <Input label="Risk $ per trade" type="number" step="1" value={rk.fixedAmount}
+                    onChange={(e) => setRk({ fixedAmount: e.target.value })} />
                 )}
               </div>
               <div className="flex-1">
-                <Input label="Max risk % (cap)" type="number" step="0.1" value={risk.maxRiskPct}
-                  onChange={(e) => setRisk({ ...risk, maxRiskPct: e.target.value })} />
+                <Input label="Max risk % (cap)" type="number" step="0.1" value={rk.maxRiskPct}
+                  onChange={(e) => setRk({ maxRiskPct: e.target.value })} />
               </div>
               <Button onClick={handleSave} loading={saving}>Save</Button>
             </div>
             <p className="text-xs text-text-tertiary">
-              {risk.mode === 'percent'
+              Editing {stratLabel(strat)}. {rk.mode === 'percent'
                 ? 'Lots are sized so the loss at the stop equals this % of equity.'
                 : 'Lots are sized so the loss at the stop equals this dollar amount — still capped by the max-risk %.'}
             </p>

@@ -113,9 +113,13 @@ export async function setAccountRiskValue(accountId: string, value: number | nul
     await db.delete(hitlSettings).where(or(eq(hitlSettings.key, key), eq(hitlSettings.key, modeKey)));
     return;
   }
-  for (const [k, v] of [[key, String(value)], [modeKey, mode]] as [string, string][]) {
-    await db.insert(hitlSettings).values({ key: k, value: v }).onConflictDoUpdate({ target: hitlSettings.key, set: { value: v } });
-  }
+  // Atomic: a value committed without its mode would be reinterpreted under a
+  // stale mode — the exact bug the mode key exists to prevent.
+  await db.transaction(async (tx) => {
+    for (const [k, v] of [[key, String(value)], [modeKey, mode]] as [string, string][]) {
+      await tx.insert(hitlSettings).values({ key: k, value: v }).onConflictDoUpdate({ target: hitlSettings.key, set: { value: v } });
+    }
+  });
 }
 
 /** Apply a per-account override onto the strategy's settings — only when the

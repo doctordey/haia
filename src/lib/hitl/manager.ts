@@ -63,7 +63,8 @@ export class HitlManager {
       const claimed = await session.transition(s.id, [STATES.RECEIVED], STATES.AWAITING_RANGE);
       if (!claimed) continue; // someone else handled it
       try {
-        await this.bot.sendPrompt(s.id, await this.service.promptText(s.symbol, s.entryRef, s.action));
+        const strategy = (s.rawAlert as Record<string, unknown> | null)?.strategy as string | undefined;
+        await this.bot.sendPrompt(s.id, await this.service.promptText(s.symbol, s.entryRef, s.action, strategy));
       } catch (err) {
         console.error(`[hitl/manager] prompt send failed for ${s.id}:`, err);
       }
@@ -106,6 +107,7 @@ export class HitlManager {
       const broker = this.ctx.getBroker(s.accountId);
       if (!broker) continue;
       if (!this.beShouldFire(s, broker)) continue;
+      const account = this.ctx.accountName?.(s.accountId) ?? '';
 
       // The stop can only move to entry when the trade is in profit (entry on the
       // protective side of the live price); otherwise the broker would reject it.
@@ -115,7 +117,7 @@ export class HitlManager {
       if (!valid) {
         if (!this.beAlerted.has(s.id)) {
           this.beAlerted.add(s.id);
-          await this.ctx.notify(await renderMessage('beNotReady', { symbol: s.symbol }));
+          await this.ctx.notify(await renderMessage('beNotReady', { account, symbol: s.symbol }));
         }
         continue;
       }
@@ -130,14 +132,14 @@ export class HitlManager {
           await broker.modifySl(pos.id, s.entryRef, pos.takeProfit ?? undefined);
         }
         this.beAlerted.delete(s.id);
-        await this.ctx.notify(await renderMessage('breakeven', { symbol: s.symbol, legs: positions.length }));
+        await this.ctx.notify(await renderMessage('breakeven', { account, symbol: s.symbol, legs: positions.length }));
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         console.error(`[hitl/manager] BE move failed for ${s.id}, reverting claim:`, reason);
         await session.patch(s.id, { beApplied: false, beAppliedAt: null });
         if (!this.beAlerted.has(s.id)) {
           this.beAlerted.add(s.id);
-          await this.ctx.notify(await renderMessage('beRejected', { symbol: s.symbol, reason }));
+          await this.ctx.notify(await renderMessage('beRejected', { account, symbol: s.symbol, reason }));
         }
       }
     }
@@ -169,7 +171,8 @@ export class HitlManager {
       });
       if (closed) {
         const pnl = realizedPnl == null ? '' : ` P/L ${realizedPnl >= 0 ? '+' : ''}${realizedPnl.toFixed(2)}`;
-        await this.ctx.notify(await renderMessage('closed', { symbol: s.symbol, pnl }));
+        const account = this.ctx.accountName?.(s.accountId) ?? '';
+        await this.ctx.notify(await renderMessage('closed', { account, symbol: s.symbol, pnl }));
       }
     }
   }

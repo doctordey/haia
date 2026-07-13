@@ -6,14 +6,27 @@ export interface ConnectAccountParams {
   name: string;
 }
 
-async function getMetaApi() {
+// The MetaApi SDK client is designed to be a per-process singleton: every
+// instance maintains its own websocket pool to MetaApi's servers, so creating
+// one per call/account multiplies connections and trips the shared-server rate
+// limit (HTTP 429). Cache it on globalThis so Next.js hot reload / route
+// isolation can't create duplicates either.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function getMetaApi(): Promise<any> {
   if (!process.env.METAAPI_TOKEN) {
     throw new Error('METAAPI_TOKEN environment variable is not set');
   }
 
-  // Use the CJS entry point to avoid ESM issues in Next.js server runtime
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  return new MetaApi(process.env.METAAPI_TOKEN);
+  const g = globalThis as { __haiaMetaApi?: unknown };
+  if (!g.__haiaMetaApi) {
+    // Use the CJS entry point to avoid ESM issues in Next.js server runtime
+    const MetaApi = require('metaapi.cloud-sdk').default;
+    g.__haiaMetaApi = new MetaApi(process.env.METAAPI_TOKEN, {
+      // Gentler retries so a transient 429 doesn't snowball into a storm.
+      retryOpts: { retries: 3, minDelayInSeconds: 5, maxDelayInSeconds: 60 },
+    });
+  }
+  return g.__haiaMetaApi;
 }
 
 export async function connectMetaApiAccount(params: ConnectAccountParams) {
@@ -56,18 +69,34 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
   if (account.state !== 'DEPLOYED') {
-    await account.waitDeployed();
+    await withTimeout(account.waitDeployed(), SYNC_STEP_TIMEOUT_MS, 'account deploy');
   }
 
   const connection = account.getRPCConnection();
-  await connection.connect();
-  await connection.waitSynchronized();
-
-  const deals = await connection.getDealsByTimeRange(startDate, endDate);
-  await connection.close();
-
-  return deals;
+  try {
+    await withTimeout(connection.connect(), SYNC_STEP_TIMEOUT_MS, 'rpc connect');
+    await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'history sync');
+    return await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
+  } finally {
+    try { await connection.close(); } catch {}
+  }
 }
+
+/** Reject if `p` doesn't settle within `ms` — bounds slow MetaApi RPC steps so a
+ *  sync can't hang forever (which would leave the account stuck "syncing"). */
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    // Clear on settle — a leaked 4-minute timer per call accumulates handles.
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    p.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+/** Max wait for any single history-sync RPC step. */
+export const SYNC_STEP_TIMEOUT_MS = 4 * 60_000;
 
 /** All tradable symbol names on the account (RPC; used for "did you mean" hints). */
 export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {
@@ -79,13 +108,15 @@ export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {
   }
 
   const connection = account.getRPCConnection();
-  await connection.connect();
-  await connection.waitSynchronized();
-
-  const symbols = await connection.getSymbols();
-  await connection.close();
-
-  return Array.isArray(symbols) ? (symbols as string[]) : [];
+  try {
+    await withTimeout(connection.connect(), SYNC_STEP_TIMEOUT_MS, 'rpc connect');
+    await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'symbol sync');
+    const symbols = await withTimeout(connection.getSymbols(), SYNC_STEP_TIMEOUT_MS, 'symbols fetch');
+    return Array.isArray(symbols) ? (symbols as string[]) : [];
+  } finally {
+    // Always close — a leaked RPC connection keeps retrying and adds to MetaApi load.
+    try { await connection.close(); } catch { /* ignore */ }
+  }
 }
 
 export async function removeMetaApiAccount(metaApiId: string) {

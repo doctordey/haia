@@ -14,7 +14,7 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
-import { fetchBrokerSymbols } from '@/lib/metaapi';
+import { getMetaApi, fetchBrokerSymbols } from '@/lib/metaapi';
 import { getValidatedHitlConfig } from './config';
 import { loadChatIds } from './access';
 import { buildHitlBroker } from './metaapi';
@@ -30,6 +30,7 @@ interface HitlConnection {
   connection: any;
   isDemo: boolean;
   metaApiId: string;
+  name: string;
 }
 
 function isDemoServer(server: string): boolean {
@@ -66,24 +67,40 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   console.log('[hitl] starting (demo-only: HITL_ALLOW_LIVE=' + cfg.allowLive + ')');
 
   const connections = new Map<string, HitlConnection>();
+  // Exponential backoff for accounts that fail to connect, so a persistently
+  // unreachable/rate-limited account isn't retried every 30s (piling more load
+  // onto MetaApi and spamming the logs).
+  const connectBackoff = new Map<string, { attempts: number; nextRetry: number }>();
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const MetaApi = require('metaapi.cloud-sdk').default;
-  const api = new MetaApi(process.env.METAAPI_TOKEN);
+  // Shared per-process SDK client (same instance as the signal listener's
+  // price streaming) — one websocket pool instead of one per subsystem.
+  const api = await getMetaApi();
 
   async function connectAccount(row: typeof tradingAccounts.$inferSelect): Promise<void> {
     if (connections.has(row.id)) return;
+    const bo = connectBackoff.get(row.id);
+    if (bo && Date.now() < bo.nextRetry) return; // still backing off from a prior failure
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let connection: any = null;
     try {
       const account = await api.metatraderAccountApi.getAccount(row.metaApiId);
       if (account.state !== 'DEPLOYED') await account.waitDeployed();
       if (account.connectionStatus !== 'CONNECTED') await account.waitConnected();
-      const connection = account.getStreamingConnection();
+      connection = account.getStreamingConnection();
       await connection.connect();
       await connection.waitSynchronized({ timeoutInSeconds: 120 });
-      connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId });
+      connections.set(row.id, { connection, isDemo: isDemoServer(row.server), metaApiId: row.metaApiId, name: row.name });
+      connectBackoff.delete(row.id);
       console.log(`[hitl] connected account ${row.name} (${row.id}) demo=${isDemoServer(row.server)}`);
     } catch (err) {
-      console.error(`[hitl] failed to connect account ${row.name} (${row.id}):`, err);
+      // Back off: 30s, 60s, 120s … capped at 10min.
+      const attempts = (bo?.attempts ?? 0) + 1;
+      const delayMs = Math.min(30_000 * 2 ** (attempts - 1), 10 * 60_000);
+      connectBackoff.set(row.id, { attempts, nextRetry: Date.now() + delayMs });
+      console.error(`[hitl] failed to connect account ${row.name} (${row.id}) — retrying in ${Math.round(delayMs / 1000)}s:`, err instanceof Error ? err.message : err);
+      // Close the half-open connection so its websocket stops retry-looping in the
+      // background — otherwise failed attempts pile up and hammer MetaApi (429).
+      if (connection) { try { await connection.close(); } catch { /* ignore */ } }
     }
   }
 
@@ -113,25 +130,26 @@ export async function setupHitl(): Promise<HitlHandle | null> {
       return c ? buildHitlBroker(c.connection, c.isDemo) : undefined;
     },
 
-    async resolveTargetAccount(): Promise<TargetAccount | null> {
+    accountName(accountId) {
+      return connections.get(accountId)?.name;
+    },
+
+    async resolveTargetAccounts(): Promise<TargetAccount[]> {
       const enabled = await db
         .select()
         .from(tradingAccounts)
         .where(and(eq(tradingAccounts.hitlEnabled, true), eq(tradingAccounts.isActive, true)));
-      const armed = enabled.filter((r) => connections.has(r.id));
-      if (armed.length === 0) return null;
-      if (armed.length > 1) {
-        // Ambiguous target — refuse to dispatch rather than guess and hit the
-        // wrong account. The API enforces a single armed account; this is the
-        // last-line guard against a residual/races/manual-edit multi-armed state.
-        console.error(
-          `[hitl] ${armed.length} HITL accounts armed (${armed.map((a) => a.name).join(', ')}) — refusing to dispatch. ` +
-          'Disable HITL on all but one account in Settings.',
-        );
-        return null;
-      }
-      const c = connections.get(armed[0].id)!;
-      return { accountId: armed[0].id, isDemo: c.isDemo };
+      // Only accounts with a live connection can receive orders. Stable order
+      // (by id) so the same account consistently backs the primary session.
+      return enabled
+        .filter((r) => connections.has(r.id))
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((r) => ({ accountId: r.id, isDemo: connections.get(r.id)!.isDemo, name: r.name }));
+    },
+
+    async resolveTargetAccount(): Promise<TargetAccount | null> {
+      const all = await this.resolveTargetAccounts();
+      return all[0] ?? null;
     },
 
     async suggestSymbols(query): Promise<string[]> {
@@ -167,7 +185,7 @@ export async function setupHitl(): Promise<HitlHandle | null> {
   try {
     const dests = await loadChatIds(cfg);
     if (dests.length === 0) {
-      console.warn('[hitl] NO destinations configured — add a DM/group in Settings → HITL → Access (or set HITL_OPERATOR_CHAT_ID). Prompts have nowhere to go.');
+      console.warn('[hitl] NO destinations configured — add a DM/group in Settings → Unicorn → Access (or set HITL_OPERATOR_CHAT_ID). Prompts have nowhere to go.');
     } else {
       console.log(`[hitl] ${dests.length} destination(s): ${dests.join(', ')}`);
     }

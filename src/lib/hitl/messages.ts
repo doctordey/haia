@@ -23,11 +23,18 @@ export const MESSAGE_DEFS: MessageDef[] = [
   {
     key: 'prompt',
     label: 'Alert prompt',
-    description: 'Sent when a new signal fires; asks for the range.',
-    variables: ['direction', 'symbol', 'price'],
+    description: 'Sent when a new signal fires; asks for the range. {strategy} is Unicorn or Forever.',
+    variables: ['strategy', 'direction', 'symbol', 'price'],
     default:
-      '🔔 New signal: {direction} {symbol} @ {price}\n' +
+      '🔔 New {strategy} signal: {direction} {symbol} @ {price}\n' +
       'Reply to THIS message with the range (high low) as two numbers.',
+  },
+  {
+    key: 'notification',
+    label: 'Info alert',
+    description: 'Notification-only alerts forwarded from TradingView (e.g. Forever ERL Hit). {text} is the alert text.',
+    variables: ['text'],
+    default: '📣 {text}',
   },
   {
     key: 'needDirection',
@@ -65,32 +72,32 @@ export const MESSAGE_DEFS: MessageDef[] = [
   {
     key: 'breakeven',
     label: 'Breakeven moved',
-    description: 'When the stop is moved to entry at TP1.',
-    variables: ['symbol', 'legs'],
-    default: '🟦 {symbol}: TP1 reached — stop moved to breakeven ({legs} leg(s)).',
+    description: 'When the stop is moved to entry at TP1. {account} is the account name.',
+    variables: ['account', 'symbol', 'legs'],
+    default: '🟦 {account} · {symbol}: TP1 reached — stop moved to breakeven ({legs} leg(s)).',
   },
   {
     key: 'beNotReady',
     label: 'Breakeven not ready',
-    description: 'When breakeven is triggered but the trade is not yet in profit.',
-    variables: ['symbol'],
+    description: 'When breakeven is triggered but the trade is not yet in profit. {account} is the account name.',
+    variables: ['account', 'symbol'],
     default:
-      '⚠️ {symbol}: breakeven was triggered, but the trade isn\'t in profit yet — ' +
+      '⚠️ {account} · {symbol}: breakeven was triggered, but the trade isn\'t in profit yet — ' +
       'the stop can\'t move to entry until price reaches TP1. I\'ll apply it automatically when it does.',
   },
   {
     key: 'beRejected',
     label: 'Breakeven rejected',
-    description: 'When the broker rejects the breakeven move.',
-    variables: ['symbol', 'reason'],
-    default: '⚠️ {symbol}: breakeven move was rejected — {reason}. Will retry.',
+    description: 'When the broker rejects the breakeven move. {account} is the account name.',
+    variables: ['account', 'symbol', 'reason'],
+    default: '⚠️ {account} · {symbol}: breakeven move was rejected — {reason}. Will retry.',
   },
   {
     key: 'closed',
     label: 'Trade closed',
-    description: 'When all positions for a signal are gone. {pnl} is pre-formatted (may be empty).',
-    variables: ['symbol', 'pnl'],
-    default: '✅ {symbol} closed.{pnl}',
+    description: 'When all positions for a signal are gone. {account} is the account name; {pnl} is pre-formatted (may be empty).',
+    variables: ['account', 'symbol', 'pnl'],
+    default: '✅ {account} · {symbol} closed.{pnl}',
   },
   {
     key: 'expired',

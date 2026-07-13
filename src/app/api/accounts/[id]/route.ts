@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { removeMetaApiAccount } from '@/lib/metaapi';
 
 export async function GET(
@@ -82,36 +82,19 @@ export async function PATCH(
     // Arming requires full trading access — an investor (read-only) login can't place orders.
     if (body.hitlEnabled && account.accessMode !== 'trading') {
       return NextResponse.json(
-        { error: 'This account is read-only (investor access). Upgrade to a trading password before enabling HITL.' },
+        { error: 'This account is read-only (investor access). Upgrade to a trading password before enabling Unicorn.' },
         { status: 400 },
       );
     }
 
-    // The HITL worker dispatches to exactly one armed account, resolved globally
-    // (tradingAccounts.hitlEnabled, not user-scoped). Enforce a single armed
-    // account deployment-wide so it can never dispatch to the wrong one: arming
-    // disarms every other account atomically. Disabling only affects this one.
-    let updated;
-    if (body.hitlEnabled) {
-      updated = await db.transaction(async (tx) => {
-        await tx
-          .update(tradingAccounts)
-          .set({ hitlEnabled: false })
-          .where(and(eq(tradingAccounts.hitlEnabled, true), ne(tradingAccounts.id, id)));
-        const [row] = await tx
-          .update(tradingAccounts)
-          .set({ hitlEnabled: true })
-          .where(eq(tradingAccounts.id, id))
-          .returning();
-        return row;
-      });
-    } else {
-      [updated] = await db
-        .update(tradingAccounts)
-        .set({ hitlEnabled: false })
-        .where(eq(tradingAccounts.id, id))
-        .returning();
-    }
+    // Multiple accounts may be armed simultaneously — an approved trade mirrors
+    // to every armed account (each sized independently). The worker resolves the
+    // full armed set at dispatch time.
+    const [updated] = await db
+      .update(tradingAccounts)
+      .set({ hitlEnabled: body.hitlEnabled })
+      .where(eq(tradingAccounts.id, id))
+      .returning();
 
     return NextResponse.json(updated);
   }

@@ -100,8 +100,10 @@ export function preDispatchGates(input: GateInput): GateResult {
   if (!ordered) return { ok: false, reason: 'TP ladder is not ordered beyond entry' };
 
   // Computed risk must respect the hard cap (in-app override or env default).
+  // Risk uses the ACTUAL stop distance (entry→SL) — with range-anchored levels
+  // this differs from r (the range height / projection unit).
   const maxRiskPct = input.maxRiskPct ?? cfg.maxRiskPerTrade;
-  const riskAmount = lots * r * valuePerPoint(spec);
+  const riskAmount = lots * Math.abs(entry - sl) * valuePerPoint(spec);
   const riskPct = equity > 0 ? (riskAmount / equity) * 100 : Infinity;
   if (riskPct > maxRiskPct + 1e-9) {
     return { ok: false, reason: `risk ${riskPct.toFixed(2)}% exceeds cap ${maxRiskPct}%` };

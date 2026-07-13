@@ -73,6 +73,68 @@ export async function createSession(input: CreateSessionInput): Promise<HitlSess
   return row;
 }
 
+export interface CreateDispatchedInput {
+  signalId: string;
+  symbol: string;
+  accountId: string;
+  direction: 'BUY' | 'SELL';
+  entryRef: number;
+  sl: number;
+  r: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  lots: number;
+  legs: HitlLeg[];
+  slFrom?: string | null;
+  positionModel?: string | null;
+  entryMode?: string | null;
+  riskPct?: number | null;
+  operatorChatId?: string | null;
+  rawAlert: Record<string, unknown>;
+  state: HitlState; // OPEN on success
+  failureReason?: string | null;
+}
+
+/**
+ * Insert a per-account child session (used when an approval mirrors to more
+ * than one account: the primary session covers the first account, one of these
+ * covers each additional account). It skips the dialog states — created in
+ * DISPATCHING *before* orders are sent (so a live position can never exist
+ * without a managed session) and transitioned to OPEN/FAILED by the dispatcher;
+ * resume-on-restart reconciles any left dangling by a crash.
+ */
+export async function createDispatched(input: CreateDispatchedInput): Promise<HitlSession> {
+  const [row] = await db
+    .insert(hitlSessions)
+    .values({
+      signalId: input.signalId,
+      symbol: input.symbol,
+      accountId: input.accountId,
+      action: input.direction,
+      direction: input.direction,
+      entryRef: input.entryRef,
+      sl: input.sl,
+      r: input.r,
+      tp1: input.tp1,
+      tp2: input.tp2,
+      tp3: input.tp3,
+      lots: input.lots,
+      legs: input.legs,
+      slFrom: input.slFrom ?? null,
+      positionModel: input.positionModel ?? null,
+      entryMode: input.entryMode ?? null,
+      riskPct: input.riskPct ?? null,
+      operatorChatId: input.operatorChatId ?? null,
+      rawAlert: input.rawAlert,
+      state: input.state,
+      dispatchedAt: input.state === 'OPEN' ? new Date() : null,
+      failureReason: input.failureReason ?? null,
+    })
+    .returning();
+  return row;
+}
+
 export async function getById(id: string): Promise<HitlSession | undefined> {
   const [row] = await db.select().from(hitlSessions).where(eq(hitlSessions.id, id)).limit(1);
   return row;

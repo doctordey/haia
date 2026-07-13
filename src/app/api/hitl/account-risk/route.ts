@@ -10,7 +10,9 @@ import { loadRiskSettings, loadAccountRiskValues, setAccountRiskValue } from '@/
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const global = await loadRiskSettings(loadHitlConfig());
+  // Overrides are shared across strategies; Unicorn's mode drives the inline
+  // display (the override number is interpreted in each strategy's own mode).
+  const global = await loadRiskSettings(loadHitlConfig(), 'unicorn');
   const overrides = await loadAccountRiskValues();
   return NextResponse.json({
     mode: global.mode,

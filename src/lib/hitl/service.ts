@@ -15,8 +15,14 @@ import { loadRiskSettings, loadAccountRiskValues, riskForAccount, type RiskSetti
 import { loadExecutionSettings, type ExecutionSettings } from './execution';
 import { renderMessage, directionLabel } from './messages';
 import type { HitlBroker } from './metaapi';
+import type { AlertStrategy as Strategy } from './alert';
 import * as session from './session';
 import { STATES } from './session';
+
+/** Which strategy a session belongs to (tagged at webhook intake; default Unicorn). */
+function sessionStrategy(s: session.HitlSession): Strategy {
+  return (s.rawAlert as Record<string, unknown> | null)?.strategy === 'forever' ? 'forever' : 'unicorn';
+}
 
 /** A per-account sizing result at confirm/approve time (one armed account). */
 interface AccountPlan {
@@ -209,7 +215,8 @@ export class HitlService implements HitlBotDeps {
       await session.patch(sessionId, { entryRef });
     }
 
-    const tpMultiples = await loadTpMultiples(cfg);
+    const strategy = sessionStrategy(s);
+    const tpMultiples = await loadTpMultiples(cfg, strategy);
     const lv = computeLevels({
       entry: entryRef,
       rangeHigh: input.rangeHigh,
@@ -219,8 +226,8 @@ export class HitlService implements HitlBotDeps {
     });
     if (!lv.ok) return { kind: 'error', text: `Cannot compute levels: ${lv.reason}` };
 
-    const exec = await loadExecutionSettings(cfg);
-    const global = await loadRiskSettings(cfg);
+    const exec = await loadExecutionSettings(cfg, strategy);
+    const global = await loadRiskSettings(cfg, strategy);
     const overrides = await loadAccountRiskValues();
 
     const results = await Promise.all(
@@ -315,8 +322,9 @@ export class HitlService implements HitlBotDeps {
 
     const direction = s.direction as Direction;
     const levels: ComputedLevels = { direction, entry: s.entryRef, sl: s.sl, r: s.r, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3 };
-    const exec = await loadExecutionSettings(this.ctx.cfg);
-    const global = await loadRiskSettings(this.ctx.cfg);
+    const strategy = sessionStrategy(s);
+    const exec = await loadExecutionSettings(this.ctx.cfg, strategy);
+    const global = await loadRiskSettings(this.ctx.cfg, strategy);
     const overrides = await loadAccountRiskValues();
 
     const results: { name: string; ok: boolean; message: string }[] = [];

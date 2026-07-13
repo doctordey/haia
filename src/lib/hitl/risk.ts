@@ -14,6 +14,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { hitlSettings } from '@/lib/db/schema';
 import type { HitlConfig } from './config';
+import type { AlertStrategy as Strategy } from './alert';
 
 export type RiskMode = 'percent' | 'fixed';
 
@@ -24,33 +25,44 @@ export interface RiskSettings {
   maxRiskPct: number;   // hard cap (% of equity), both modes
 }
 
-const KEYS = { mode: 'risk.mode', pct: 'risk.pct', fixed: 'risk.fixed', maxPct: 'risk.maxPct' } as const;
+// Per-strategy keys, with the pre-split shared keys as fallback so both
+// strategies keep the existing values until the operator edits one.
+const LEGACY = { mode: 'risk.mode', pct: 'risk.pct', fixed: 'risk.fixed', maxPct: 'risk.maxPct' } as const;
+const keysFor = (s: Strategy) => ({
+  mode: `${s}.risk.mode`,
+  pct: `${s}.risk.pct`,
+  fixed: `${s}.risk.fixed`,
+  maxPct: `${s}.risk.maxPct`,
+});
 
 function pos(value: string | undefined, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-export async function loadRiskSettings(cfg: HitlConfig): Promise<RiskSettings> {
+export async function loadRiskSettings(cfg: HitlConfig, strategy: Strategy): Promise<RiskSettings> {
+  const k = keysFor(strategy);
   const rows = await db
     .select()
     .from(hitlSettings)
-    .where(inArray(hitlSettings.key, [KEYS.mode, KEYS.pct, KEYS.fixed, KEYS.maxPct]));
+    .where(inArray(hitlSettings.key, [k.mode, k.pct, k.fixed, k.maxPct, LEGACY.mode, LEGACY.pct, LEGACY.fixed, LEGACY.maxPct]));
   const m = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  const mode = m[k.mode] ?? m[LEGACY.mode];
   return {
-    mode: m[KEYS.mode] === 'fixed' ? 'fixed' : 'percent',
-    riskPct: pos(m[KEYS.pct], cfg.riskPct),
-    fixedAmount: pos(m[KEYS.fixed], 0),
-    maxRiskPct: pos(m[KEYS.maxPct], cfg.maxRiskPerTrade),
+    mode: mode === 'fixed' ? 'fixed' : 'percent',
+    riskPct: pos(m[k.pct], pos(m[LEGACY.pct], cfg.riskPct)),
+    fixedAmount: pos(m[k.fixed], pos(m[LEGACY.fixed], 0)),
+    maxRiskPct: pos(m[k.maxPct], pos(m[LEGACY.maxPct], cfg.maxRiskPerTrade)),
   };
 }
 
-export async function setRiskSettings(s: RiskSettings): Promise<void> {
+export async function setRiskSettings(s: RiskSettings, strategy: Strategy): Promise<void> {
+  const k = keysFor(strategy);
   const entries: [string, string][] = [
-    [KEYS.mode, s.mode],
-    [KEYS.pct, String(s.riskPct)],
-    [KEYS.fixed, String(s.fixedAmount)],
-    [KEYS.maxPct, String(s.maxRiskPct)],
+    [k.mode, s.mode],
+    [k.pct, String(s.riskPct)],
+    [k.fixed, String(s.fixedAmount)],
+    [k.maxPct, String(s.maxRiskPct)],
   ];
   for (const [key, value] of entries) {
     await db.insert(hitlSettings).values({ key, value }).onConflictDoUpdate({ target: hitlSettings.key, set: { value } });
@@ -58,8 +70,9 @@ export async function setRiskSettings(s: RiskSettings): Promise<void> {
 }
 
 // ── per-account risk override ──
-// One number per account, interpreted in the current global mode (percent → %,
-// fixed → $). Absent → the account uses the global risk. Stored as risk.acct.<id>.
+// One number per account, shared across strategies and interpreted in each
+// strategy's mode (percent → %, fixed → $). Absent → the account uses that
+// strategy's risk. Stored as risk.acct.<id>.
 const ACCT_PREFIX = 'risk.acct.';
 
 export async function loadAccountRiskValues(): Promise<Record<string, number>> {

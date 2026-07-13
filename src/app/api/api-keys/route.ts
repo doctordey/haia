@@ -63,27 +63,44 @@ export async function POST(request: Request) {
 
   const generated = generateApiKey();
 
-  const [row] = await db
-    .insert(apiKeys)
-    .values({
-      userId: session.user.id,
-      name,
-      prefix: generated.prefix,
-      keyHash: generated.keyHash,
-      scopes: scopesToString(scopes),
-      accountIds,
-      expiresAt,
-    })
-    .returning({
-      id: apiKeys.id,
-      name: apiKeys.name,
-      prefix: apiKeys.prefix,
-      scopes: apiKeys.scopes,
-      accountIds: apiKeys.accountIds,
-      expiresAt: apiKeys.expiresAt,
-      createdAt: apiKeys.createdAt,
-    });
+  try {
+    const [row] = await db
+      .insert(apiKeys)
+      .values({
+        userId: session.user.id,
+        name,
+        prefix: generated.prefix,
+        keyHash: generated.keyHash,
+        scopes: scopesToString(scopes),
+        accountIds,
+        expiresAt,
+      })
+      .returning({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        prefix: apiKeys.prefix,
+        scopes: apiKeys.scopes,
+        accountIds: apiKeys.accountIds,
+        expiresAt: apiKeys.expiresAt,
+        createdAt: apiKeys.createdAt,
+      });
 
-  // `key` is the only time the plaintext is ever exposed.
-  return NextResponse.json({ ...row, key: generated.plaintext }, { status: 201 });
+    // `key` is the only time the plaintext is ever exposed.
+    return NextResponse.json({ ...row, key: generated.plaintext }, { status: 201 });
+  } catch (error: unknown) {
+    // Surface the real cause instead of a generic 500 — the usual culprit is
+    // the api_keys table/column missing because migrations haven't been applied
+    // to this environment's database (run `npm run db:migrate:prod`).
+    const message = error instanceof Error ? error.message : 'Failed to create API key';
+    console.error('API key creation failed:', message);
+    const migrationHint = /relation .*api_keys.* does not exist|column .*account_ids.* does not exist/i.test(message);
+    return NextResponse.json(
+      {
+        error: migrationHint
+          ? 'API keys table is missing — database migrations have not been applied to this deployment. Run migrations (npm run db:migrate:prod) and retry.'
+          : `Failed to create API key: ${message}`,
+      },
+      { status: 500 },
+    );
+  }
 }

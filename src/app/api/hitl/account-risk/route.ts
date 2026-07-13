@@ -11,13 +11,14 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   // Overrides are shared across strategies; Unicorn's mode drives the inline
-  // display (the override number is interpreted in each strategy's own mode).
+  // display and is recorded on save so a strategy in a different mode ignores
+  // the override rather than reinterpreting the number.
   const global = await loadRiskSettings(loadHitlConfig(), 'unicorn');
   const overrides = await loadAccountRiskValues();
   return NextResponse.json({
     mode: global.mode,
     defaultValue: global.mode === 'fixed' ? global.fixedAmount : global.riskPct,
-    overrides,
+    overrides: Object.fromEntries(Object.entries(overrides).map(([id, o]) => [id, o.value])),
   });
 }
 
@@ -44,6 +45,9 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'value must be a positive number or null' }, { status: 400 });
   }
 
-  await setAccountRiskValue(accountId, value);
-  return NextResponse.json({ accountId, value });
+  // Record the mode the operator entered the number under (the UI labels the
+  // field with Unicorn's mode).
+  const { mode } = await loadRiskSettings(loadHitlConfig(), 'unicorn');
+  await setAccountRiskValue(accountId, value, mode);
+  return NextResponse.json({ accountId, value, mode });
 }

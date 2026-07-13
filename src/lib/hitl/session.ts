@@ -97,10 +97,12 @@ export interface CreateDispatchedInput {
 }
 
 /**
- * Insert an already-dispatched per-account session (used when an approval mirrors
- * to more than one account: the primary session covers the first account, and one
- * of these covers each additional account). It skips the dialog states — it is
- * created directly in its post-dispatch state and picked up by the manager loops.
+ * Insert a per-account child session (used when an approval mirrors to more
+ * than one account: the primary session covers the first account, one of these
+ * covers each additional account). It skips the dialog states — created in
+ * DISPATCHING *before* orders are sent (so a live position can never exist
+ * without a managed session) and transitioned to OPEN/FAILED by the dispatcher;
+ * resume-on-restart reconciles any left dangling by a crash.
  */
 export async function createDispatched(input: CreateDispatchedInput): Promise<HitlSession> {
   const [row] = await db
@@ -126,7 +128,7 @@ export async function createDispatched(input: CreateDispatchedInput): Promise<Hi
       operatorChatId: input.operatorChatId ?? null,
       rawAlert: input.rawAlert,
       state: input.state,
-      dispatchedAt: new Date(),
+      dispatchedAt: input.state === 'OPEN' ? new Date() : null,
       failureReason: input.failureReason ?? null,
     })
     .returning();

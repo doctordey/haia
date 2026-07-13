@@ -11,7 +11,7 @@ import { computeLots } from './sizing';
 import { buildLegPlan, preDispatchGates, openLegs, type LegPlan } from './dispatch';
 import { isUserAuthorized } from './access';
 import { loadTpMultiples } from './targets';
-import { loadRiskSettings, loadAccountRiskValues, riskForAccount, type RiskSettings } from './risk';
+import { loadRiskSettings, loadAccountRiskValues, riskForAccount, type RiskSettings, type AccountRiskOverride } from './risk';
 import { loadExecutionSettings, type ExecutionSettings } from './execution';
 import { renderMessage, directionLabel } from './messages';
 import type { HitlBroker } from './metaapi';
@@ -137,7 +137,7 @@ export class HitlService implements HitlBotDeps {
     levels: ComputedLevels,
     exec: ExecutionSettings,
     global: RiskSettings,
-    overrides: Record<string, number>,
+    overrides: Record<string, AccountRiskOverride>,
   ): Promise<AccountPlanResult> {
     const name = acct.name ?? acct.accountId;
     const broker = this.ctx.getBroker(acct.accountId);
@@ -362,35 +362,63 @@ export class HitlService implements HitlBotDeps {
           continue;
         }
 
-        const result = await openLegs(p.broker, {
-          symbol,
-          direction,
-          entryMode: this.ctx.cfg.entryMode,
-          openPrice: s.entryRef,
-          sl: s.sl,
-          legs: p.plan.legs,
-          slippage: this.ctx.cfg.maxDeviationPoints,
-          partialLegFailure: this.ctx.cfg.partialLegFailure,
-        });
+        // Reserve the child session BEFORE sending orders — if the insert fails
+        // we fail closed (no order without a managed session; a live position
+        // with no session would have no breakeven/close management). The primary
+        // (i === 0) is already reserved: it IS this session, in DISPATCHING.
+        let childId: string | null = null;
+        if (i > 0) {
+          const child = await session.createDispatched({
+            signalId: p.signalId, symbol, accountId: p.accountId, direction,
+            entryRef: s.entryRef, sl: s.sl, r: s.r, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
+            lots: p.lots, legs: p.plan.legs, slFrom: s.slFrom, positionModel: exec.positionModel,
+            entryMode: this.ctx.cfg.entryMode, riskPct: p.riskPctDisplay, operatorChatId: s.operatorChatId,
+            rawAlert: (s.rawAlert as Record<string, unknown>) ?? {}, state: STATES.DISPATCHING,
+          });
+          childId = child.id;
+        }
+
+        let result;
+        try {
+          result = await openLegs(p.broker, {
+            symbol,
+            direction,
+            entryMode: this.ctx.cfg.entryMode,
+            openPrice: s.entryRef,
+            sl: s.sl,
+            legs: p.plan.legs,
+            slippage: this.ctx.cfg.maxDeviationPoints,
+            partialLegFailure: this.ctx.cfg.partialLegFailure,
+          });
+        } catch (err) {
+          // openLegs threw before returning a status — mark the reserved child
+          // FAILED (resume-on-restart also reconciles it) and rethrow to the
+          // outer per-account handler.
+          if (childId) {
+            const msg = err instanceof Error ? err.message : String(err);
+            await session.transition(childId, [STATES.DISPATCHING], STATES.FAILED, { failureReason: msg });
+            childId = null;
+          }
+          throw err;
+        }
 
         const opened = result.status === 'OPEN';
         results.push({ name: p.name, ok: opened, message: opened && result.alert ? `${result.message} ⚠️ partial` : result.message });
         if (opened) anyOk = true;
 
-        if (i === 0 && opened) {
-          await session.transition(sessionId, [STATES.DISPATCHING], STATES.OPEN, {
-            accountId: p.accountId, lots: p.lots, legs: result.legs, dispatchedAt: new Date(), failureReason: result.alert ?? null,
-          });
-        } else if (i === 0) {
-          await failPrimary(result.message, { accountId: p.accountId, lots: p.lots, legs: result.legs });
-        } else if (opened) {
-          // Only successful additional accounts need a managed session.
-          await session.createDispatched({
-            signalId: p.signalId, symbol, accountId: p.accountId, direction,
-            entryRef: s.entryRef, sl: s.sl, r: s.r, tp1: s.tp1, tp2: s.tp2, tp3: s.tp3,
-            lots: p.lots, legs: result.legs, slFrom: s.slFrom, positionModel: exec.positionModel,
-            entryMode: this.ctx.cfg.entryMode, riskPct: p.riskPctDisplay, operatorChatId: s.operatorChatId,
-            rawAlert: (s.rawAlert as Record<string, unknown>) ?? {}, state: STATES.OPEN, failureReason: result.alert ?? null,
+        if (i === 0) {
+          if (opened) {
+            await session.transition(sessionId, [STATES.DISPATCHING], STATES.OPEN, {
+              accountId: p.accountId, lots: p.lots, legs: result.legs, dispatchedAt: new Date(), failureReason: result.alert ?? null,
+            });
+          } else {
+            await failPrimary(result.message, { accountId: p.accountId, lots: p.lots, legs: result.legs });
+          }
+        } else if (childId) {
+          await session.transition(childId, [STATES.DISPATCHING], opened ? STATES.OPEN : STATES.FAILED, {
+            legs: result.legs,
+            dispatchedAt: opened ? new Date() : undefined,
+            failureReason: opened ? (result.alert ?? null) : result.message,
           });
         }
       } catch (err) {

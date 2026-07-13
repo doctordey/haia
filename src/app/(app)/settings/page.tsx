@@ -359,7 +359,7 @@ function StrategyPicker({ value, onChange }: { value: Strat; onChange: (s: Strat
   return (
     <div className="flex gap-2">
       {STRATS.map((s) => (
-        <button key={s} onClick={() => onChange(s)}
+        <button key={s} type="button" aria-pressed={value === s} onClick={() => onChange(s)}
           className={`px-3 py-1 rounded-[var(--radius-md)] text-xs border ${
             value === s ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
               : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
@@ -520,7 +520,7 @@ function HitlExecutionSection({ toast }: { toast: (msg: string, type?: string) =
               <label className="text-xs text-text-secondary">Positions</label>
               <div className="flex gap-2 mt-1">
                 {([['two_position', 'Two positions'], ['single', 'Single position']] as const).map(([m, label]) => (
-                  <button key={m} onClick={() => pickModel(m)}
+                  <button key={m} type="button" aria-pressed={e.model === m} onClick={() => pickModel(m)}
                     className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
                       e.model === m ? 'border-accent-primary bg-accent-primary/10 text-text-primary'
                         : 'border-border-primary text-text-secondary hover:text-text-primary'}`}>
@@ -610,6 +610,8 @@ function HitlRiskSection({ toast }: { toast: (msg: string, type?: string) => voi
               {(['percent', 'fixed'] as const).map((m) => (
                 <button
                   key={m}
+                  type="button"
+                  aria-pressed={rk.mode === m}
                   onClick={() => setRk({ mode: m })}
                   className={`flex-1 px-3 py-2 rounded-[var(--radius-md)] text-sm border ${
                     rk.mode === m

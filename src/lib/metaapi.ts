@@ -74,7 +74,7 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
 
   const connection = account.getRPCConnection();
   try {
-    await connection.connect();
+    await withTimeout(connection.connect(), SYNC_STEP_TIMEOUT_MS, 'rpc connect');
     await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'history sync');
     return await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
   } finally {
@@ -85,12 +85,14 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
 /** Reject if `p` doesn't settle within `ms` — bounds slow MetaApi RPC steps so a
  *  sync can't hang forever (which would leave the account stuck "syncing"). */
 export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms),
-    ),
-  ]);
+  return new Promise<T>((resolve, reject) => {
+    // Clear on settle — a leaked 4-minute timer per call accumulates handles.
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+    p.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
 }
 
 /** Max wait for any single history-sync RPC step. */
@@ -107,9 +109,9 @@ export async function fetchBrokerSymbols(metaApiId: string): Promise<string[]> {
 
   const connection = account.getRPCConnection();
   try {
-    await connection.connect();
+    await withTimeout(connection.connect(), SYNC_STEP_TIMEOUT_MS, 'rpc connect');
     await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'symbol sync');
-    const symbols = await connection.getSymbols();
+    const symbols = await withTimeout(connection.getSymbols(), SYNC_STEP_TIMEOUT_MS, 'symbols fetch');
     return Array.isArray(symbols) ? (symbols as string[]) : [];
   } finally {
     // Always close — a leaked RPC connection keeps retrying and adds to MetaApi load.

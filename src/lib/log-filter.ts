@@ -9,6 +9,11 @@
  * Escape hatch: set HITL_VERBOSE_METAAPI_LOGS=true to disable the filter.
  */
 
+// MetaApi-specific markers only. Generic Node frame names (_onTimeout,
+// listOnTimeout, processTimers, component-emitter) are deliberately absent —
+// they appear in the stack of ANY timer-driven error and would silently drop
+// unrelated failures. The SDK logs whole Error objects (message + stack) in a
+// single console call, so these specific markers match its noise regardless.
 const NOISE = [
   'MetaApi websocket client',
   'reconnecting socket',
@@ -17,11 +22,6 @@ const NOISE = [
   'polling-xhr',
   'engine.io-client',
   'agiliumtrade',
-  'TransportError',
-  'component-emitter',
-  '_onTimeout',
-  'listOnTimeout',
-  'processTimers',
 ];
 
 function isNoise(args: unknown[]): boolean {

@@ -16,11 +16,16 @@ export async function sendOperatorMessage(cfg: HitlConfig, text: string): Promis
   let sent = 0;
   for (const chatId of chatIds) {
     try {
+      // Bounded per send — this is awaited by the webhook route, so a hung
+      // Telegram API must not hang the request.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text }),
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
       if (res.ok) sent++;
       else console.warn(`[hitl/notify] sendMessage to ${chatId} failed: HTTP ${res.status}`);
     } catch (err) {

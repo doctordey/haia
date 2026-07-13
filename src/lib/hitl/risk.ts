@@ -10,7 +10,7 @@
  * The max-risk % is always a hard cap, enforced again at dispatch time.
  */
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, like, or } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { hitlSettings } from '@/lib/db/schema';
 import type { HitlConfig } from './config';
@@ -70,33 +70,58 @@ export async function setRiskSettings(s: RiskSettings, strategy: Strategy): Prom
 }
 
 // ── per-account risk override ──
-// One number per account, shared across strategies and interpreted in each
-// strategy's mode (percent → %, fixed → $). Absent → the account uses that
-// strategy's risk. Stored as risk.acct.<id>.
+// One number per account, shared across strategies, stored WITH the mode it was
+// entered under (risk.acct.<id> + risk.acct.<id>.mode). A strategy only applies
+// the override when its own mode matches — a value typed as "2%" can never be
+// silently reinterpreted as $2 by a strategy running in fixed mode. Overrides
+// saved before modes were recorded have no mode and apply in any mode (legacy).
 const ACCT_PREFIX = 'risk.acct.';
+const MODE_SUFFIX = '.mode';
 
-export async function loadAccountRiskValues(): Promise<Record<string, number>> {
-  const rows = await db.select().from(hitlSettings);
-  const map: Record<string, number> = {};
+export interface AccountRiskOverride {
+  value: number;
+  mode?: RiskMode; // absent → legacy override, applies in any mode
+}
+
+export async function loadAccountRiskValues(): Promise<Record<string, AccountRiskOverride>> {
+  const rows = await db
+    .select()
+    .from(hitlSettings)
+    .where(like(hitlSettings.key, `${ACCT_PREFIX}%`));
+  const values: Record<string, number> = {};
+  const modes: Record<string, RiskMode> = {};
   for (const r of rows) {
-    if (!r.key.startsWith(ACCT_PREFIX)) continue;
-    const v = Number(r.value);
-    if (Number.isFinite(v) && v > 0) map[r.key.slice(ACCT_PREFIX.length)] = v;
+    const rest = r.key.slice(ACCT_PREFIX.length);
+    if (rest.endsWith(MODE_SUFFIX)) {
+      modes[rest.slice(0, -MODE_SUFFIX.length)] = r.value === 'fixed' ? 'fixed' : 'percent';
+    } else {
+      const v = Number(r.value);
+      if (Number.isFinite(v) && v > 0) values[rest] = v;
+    }
+  }
+  const map: Record<string, AccountRiskOverride> = {};
+  for (const [id, value] of Object.entries(values)) {
+    map[id] = { value, mode: modes[id] };
   }
   return map;
 }
 
-export async function setAccountRiskValue(accountId: string, value: number | null): Promise<void> {
+export async function setAccountRiskValue(accountId: string, value: number | null, mode: RiskMode): Promise<void> {
   const key = `${ACCT_PREFIX}${accountId}`;
+  const modeKey = `${key}${MODE_SUFFIX}`;
   if (value == null) {
-    await db.delete(hitlSettings).where(eq(hitlSettings.key, key));
+    await db.delete(hitlSettings).where(or(eq(hitlSettings.key, key), eq(hitlSettings.key, modeKey)));
     return;
   }
-  await db.insert(hitlSettings).values({ key, value: String(value) }).onConflictDoUpdate({ target: hitlSettings.key, set: { value: String(value) } });
+  for (const [k, v] of [[key, String(value)], [modeKey, mode]] as [string, string][]) {
+    await db.insert(hitlSettings).values({ key: k, value: v }).onConflictDoUpdate({ target: hitlSettings.key, set: { value: v } });
+  }
 }
 
-/** Apply a per-account override (if any) onto the global settings. */
-export function riskForAccount(global: RiskSettings, override: number | null | undefined): RiskSettings {
+/** Apply a per-account override onto the strategy's settings — only when the
+ *  override's recorded mode matches (or is legacy/unrecorded). */
+export function riskForAccount(global: RiskSettings, override: AccountRiskOverride | null | undefined): RiskSettings {
   if (override == null) return global;
-  return global.mode === 'fixed' ? { ...global, fixedAmount: override } : { ...global, riskPct: override };
+  if (override.mode != null && override.mode !== global.mode) return global;
+  return global.mode === 'fixed' ? { ...global, fixedAmount: override.value } : { ...global, riskPct: override.value };
 }

@@ -161,21 +161,16 @@ it only shows up in what it does to the trade payload.)
 
 Individual trades **and** individual transactions (deposits/withdrawals) can be
 hidden from the public API — manage them in **Settings → Accounts →
-Visibility**. In both cases the hidden item is simply not sent — it disappears
-from the trade list / transactions endpoint with nothing in any payload
-indicating an omission — but the accounting treatment differs:
+Visibility**. Hiding is a **transmission filter, not an accounting change**:
 
-- **Transactions (deposits/withdrawals)** — hiding also removes the amount from
-  the reported balance and equity curve, as if the funding event weren't part
-  of the distributed picture. Everything else stays transmitted.
-- **Trades** — hiding is transmission-only. Statistics, PnL, and balance always
-  include every trade; performance numbers stay honest regardless of which
-  trades are transmitted.
+- A hidden item is simply not sent — it disappears from the trade list / the
+  transactions endpoint, with nothing in any payload indicating an omission.
+- The account's balance, statistics, equity curve, and the owner's in-app
+  views are **unaffected** — a hidden deposit still counts toward the balance,
+  because it really happened.
+- Nothing is deleted; toggle an item again to transmit it.
 
-Nothing is deleted; toggle an item again to restore it (numbers recompute
-immediately for transactions).
-
-> Balance model: `balance = openingBalance + Σ non-hidden deposits/withdrawals
-> + Σ realized PnL (all trades)`. Broker deposits are captured as transaction
+> Balance model: `balance = openingBalance + Σ deposits/withdrawals + Σ
+> realized PnL` (hidden or not). Broker deposits are captured as transaction
 > rows during **Re-sync**; `?openingBalance=` on import sets the anchor for
 > backfilled accounts.

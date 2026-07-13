@@ -6,11 +6,11 @@
  */
 
 import { db } from '../lib/db';
-import { tradingAccounts, trades, dailySnapshots, accountStats } from '../lib/db/schema';
+import { tradingAccounts, trades, balanceOps } from '../lib/db/schema';
 import { eq, and, ne, or, lt } from 'drizzle-orm';
-import { calculateAccountStats } from '../lib/calculations';
 import { getMetaApi, withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
-import { format } from 'date-fns';
+import { reconcileManualDuplicates } from '../lib/trades/reconcile';
+import { recomputeAccountAggregates } from '../lib/accounts/aggregate';
 import { installMetaApiLogFilter } from '../lib/log-filter';
 
 // Drop MetaApi's engine.io reconnect spam before any connection is opened.
@@ -71,9 +71,6 @@ async function syncAccount(accountId: string) {
 
     const deals = await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
 
-    // Track balance events by date
-    const balanceByDate = new Map<string, number>();
-
     if (deals && Array.isArray(deals)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
@@ -82,10 +79,25 @@ async function syncAccount(accountId: string) {
 
       for (const deal of sortedDeals) {
         const dealTime = new Date(deal.time);
-        const dateKey = format(dealTime, 'yyyy-MM-dd');
 
+        // Deposits/withdrawals become balance_ops rows — the shared recompute
+        // derives the balance curve from them (same pipeline as the Re-sync route).
         if (deal.type === 'DEAL_TYPE_BALANCE') {
-          balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + (deal.profit || 0));
+          const amount = deal.profit || 0;
+          await db
+            .insert(balanceOps)
+            .values({
+              accountId,
+              dealId: String(deal.id || deal.orderId || `${deal.time}-${amount}`),
+              kind: amount >= 0 ? 'deposit' : 'withdrawal',
+              amount,
+              time: dealTime,
+              comment: deal.comment || null,
+            })
+            .onConflictDoUpdate({
+              target: [balanceOps.accountId, balanceOps.dealId],
+              set: { amount, time: dealTime, kind: amount >= 0 ? 'deposit' : 'withdrawal' },
+            });
           continue;
         }
 
@@ -111,7 +123,7 @@ async function syncAccount(accountId: string) {
             })
             .onConflictDoUpdate({
               target: [trades.accountId, trades.ticket],
-              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0 },
+              set: { entryPrice: deal.price || 0, lots: deal.volume || 0, openTime: dealTime, commission: deal.commission || 0, source: 'live' },
             });
         } else if (isCloseDeal || isInOut) {
           const existingTrade = await db.query.trades.findFirst({
@@ -125,7 +137,7 @@ async function syncAccount(accountId: string) {
                 closePrice: deal.price || null, closeTime: dealTime,
                 profit: deal.profit || 0, pips: deal.pips || null,
                 commission: (existingTrade.commission || 0) + (deal.commission || 0),
-                swap: deal.swap || 0, isOpen: false,
+                swap: deal.swap || 0, isOpen: false, source: 'live',
               })
               .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           } else {
@@ -146,6 +158,7 @@ async function syncAccount(accountId: string) {
                   profit: deal.profit || 0, closePrice: deal.price || null,
                   closeTime: dealTime, isOpen: false,
                   commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
+                  source: 'live',
                 },
               });
           }
@@ -158,7 +171,7 @@ async function syncAccount(accountId: string) {
                 direction: deal.type === 'DEAL_TYPE_BUY' ? 'BUY' : 'SELL',
                 entryPrice: deal.price || 0, openTime: dealTime,
                 closePrice: null, closeTime: null,
-                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true,
+                profit: 0, pips: null, commission: 0, swap: 0, isOpen: true, source: 'live',
               })
               .where(and(eq(trades.accountId, accountId), eq(trades.ticket, ticket)));
           }
@@ -181,100 +194,27 @@ async function syncAccount(accountId: string) {
                 profit: deal.profit || 0, closePrice: deal.price || null,
                 closeTime: dealTime, isOpen: false,
                 commission: deal.commission || 0, swap: deal.swap || 0, pips: deal.pips || null,
+                source: 'live',
               },
             });
         }
       }
     }
 
-    // Rebuild daily snapshots
-    const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, accountId) });
-    const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
-    const dailyMap = new Map<string, typeof closedTrades>();
-
-    for (const trade of closedTrades) {
-      const dateKey = format(trade.closeTime!, 'yyyy-MM-dd');
-      if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, []);
-      dailyMap.get(dateKey)!.push(trade);
-    }
-
-    // Seed balance from last known stats (for incremental syncs)
-    const existingStats = await db.query.accountStats.findFirst({
-      where: eq(accountStats.accountId, accountId),
-    });
-
-    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-
-    // For incremental syncs, use the existing balance as the base
-    // For initial syncs, start from 0 and let balance events build it up
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
-
-    // If this is a full rebuild (no lastSyncAt), process all dates
-    // If incremental, only process new dates but carry forward the existing balance
-    const datesToProcess = [...allDates].sort();
-
-    if (!account.lastSyncAt) {
-      // Full rebuild — process everything from scratch
-      runningBalance = 0;
-    }
-
-    for (const dateKey of datesToProcess) {
-      const balanceChange = balanceByDate.get(dateKey) || 0;
-      runningBalance += balanceChange;
-
-      const dayTrades = dailyMap.get(dateKey) || [];
-      const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
-      runningBalance += dayPnl;
-
-      await db
-        .insert(dailySnapshots)
-        .values({
-          accountId, date: dateKey, balance: runningBalance, equity: runningBalance,
-          pnl: dayPnl, tradeCount: dayTrades.length,
-          winCount: dayTrades.filter((t) => t.profit > 0).length,
-          lossCount: dayTrades.filter((t) => t.profit < 0).length,
-          volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
-          pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
-          commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
-          swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
-        })
-        .onConflictDoUpdate({
-          target: [dailySnapshots.accountId, dailySnapshots.date],
-          set: {
-            balance: runningBalance, equity: runningBalance, pnl: dayPnl,
-            tradeCount: dayTrades.length,
-            winCount: dayTrades.filter((t) => t.profit > 0).length,
-            lossCount: dayTrades.filter((t) => t.profit < 0).length,
-            volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
-            pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
-            commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
-            swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
-          },
-        });
-    }
-
-    const stats = calculateAccountStats(
-      allTrades.map((t) => ({
-        profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
-        swap: t.swap, openTime: t.openTime, closeTime: t.closeTime, isOpen: t.isOpen,
-        symbol: t.symbol, direction: t.direction, entryPrice: t.entryPrice, closePrice: t.closePrice,
-      }))
-    );
-
-    await db
-      .insert(accountStats)
-      .values({ accountId, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
-      });
+    // Merge manual-backfill duplicates, then rebuild snapshots + stats via the
+    // shared recompute (openingBalance + balance_ops + trade PnL) — the same
+    // authority the Re-sync route and imports use. The old inline version here
+    // seeded from the previous stats balance and re-added PnL every cycle,
+    // silently inflating the balance every 5 minutes.
+    await reconcileManualDuplicates(accountId);
+    const agg = await recomputeAccountAggregates(accountId);
 
     await db
       .update(tradingAccounts)
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })
       .where(eq(tradingAccounts.id, accountId));
 
-    console.log(`[sync] Completed sync for ${account.name}: ${closedTrades.length} trades, balance: ${runningBalance}`);
+    console.log(`[sync] Completed sync for ${account.name}: ${agg.closedTrades} trades`);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Sync failed';
     console.error(`[sync] Error syncing ${account.name}:`, message);

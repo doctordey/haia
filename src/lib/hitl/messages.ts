@@ -17,6 +17,8 @@ export interface MessageDef {
   description: string;
   variables: string[];
   default: string;
+  /** Has a Forever-specific variant stored at `msg.<key>.forever`; it falls back to the base template when unset. */
+  perStrategy?: boolean;
 }
 
 export const MESSAGE_DEFS: MessageDef[] = [
@@ -25,6 +27,7 @@ export const MESSAGE_DEFS: MessageDef[] = [
     label: 'Alert prompt',
     description: 'Sent when a new signal fires; asks for the range. {strategy} is Unicorn or Forever.',
     variables: ['strategy', 'direction', 'symbol', 'price'],
+    perStrategy: true,
     default:
       '🔔 New {strategy} signal: {direction} {symbol} @ {price}\n' +
       'Reply to THIS message with the range (high low) as two numbers.',
@@ -177,15 +180,37 @@ export async function loadTemplates(): Promise<Record<string, string>> {
   return map;
 }
 
-/** Render one message by key (loads overrides, falls back to default). */
-export async function renderMessage(key: string, vars: MessageVars): Promise<string> {
+const FOREVER_SUFFIX = '.forever';
+
+/** Valid template key: a base message key, or `<key>.forever` for per-strategy defs. */
+export function isMessageKey(key: string): boolean {
+  if (MESSAGE_DEFS.some((d) => d.key === key)) return true;
+  if (!key.endsWith(FOREVER_SUFFIX)) return false;
+  const base = key.slice(0, -FOREVER_SUFFIX.length);
+  return MESSAGE_DEFS.some((d) => d.perStrategy && d.key === base);
+}
+
+/**
+ * Render one message by key. When `strategy` is "forever" and the message has a
+ * Forever-specific template (`msg.<key>.forever`), that wins; otherwise the base
+ * template (with any operator override), then the built-in default.
+ */
+export async function renderMessage(
+  key: string,
+  vars: MessageVars,
+  strategy?: 'unicorn' | 'forever' | null,
+): Promise<string> {
   const templates = await loadTemplates();
-  const tpl = templates[key] ?? DEFAULTS[key] ?? '';
+  const tpl =
+    (strategy === 'forever' ? templates[`${key}${FOREVER_SUFFIX}`] : undefined) ??
+    templates[key] ??
+    DEFAULTS[key] ??
+    '';
   return renderTemplate(tpl, vars);
 }
 
 export async function setTemplate(key: string, template: string): Promise<void> {
-  if (!(key in DEFAULTS)) throw new Error(`unknown message key: ${key}`);
+  if (!isMessageKey(key)) throw new Error(`unknown message key: ${key}`);
   await db
     .insert(hitlSettings)
     .values({ key: `msg.${key}`, value: template })

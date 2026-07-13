@@ -72,15 +72,15 @@ export class HitlService implements HitlBotDeps {
     await session.recordPromptMessageIds(sessionId, messageIds);
   }
 
-  /** Opening prompt text for a freshly received alert. */
+  /** Opening prompt text for a freshly received alert (per-strategy template). */
   async promptText(symbol: string, entry: number | null, direction: string | null, strategy?: string | null): Promise<string> {
-    const label = strategy === 'forever' ? 'Forever' : 'Unicorn';
+    const isForever = strategy === 'forever';
     return renderMessage('prompt', {
-      strategy: label,
+      strategy: isForever ? 'Forever' : 'Unicorn',
       direction: await directionLabel(direction),
       symbol,
       price: entry ?? 'market', // Forever entries carry no price — filled from the live quote at confirm
-    });
+    }, isForever ? 'forever' : 'unicorn');
   }
 
   async submitRange(sessionId: string, a: number, b: number): Promise<DialogResult> {

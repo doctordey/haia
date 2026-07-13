@@ -174,7 +174,7 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                     Import
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'exclusions' })}>
-                    Exclusions
+                    Visibility
                   </Button>
                   <Button
                     variant={acc.hitlEnabled ? 'danger' : 'secondary'}
@@ -215,8 +215,8 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   );
 }
 
-// Omit specific trades or deposits/withdrawals from everything the platform
-// derives and distributes: API output, stats, snapshots, and listings.
+// Control which trades and deposits/withdrawals are transmitted via the public
+// API. Visibility only — hidden items still count toward balance and stats.
 function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
   const [ops, setOps] = useState<any[]>([]);
   const [tradeList, setTradeList] = useState<any[]>([]);
@@ -228,7 +228,7 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
     try {
       const [o, t] = await Promise.all([
         fetch(`/api/accounts/${account.id}/balance-ops`),
-        fetch(`/api/trades/${account.id}?type=all&limit=100&includeExcluded=1`),
+        fetch(`/api/trades/${account.id}?type=all&limit=100`),
       ]);
       if (o.ok) setOps((await o.json()).ops || []);
       if (t.ok) setTradeList((await t.json()).trades || []);
@@ -245,7 +245,7 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ opId: op.id, isExcluded: !op.isExcluded }),
       });
-      if (res.ok) { toast(op.isExcluded ? 'Transaction restored' : 'Transaction excluded', 'success'); load(); }
+      if (res.ok) { toast(op.isExcluded ? 'Transaction visible via API again' : 'Transaction hidden from API', 'success'); load(); }
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
     } catch { toast('Failed to update', 'error'); }
     finally { setBusy(null); }
@@ -258,17 +258,17 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tradeId: t.id, isExcluded: !t.isExcluded }),
       });
-      if (res.ok) { toast(t.isExcluded ? 'Trade restored' : 'Trade excluded', 'success'); load(); }
+      if (res.ok) { toast(t.isExcluded ? 'Trade visible via API again' : 'Trade hidden from API', 'success'); load(); }
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
     } catch { toast('Failed to update', 'error'); }
     finally { setBusy(null); }
   }
 
   return (
-    <Modal open onClose={onClose} title={`Exclusions — ${account.labelName || account.name}`} className="max-w-2xl">
+    <Modal open onClose={onClose} title={`API visibility — ${account.labelName || account.name}`} className="max-w-2xl">
       <p className="text-xs text-text-secondary mb-3">
-        Excluded items are omitted from the API, statistics, and the balance/equity curve — with no trace visible
-        to API consumers. Toggle again to restore. Numbers recompute immediately.
+        Hidden items are not transmitted via the API — consumers see no trace of them. Your account balance,
+        statistics, and in-app views are unaffected. Toggle again to transmit an item.
       </p>
       {loading ? (
         <p className="text-xs text-text-tertiary">Loading…</p>
@@ -288,10 +288,10 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
                       <Badge variant={op.kind === 'deposit' ? 'profit' : 'loss'}>{op.kind}</Badge>
                       <span className="font-mono text-text-primary">{formatCurrency(op.amount)}</span>
                       <span className="text-xs text-text-tertiary">{new Date(op.time).toLocaleDateString()}</span>
-                      {op.isExcluded && <Badge variant="warning">excluded</Badge>}
+                      {op.isExcluded && <Badge variant="warning">hidden</Badge>}
                     </div>
                     <Button variant="secondary" size="sm" onClick={() => toggleOp(op)} loading={busy === op.id}>
-                      {op.isExcluded ? 'Restore' : 'Exclude'}
+                      {op.isExcluded ? 'Show' : 'Hide'}
                     </Button>
                   </div>
                 ))}
@@ -313,10 +313,10 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
                       <span className="text-xs text-text-tertiary">
                         {t.closeTime ? new Date(t.closeTime).toLocaleDateString() : 'open'}
                       </span>
-                      {t.isExcluded && <Badge variant="warning">excluded</Badge>}
+                      {t.isExcluded && <Badge variant="warning">hidden</Badge>}
                     </div>
                     <Button variant="secondary" size="sm" onClick={() => toggleTrade(t)} loading={busy === t.id}>
-                      {t.isExcluded ? 'Restore' : 'Exclude'}
+                      {t.isExcluded ? 'Show' : 'Hide'}
                     </Button>
                   </div>
                 ))}

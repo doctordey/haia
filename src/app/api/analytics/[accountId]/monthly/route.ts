@@ -26,7 +26,7 @@ export async function GET(
 
   const [allTrades, snapshots] = await Promise.all([
     db.query.trades.findMany({
-      where: and(eq(trades.accountId, accountId), eq(trades.isOpen, false), eq(trades.isExcluded, false)),
+      where: and(eq(trades.accountId, accountId), eq(trades.isOpen, false)),
     }),
     db.query.dailySnapshots.findMany({
       where: eq(dailySnapshots.accountId, accountId),

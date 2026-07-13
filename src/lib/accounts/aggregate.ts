@@ -1,21 +1,23 @@
 import { db } from '@/lib/db';
 import { trades, dailySnapshots, accountStats, balanceOps, tradingAccounts } from '@/lib/db/schema';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
 
 /**
  * Rebuild a trading account's derived data — daily snapshots + account stats —
  * from its stored trades and balance operations. This is the single balance
- * authority: the MetaApi sync, imports, manual entry, and exclusion toggles all
- * call it after changing rows.
+ * authority: the MetaApi sync, imports, and manual entry all call it after
+ * changing rows.
  *
- * Trades and balance operations flagged `isExcluded` are omitted entirely, so
- * the derived numbers always match what the API distributes:
+ * Note on exclusions: the `isExcluded` flags on trades/balance ops are a
+ * TRANSMISSION filter only — they hide items from public API output, and are
+ * deliberately NOT consulted here. Hiding a deposit doesn't change the account
+ * balance; the accounting always reflects what actually happened.
  *
  *   balance(day) = openingBalance
- *                + Σ non-excluded deposits/withdrawals up to and incl. day
- *                + Σ non-excluded realized PnL up to and incl. day
+ *                + Σ deposits/withdrawals up to and incl. day
+ *                + Σ realized PnL up to and incl. day
  *
  * `openingBalance` lives on the account row (set by the import
  * ?openingBalance= param); broker accounts normally leave it at 0 because
@@ -23,19 +25,16 @@ import { format } from 'date-fns';
  */
 export async function recomputeAccountAggregates(
   accountId: string,
-): Promise<{ totalTrades: number; closedTrades: number; excludedTrades: number }> {
+): Promise<{ totalTrades: number; closedTrades: number }> {
   const account = await db.query.tradingAccounts.findFirst({
     where: eq(tradingAccounts.id, accountId),
     columns: { openingBalance: true },
   });
 
   const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, accountId) });
-  const included = allTrades.filter((t) => !t.isExcluded);
-  const closedTrades = included.filter((t) => t.closeTime && !t.isOpen);
+  const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
 
-  const ops = await db.query.balanceOps.findMany({
-    where: and(eq(balanceOps.accountId, accountId), eq(balanceOps.isExcluded, false)),
-  });
+  const ops = await db.query.balanceOps.findMany({ where: eq(balanceOps.accountId, accountId) });
 
   // Group by calendar day.
   const dailyMap = new Map<string, typeof closedTrades>();
@@ -50,8 +49,8 @@ export async function recomputeAccountAggregates(
     balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + op.amount);
   }
 
-  // Full rebuild: exclusion toggles can empty out a day, so stale snapshot rows
-  // must go rather than linger with old numbers.
+  // Full rebuild keeps snapshots exactly derivable from current rows (deleted
+  // manual trades, reconciled duplicates, changed anchors all just fall out).
   await db.delete(dailySnapshots).where(eq(dailySnapshots.accountId, accountId));
 
   const allDates = [...new Set([...dailyMap.keys(), ...balanceByDate.keys()])].sort();
@@ -80,7 +79,7 @@ export async function recomputeAccountAggregates(
   }
 
   const stats = calculateAccountStats(
-    included.map((t) => ({
+    allTrades.map((t) => ({
       profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
       swap: t.swap, openTime: t.openTime, closeTime: t.closeTime, isOpen: t.isOpen,
       symbol: t.symbol, direction: t.direction, entryPrice: t.entryPrice, closePrice: t.closePrice,
@@ -95,9 +94,5 @@ export async function recomputeAccountAggregates(
       set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
     });
 
-  return {
-    totalTrades: included.length,
-    closedTrades: closedTrades.length,
-    excludedTrades: allTrades.length - included.length,
-  };
+  return { totalTrades: allTrades.length, closedTrades: closedTrades.length };
 }

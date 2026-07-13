@@ -42,12 +42,9 @@ export async function GET(
     return NextResponse.json({ error: 'Account not found' }, { status: 404 });
   }
 
+  // Note: isExcluded is a public-API transmission filter only — the owner's own
+  // listings always show every trade (the rows carry the flag for badging).
   const conditions: ReturnType<typeof eq>[] = [eq(trades.accountId, accountId)];
-  // Excluded trades are hidden from listings too (coherent with stats/API);
-  // the Settings exclusions manager passes includeExcluded=1 to see them.
-  if (searchParams.get('includeExcluded') !== '1') {
-    conditions.push(eq(trades.isExcluded, false));
-  }
   if (type === 'open') conditions.push(eq(trades.isOpen, true));
   if (type === 'closed') conditions.push(eq(trades.isOpen, false));
 
@@ -179,8 +176,9 @@ export async function POST(
   }
 }
 
-// Toggle a trade's exclusion. Excluded trades vanish from API output, stats,
-// snapshots, and listings (any source — works for live trades too, unlike DELETE).
+// Toggle whether a trade is transmitted via the public API. Visibility only —
+// balance, stats, and the owner's own views are unaffected (works for any
+// source, unlike DELETE which is manual-only).
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ accountId: string }> }
@@ -209,7 +207,6 @@ export async function PATCH(
 
   if (!updated) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
 
-  await recomputeAccountAggregates(accountId);
   return NextResponse.json({ success: true, ...updated });
 }
 

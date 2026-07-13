@@ -120,7 +120,7 @@ export const trades = pgTable('trades', {
   magicNumber: integer('magic_number'),
   comment:     text('comment'),
   source:      text('source').notNull().default('live'),  // "live" (broker sync) | "manual" (hand-entered / imported)
-  isExcluded:  boolean('is_excluded').notNull().default(false),  // omitted from API output, stats, and snapshots
+  isExcluded:  boolean('is_excluded').notNull().default(false),  // not transmitted via the public API (accounting unaffected)
 }, (table) => [
   unique('trades_account_ticket_uniq').on(table.accountId, table.ticket),
   index('trades_account_close_time_idx').on(table.accountId, table.closeTime),
@@ -137,8 +137,9 @@ export const tradesRelations = relations(trades, ({ one, many }) => ({
 // ─── Balance Operations ──────────────────────────────
 // Deposits/withdrawals as first-class rows (captured from MetaApi
 // DEAL_TYPE_BALANCE deals during sync). Stored so individual transactions can
-// be excluded from the derived balance curve and from API output; previously
-// they were folded into snapshots on the fly and couldn't be omitted.
+// be hidden from API transmission; previously they were folded into snapshots
+// on the fly and couldn't be referenced at all. All ops — hidden or not —
+// count toward the balance curve.
 
 export const balanceOps = pgTable('balance_ops', {
   id:         text('id').primaryKey().$defaultFn(() => createId()),
@@ -148,7 +149,7 @@ export const balanceOps = pgTable('balance_ops', {
   amount:     real('amount').notNull(),                        // signed: deposits +, withdrawals −
   time:       timestamp('time').notNull(),
   comment:    text('comment'),
-  isExcluded: boolean('is_excluded').notNull().default(false), // omitted from balance curve and API output
+  isExcluded: boolean('is_excluded').notNull().default(false), // not transmitted via the public API (still counts toward balance)
   createdAt:  timestamp('created_at').notNull().defaultNow(),
 }, (table) => [
   unique('balance_ops_account_deal_uniq').on(table.accountId, table.dealId),

@@ -30,7 +30,7 @@ export async function GET(
   const openCountResult = await db
     .select({ count: sql<number>`count(*)` })
     .from(trades)
-    .where(and(eq(trades.accountId, accountId), eq(trades.isOpen, true), eq(trades.isExcluded, false)));
+    .where(and(eq(trades.accountId, accountId), eq(trades.isOpen, true)));
   const openTradesCount = Number(openCountResult[0]?.count || 0);
 
   const startBalance = (stats?.balance || 0) - (stats?.totalPnl || 0);

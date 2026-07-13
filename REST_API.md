@@ -157,22 +157,20 @@ broker-style numerics (no textual marker). Toggle it via the `PATCH` above or in
 **Settings → Accounts → Edit**. (The flag itself never appears in GET responses —
 it only shows up in what it does to the trade payload.)
 
-## Exclusions
+## Hiding items from transmission
 
 Individual trades **and** individual transactions (deposits/withdrawals) can be
-excluded from everything the platform derives and distributes — manage them in
-**Settings → Accounts → Exclusions**. An excluded item is omitted from:
+hidden from the public API — manage them in **Settings → Accounts →
+Visibility**. Hiding is a **transmission filter, not an accounting change**:
 
-- API output (trade lists, the transactions endpoint),
-- account statistics (PnL, win rate, trade counts, …),
-- the balance/equity curve and daily snapshots,
-- in-app listings and analytics.
+- A hidden item is simply not sent — it disappears from trade lists and the
+  transactions endpoint, with nothing in any payload indicating an omission.
+- The account's balance, statistics, equity curve, and the owner's in-app
+  views are **unaffected** — a hidden deposit still counts toward the balance,
+  because it really happened.
+- Nothing is deleted; toggle an item again to transmit it.
 
-Exclusion is invisible to API consumers — nothing in any payload indicates that
-something was omitted. Toggling recomputes all derived numbers immediately, and
-items can be restored at any time (nothing is deleted).
-
-> Balance model: `balance = openingBalance + Σ non-excluded deposits/withdrawals
-> + Σ non-excluded realized PnL`. Broker deposits are captured as transaction
+> Balance model: `balance = openingBalance + Σ deposits/withdrawals + Σ
+> realized PnL` (hidden or not). Broker deposits are captured as transaction
 > rows during **Re-sync**; `?openingBalance=` on import sets the anchor for
 > backfilled accounts.

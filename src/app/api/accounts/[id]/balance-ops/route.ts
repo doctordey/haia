@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, balanceOps } from '@/lib/db/schema';
 import { and, eq, desc } from 'drizzle-orm';
+import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
+import { parseManualTransaction } from '@/lib/accounts/transactions';
 
 async function findOwned(userId: string, id: string) {
   return db.query.tradingAccounts.findFirst({
@@ -68,4 +70,65 @@ export async function PATCH(
   if (!updated) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
 
   return NextResponse.json({ success: true, ...updated });
+}
+
+/**
+ * POST /api/accounts/:id/balance-ops — manually record a deposit/withdrawal
+ * (e.g. when the broker's deal history doesn't reach back far enough).
+ * Body: { kind: "deposit"|"withdrawal", amount: number, time: date, comment? }.
+ * Counts toward the balance like a synced transaction; aggregates recompute.
+ */
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const account = await findOwned(session.user.id, id);
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const body = await request.json().catch(() => ({}));
+  const parsed = parseManualTransaction(body);
+  if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+
+  const [row] = await db.insert(balanceOps).values({ accountId: id, ...parsed.values }).returning();
+  await recomputeAccountAggregates(id);
+
+  return NextResponse.json({ success: true, op: row }, { status: 201 });
+}
+
+/**
+ * DELETE /api/accounts/:id/balance-ops?opId=… — remove a transaction record.
+ * Intended for manually entered ones; a broker-synced row may reappear on the
+ * next full re-sync (same broker deal id). Aggregates recompute.
+ */
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const account = await findOwned(session.user.id, id);
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const opId = new URL(request.url).searchParams.get('opId');
+  if (!opId) return NextResponse.json({ error: 'opId is required' }, { status: 400 });
+
+  const deleted = await db
+    .delete(balanceOps)
+    .where(and(eq(balanceOps.id, opId), eq(balanceOps.accountId, id)))
+    .returning({ id: balanceOps.id });
+
+  if (deleted.length === 0) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 });
+
+  await recomputeAccountAggregates(id);
+  return NextResponse.json({ success: true });
 }

@@ -303,6 +303,35 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
     finally { setBusy(null); }
   }
 
+  const [opForm, setOpForm] = useState({ kind: 'deposit', amount: '', time: '', comment: '' });
+
+  async function addOp() {
+    if (!opForm.amount || Number(opForm.amount) === 0) { toast('Enter an amount', 'error'); return; }
+    setBusy('add-op');
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/balance-ops`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: opForm.kind, amount: Number(opForm.amount),
+          time: opForm.time || undefined, comment: opForm.comment || undefined,
+        }),
+      });
+      if (res.ok) { toast('Transaction added — balance updated', 'success'); setOpForm({ kind: 'deposit', amount: '', time: '', comment: '' }); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to add', 'error'); }
+    } catch { toast('Failed to add', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function deleteOp(op: any) {
+    setBusy(op.id);
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/balance-ops?opId=${op.id}`, { method: 'DELETE' });
+      if (res.ok) { toast('Transaction removed — balance updated', 'success'); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to remove', 'error'); }
+    } catch { toast('Failed to remove', 'error'); }
+    finally { setBusy(null); }
+  }
+
   return (
     <Modal open onClose={onClose} title={`API visibility — ${account.labelName || account.name}`} className="max-w-2xl">
       <p className="text-xs text-text-secondary mb-3">
@@ -315,9 +344,23 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
         <div className="space-y-4 max-h-[60vh] overflow-y-auto">
           <div>
             <h4 className="text-sm font-medium text-text-secondary mb-1.5">Deposits &amp; withdrawals</h4>
+            <div className="flex items-end gap-2 mb-2">
+              <div className="w-32">
+                <Select label="Type" value={opForm.kind} onChange={(e) => setOpForm({ ...opForm, kind: e.target.value })}
+                  options={[{ value: 'deposit', label: 'Deposit' }, { value: 'withdrawal', label: 'Withdrawal' }]} />
+              </div>
+              <div className="flex-1">
+                <Input label="Amount" type="number" step="0.01" placeholder="e.g. 1000000"
+                  value={opForm.amount} onChange={(e) => setOpForm({ ...opForm, amount: e.target.value })} />
+              </div>
+              <div className="w-40">
+                <Input label="Date" type="date" value={opForm.time} onChange={(e) => setOpForm({ ...opForm, time: e.target.value })} />
+              </div>
+              <Button onClick={addOp} loading={busy === 'add-op'}>Add</Button>
+            </div>
             {ops.length === 0 ? (
               <p className="text-xs text-text-tertiary">
-                None recorded. Broker transactions appear here after the next re-sync.
+                None recorded. Broker transactions appear after a re-sync, or add them manually above.
               </p>
             ) : (
               <div className="space-y-1">
@@ -329,9 +372,14 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
                       <span className="text-xs text-text-tertiary">{new Date(op.time).toLocaleDateString()}</span>
                       {op.isExcluded && <Badge variant="warning">hidden</Badge>}
                     </div>
-                    <Button variant="secondary" size="sm" onClick={() => toggleOp(op)} loading={busy === op.id}>
-                      {op.isExcluded ? 'Show' : 'Hide'}
-                    </Button>
+                    <div className="flex items-center gap-1.5">
+                      <Button variant="secondary" size="sm" onClick={() => toggleOp(op)} loading={busy === op.id}>
+                        {op.isExcluded ? 'Show' : 'Hide'}
+                      </Button>
+                      <Button variant="danger" size="sm" onClick={() => deleteOp(op)} loading={busy === op.id}>
+                        Delete
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>

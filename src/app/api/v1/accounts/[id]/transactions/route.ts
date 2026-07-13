@@ -4,6 +4,8 @@ import { db } from '@/lib/db';
 import { tradingAccounts, balanceOps } from '@/lib/db/schema';
 import { and, eq, desc, gte, lte } from 'drizzle-orm';
 import { parseTimeParam } from '@/lib/api/time';
+import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
+import { parseManualTransaction } from '@/lib/accounts/transactions';
 
 /**
  * GET /api/v1/accounts/:id/transactions — distribute the account's
@@ -48,4 +50,34 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       comment: op.comment,
     })),
   });
+}
+
+/**
+ * POST /api/v1/accounts/:id/transactions — record a deposit/withdrawal
+ * (write scope). Body: { kind: "deposit"|"withdrawal", amount, time?, comment? }.
+ * Counts toward the balance like a broker-synced transaction.
+ */
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await authenticateApiKey(request, 'write');
+  if (auth instanceof NextResponse) return auth;
+
+  const { id } = await params;
+  const account = keyAllowsAccount(auth, id)
+    ? await db.query.tradingAccounts.findFirst({
+        where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, auth.userId)),
+      })
+    : undefined;
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const body = await request.json().catch(() => ({}));
+  const parsed = parseManualTransaction(body);
+  if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+
+  const [row] = await db.insert(balanceOps).values({ accountId: id, ...parsed.values }).returning();
+  await recomputeAccountAggregates(id);
+
+  return NextResponse.json(
+    { success: true, transaction: { id: row.id, kind: row.kind, amount: row.amount, time: row.time, comment: row.comment } },
+    { status: 201 },
+  );
 }

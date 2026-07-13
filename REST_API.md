@@ -5,6 +5,16 @@ web app's session-cookie auth — callers authenticate with a **per-user API key
 
 Base path: `/api/v1` (pretty alias: `/haia/v1`).
 
+### Dedicated API domain (optional)
+
+To expose the API on its own hostname (e.g. `api.yourfund.com`) while the app
+lives elsewhere, point the domain at the same deployment and set the
+`API_HOSTNAME` env var to that host. On that host **only** the REST API is
+served — every app page and session route 404s — and a short bare path is
+available: `https://api.yourfund.com/v1/accounts` (equivalent to
+`/api/v1/accounts`). No second deployment needed; leave `API_HOSTNAME` unset to
+serve app + API on every domain.
+
 ## Authentication
 
 Create keys in **Settings → API**. The plaintext key (`hk_…`) is shown once at

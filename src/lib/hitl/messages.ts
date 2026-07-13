@@ -23,11 +23,18 @@ export const MESSAGE_DEFS: MessageDef[] = [
   {
     key: 'prompt',
     label: 'Alert prompt',
-    description: 'Sent when a new signal fires; asks for the range.',
-    variables: ['direction', 'symbol', 'price'],
+    description: 'Sent when a new signal fires; asks for the range. {strategy} is Unicorn or Forever.',
+    variables: ['strategy', 'direction', 'symbol', 'price'],
     default:
-      '🔔 New signal: {direction} {symbol} @ {price}\n' +
+      '🔔 New {strategy} signal: {direction} {symbol} @ {price}\n' +
       'Reply to THIS message with the range (high low) as two numbers.',
+  },
+  {
+    key: 'notification',
+    label: 'Info alert',
+    description: 'Notification-only alerts forwarded from TradingView (e.g. Forever ERL Hit). {text} is the alert text.',
+    variables: ['text'],
+    default: '📣 {text}',
   },
   {
     key: 'needDirection',

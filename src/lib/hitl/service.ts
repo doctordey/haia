@@ -67,20 +67,31 @@ export class HitlService implements HitlBotDeps {
   }
 
   /** Opening prompt text for a freshly received alert. */
-  async promptText(symbol: string, entry: number | null, direction: string | null): Promise<string> {
-    return renderMessage('prompt', { direction: await directionLabel(direction), symbol, price: entry ?? '—' });
+  async promptText(symbol: string, entry: number | null, direction: string | null, strategy?: string | null): Promise<string> {
+    const label = strategy === 'forever' ? 'Forever' : 'Unicorn';
+    return renderMessage('prompt', {
+      strategy: label,
+      direction: await directionLabel(direction),
+      symbol,
+      price: entry ?? 'market', // Forever entries carry no price — filled from the live quote at confirm
+    });
   }
 
   async submitRange(sessionId: string, a: number, b: number): Promise<DialogResult> {
     const s = await session.getById(sessionId);
     if (!s) return { kind: 'error', text: 'Session not found.' };
-    if (s.entryRef == null) return { kind: 'error', text: 'Session has no entry price.' };
+    // Forever entries carry no reference price — allowed when the alert already
+    // told us the direction (the live quote becomes the entry at confirm).
+    if (s.entryRef == null && !s.action) {
+      return { kind: 'error', text: 'Session has no entry price.' };
+    }
 
     const rangeHigh = Math.max(a, b);
     const rangeLow = Math.min(a, b);
 
     const direction: Direction | null =
-      (s.action as Direction | null) ?? inferDirection(s.entryRef, rangeHigh, rangeLow);
+      (s.action as Direction | null) ??
+      (s.entryRef != null ? inferDirection(s.entryRef, rangeHigh, rangeLow) : null);
 
     if (!direction) {
       await session.transition(sessionId, [STATES.AWAITING_RANGE], STATES.AWAITING_DIRECTION, {
@@ -172,7 +183,7 @@ export class HitlService implements HitlBotDeps {
     input: { rangeHigh: number; rangeLow: number; direction: Direction },
   ): Promise<DialogResult> {
     const s = await session.getById(sessionId);
-    if (!s || s.entryRef == null) return { kind: 'error', text: 'Session not found.' };
+    if (!s) return { kind: 'error', text: 'Session not found.' };
     const cfg = this.ctx.cfg;
 
     const accounts = await this.ctx.resolveTargetAccounts();
@@ -180,9 +191,27 @@ export class HitlService implements HitlBotDeps {
       return { kind: 'error', text: 'No Unicorn-enabled account is armed/connected. Enable Unicorn on an account in Settings.' };
     }
 
+    // Alerts without a reference price (Forever entries) anchor on the live
+    // quote at range time — it's a market entry, so the current price IS the
+    // entry. Frozen onto the session for audit + dispatch.
+    let entryRef = s.entryRef;
+    if (entryRef == null) {
+      const broker = this.ctx.getBroker(accounts[0].accountId);
+      if (!broker) return { kind: 'error', text: 'Broker not connected yet — try again shortly.' };
+      try {
+        await broker.ensureSymbol(s.symbol);
+      } catch (err) {
+        return { kind: 'error', text: `Broker not ready: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      const quote = broker.getPrice(s.symbol);
+      if (!quote) return { kind: 'error', text: `No live quote for ${s.symbol} yet — try again in a few seconds.` };
+      entryRef = input.direction === 'BUY' ? quote.ask : quote.bid;
+      await session.patch(sessionId, { entryRef });
+    }
+
     const tpMultiples = await loadTpMultiples(cfg);
     const lv = computeLevels({
-      entry: s.entryRef,
+      entry: entryRef,
       rangeHigh: input.rangeHigh,
       rangeLow: input.rangeLow,
       direction: input.direction,

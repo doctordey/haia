@@ -73,6 +73,12 @@ export const tradingAccounts = pgTable('trading_accounts', {
   // pooled and reported together everywhere.
   distinguishManual: boolean('distinguish_manual').notNull().default(true),
 
+  // Anchor for the derived balance/equity curve:
+  //   balance = openingBalance + Σ non-excluded deposits/withdrawals + Σ non-excluded trade PnL
+  // Set by the import ?openingBalance= param; 0 for broker accounts whose
+  // deposits arrive as balance operations.
+  openingBalance: real('opening_balance').notNull().default(0),
+
   isActive:   boolean('is_active').notNull().default(true),
   lastSyncAt: timestamp('last_sync_at'),
   syncStatus: text('sync_status').notNull().default('pending'),
@@ -114,6 +120,7 @@ export const trades = pgTable('trades', {
   magicNumber: integer('magic_number'),
   comment:     text('comment'),
   source:      text('source').notNull().default('live'),  // "live" (broker sync) | "manual" (hand-entered / imported)
+  isExcluded:  boolean('is_excluded').notNull().default(false),  // omitted from API output, stats, and snapshots
 }, (table) => [
   unique('trades_account_ticket_uniq').on(table.accountId, table.ticket),
   index('trades_account_close_time_idx').on(table.accountId, table.closeTime),
@@ -125,6 +132,31 @@ export const trades = pgTable('trades', {
 export const tradesRelations = relations(trades, ({ one, many }) => ({
   account:        one(tradingAccounts, { fields: [trades.accountId], references: [tradingAccounts.id] }),
   journalEntries: many(tradeJournal),
+}));
+
+// ─── Balance Operations ──────────────────────────────
+// Deposits/withdrawals as first-class rows (captured from MetaApi
+// DEAL_TYPE_BALANCE deals during sync). Stored so individual transactions can
+// be excluded from the derived balance curve and from API output; previously
+// they were folded into snapshots on the fly and couldn't be omitted.
+
+export const balanceOps = pgTable('balance_ops', {
+  id:         text('id').primaryKey().$defaultFn(() => createId()),
+  accountId:  text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  dealId:     text('deal_id').notNull(),                       // broker deal id (idempotent upsert key)
+  kind:       text('kind').notNull(),                          // "deposit" | "withdrawal"
+  amount:     real('amount').notNull(),                        // signed: deposits +, withdrawals −
+  time:       timestamp('time').notNull(),
+  comment:    text('comment'),
+  isExcluded: boolean('is_excluded').notNull().default(false), // omitted from balance curve and API output
+  createdAt:  timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  unique('balance_ops_account_deal_uniq').on(table.accountId, table.dealId),
+  index('balance_ops_account_time_idx').on(table.accountId, table.time),
+]);
+
+export const balanceOpsRelations = relations(balanceOps, ({ one }) => ({
+  account: one(tradingAccounts, { fields: [balanceOps.accountId], references: [tradingAccounts.id] }),
 }));
 
 // ─── Daily Snapshots ─────────────────────────────────
@@ -248,6 +280,9 @@ export const apiKeys = pgTable('api_keys', {
   prefix:     text('prefix').notNull(),                      // e.g. "hk_a1b2c3" (non-secret display id)
   keyHash:    text('key_hash').notNull().unique(),           // sha256(plaintext key), hex
   scopes:     text('scopes').notNull().default('read'),      // comma-separated: "read", "write"
+  // Account restriction: null = all of the user's accounts (incl. future ones);
+  // an array = only these account ids. Out-of-scope accounts 404 to the caller.
+  accountIds: jsonb('account_ids').$type<string[] | null>(),
   lastUsedAt: timestamp('last_used_at'),
   expiresAt:  timestamp('expires_at'),
   revokedAt:  timestamp('revoked_at'),

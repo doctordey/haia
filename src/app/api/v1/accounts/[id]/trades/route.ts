@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateApiKey } from '@/lib/api/auth';
+import { authenticateApiKey, keyAllowsAccount, type ApiIdentity } from '@/lib/api/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades } from '@/lib/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
@@ -7,9 +7,11 @@ import { exposeTrade } from '@/lib/api/serialize';
 import { normalizeTrade, upsertTrades, type TradeInput } from '@/lib/trades/ingest';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
-async function findOwned(userId: string, id: string) {
+// Ownership + key account-restriction; restricted keys 404 like a missing account.
+async function findAllowed(identity: ApiIdentity, id: string) {
+  if (!keyAllowsAccount(identity, id)) return undefined;
   return db.query.tradingAccounts.findFirst({
-    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, userId)),
+    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, identity.userId)),
   });
 }
 
@@ -24,7 +26,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const account = await findOwned(auth.userId, id);
+  const account = await findAllowed(auth, id);
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
   const { searchParams } = new URL(request.url);
@@ -35,7 +37,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const limit = Math.min(500, Math.max(1, parseInt(searchParams.get('limit') || '100')));
   const offset = (page - 1) * limit;
 
-  const conditions = [eq(trades.accountId, id)];
+  // Excluded trades never leave the system via the public API.
+  const conditions = [eq(trades.accountId, id), eq(trades.isExcluded, false)];
   if (status === 'open') conditions.push(eq(trades.isOpen, true));
   else if (status === 'closed') conditions.push(eq(trades.isOpen, false));
   if (account.distinguishManual && (source === 'live' || source === 'manual')) {
@@ -70,7 +73,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const account = await findOwned(auth.userId, id);
+  const account = await findAllowed(auth, id);
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
   const body = await request.json().catch(() => null);

@@ -1,52 +1,71 @@
 import { db } from '@/lib/db';
-import { trades, dailySnapshots, accountStats } from '@/lib/db/schema';
-import { eq } from 'drizzle-orm';
+import { trades, dailySnapshots, accountStats, balanceOps, tradingAccounts } from '@/lib/db/schema';
+import { and, eq } from 'drizzle-orm';
 import { calculateAccountStats } from '@/lib/calculations';
 import { format } from 'date-fns';
 
 /**
- * Rebuild a trading account's derived data (daily snapshots + account stats)
- * from its stored trades. Used after manual entry or a history import, so the
- * dashboard / calendar / analytics reflect the new rows immediately.
+ * Rebuild a trading account's derived data — daily snapshots + account stats —
+ * from its stored trades and balance operations. This is the single balance
+ * authority: the MetaApi sync, imports, manual entry, and exclusion toggles all
+ * call it after changing rows.
  *
- * Unlike the MetaApi sync (which folds in deposit/withdrawal balance events),
- * this derives balance purely from realized PnL:
- *   balance(day) = openingBalance + cumulative realized PnL up to and incl. day
+ * Trades and balance operations flagged `isExcluded` are omitted entirely, so
+ * the derived numbers always match what the API distributes:
  *
- * `openingBalance` defaults to the account's existing pre-PnL balance so the
- * ending balance stays anchored to the broker balance when one is known; for a
- * fresh manual account it is 0 unless overridden.
+ *   balance(day) = openingBalance
+ *                + Σ non-excluded deposits/withdrawals up to and incl. day
+ *                + Σ non-excluded realized PnL up to and incl. day
+ *
+ * `openingBalance` lives on the account row (set by the import
+ * ?openingBalance= param); broker accounts normally leave it at 0 because
+ * their funding arrives as balance operations.
  */
 export async function recomputeAccountAggregates(
   accountId: string,
-  opts: { openingBalance?: number } = {},
-): Promise<{ totalTrades: number; closedTrades: number }> {
+): Promise<{ totalTrades: number; closedTrades: number; excludedTrades: number }> {
+  const account = await db.query.tradingAccounts.findFirst({
+    where: eq(tradingAccounts.id, accountId),
+    columns: { openingBalance: true },
+  });
+
   const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, accountId) });
-  const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
+  const included = allTrades.filter((t) => !t.isExcluded);
+  const closedTrades = included.filter((t) => t.closeTime && !t.isOpen);
 
-  // Determine the opening (pre-PnL) balance.
-  let openingBalance = opts.openingBalance;
-  if (openingBalance == null) {
-    const existing = await db.query.accountStats.findFirst({ where: eq(accountStats.accountId, accountId) });
-    openingBalance = existing ? existing.balance - existing.totalPnl : 0;
-  }
+  const ops = await db.query.balanceOps.findMany({
+    where: and(eq(balanceOps.accountId, accountId), eq(balanceOps.isExcluded, false)),
+  });
 
-  // Group closed trades by close date.
+  // Group by calendar day.
   const dailyMap = new Map<string, typeof closedTrades>();
   for (const trade of closedTrades) {
     const dateKey = format(trade.closeTime!, 'yyyy-MM-dd');
     if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, []);
     dailyMap.get(dateKey)!.push(trade);
   }
+  const balanceByDate = new Map<string, number>();
+  for (const op of ops) {
+    const dateKey = format(op.time, 'yyyy-MM-dd');
+    balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + op.amount);
+  }
 
-  // Rebuild snapshots in date order with a running balance.
-  let runningBalance = openingBalance;
-  for (const dateKey of [...dailyMap.keys()].sort()) {
-    const dayTrades = dailyMap.get(dateKey)!;
+  // Full rebuild: exclusion toggles can empty out a day, so stale snapshot rows
+  // must go rather than linger with old numbers.
+  await db.delete(dailySnapshots).where(eq(dailySnapshots.accountId, accountId));
+
+  const allDates = [...new Set([...dailyMap.keys(), ...balanceByDate.keys()])].sort();
+  let runningBalance = account?.openingBalance ?? 0;
+
+  for (const dateKey of allDates) {
+    runningBalance += balanceByDate.get(dateKey) || 0;
+    const dayTrades = dailyMap.get(dateKey) || [];
     const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
     runningBalance += dayPnl;
 
-    const row = {
+    await db.insert(dailySnapshots).values({
+      accountId,
+      date: dateKey,
       balance: runningBalance,
       equity: runningBalance,
       pnl: dayPnl,
@@ -57,16 +76,11 @@ export async function recomputeAccountAggregates(
       pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
       commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
       swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
-    };
-
-    await db
-      .insert(dailySnapshots)
-      .values({ accountId, date: dateKey, ...row })
-      .onConflictDoUpdate({ target: [dailySnapshots.accountId, dailySnapshots.date], set: row });
+    });
   }
 
   const stats = calculateAccountStats(
-    allTrades.map((t) => ({
+    included.map((t) => ({
       profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
       swap: t.swap, openTime: t.openTime, closeTime: t.closeTime, isOpen: t.isOpen,
       symbol: t.symbol, direction: t.direction, entryPrice: t.entryPrice, closePrice: t.closePrice,
@@ -81,5 +95,9 @@ export async function recomputeAccountAggregates(
       set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
     });
 
-  return { totalTrades: allTrades.length, closedTrades: closedTrades.length };
+  return {
+    totalTrades: included.length,
+    closedTrades: closedTrades.length,
+    excludedTrades: allTrades.length - included.length,
+  };
 }

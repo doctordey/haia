@@ -20,6 +20,17 @@ export interface ApiIdentity {
   userId: string;
   keyId: string;
   scopes: ApiScope[];
+  /** Account restriction: null = every account the user owns; array = only these ids. */
+  accountIds: string[] | null;
+}
+
+/**
+ * Whether this key may touch the given account. Routes must treat a denial as
+ * a 404 (same response as a nonexistent account) so a restricted key can't
+ * probe which other account ids exist.
+ */
+export function keyAllowsAccount(identity: ApiIdentity, accountId: string): boolean {
+  return identity.accountIds === null || identity.accountIds.includes(accountId);
 }
 
 function extractKey(request: Request): string | null {
@@ -80,5 +91,9 @@ export async function authenticateApiKey(
   // Best-effort usage stamp — never block the request on it.
   db.update(apiKeys).set({ lastUsedAt: now }).where(eq(apiKeys.id, row.id)).catch(() => {});
 
-  return { userId: row.userId, keyId: row.id, scopes };
+  const accountIds = Array.isArray(row.accountIds) && row.accountIds.length > 0
+    ? row.accountIds.map(String)
+    : null;
+
+  return { userId: row.userId, keyId: row.id, scopes, accountIds };
 }

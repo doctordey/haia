@@ -17,10 +17,22 @@ X-API-Key: hk_xxxxxxxx…
 
 Scopes:
 
-- `read` — fetch accounts and trades (every key has this).
+- `read` — fetch accounts, trades, and transactions (every key has this).
 - `write` — also ingest trades, import history, and edit labels.
 
 `401` = missing/invalid/revoked/expired key. `403` = key lacks the needed scope.
+
+### Per-key account restriction
+
+A key can be limited to specific accounts — set at creation (Settings → API →
+uncheck "All accounts", or pass `"accountIds": ["…"]` in the POST body). For a
+restricted key:
+
+- `GET /accounts` lists only the allowed accounts.
+- Every other route returns **404** for out-of-scope account ids — identical to
+  a nonexistent account, so the key holder can't probe what else exists.
+- Keys without a restriction (the default) cover every account, including ones
+  connected after the key was created.
 
 ## Distribute (read)
 
@@ -45,6 +57,14 @@ manual-entry configuration is ever exposed.
 
 ### `GET /api/v1/accounts/:id`
 One account (same shape as a list entry).
+
+### `GET /api/v1/accounts/:id/transactions`
+The account's deposits and withdrawals (captured from broker sync):
+
+```json
+{ "transactions": [ { "id": "…", "kind": "deposit", "amount": 5000,
+    "time": "2024-01-15T09:00:00.000Z", "comment": "Wire transfer" } ] }
+```
 
 ### `GET /api/v1/accounts/:id/trades`
 Query params: `status=open|closed|all`, `source=live|manual|all`,
@@ -137,6 +157,22 @@ broker-style numerics (no textual marker). Toggle it via the `PATCH` above or in
 **Settings → Accounts → Edit**. (The flag itself never appears in GET responses —
 it only shows up in what it does to the trade payload.)
 
-> Balance note: imports/manual entries derive balance from realized PnL
-> (`opening + cumulative PnL`). For MetaApi-connected accounts, **Re-sync**
-> remains authoritative for deposit-aware balances.
+## Exclusions
+
+Individual trades **and** individual transactions (deposits/withdrawals) can be
+excluded from everything the platform derives and distributes — manage them in
+**Settings → Accounts → Exclusions**. An excluded item is omitted from:
+
+- API output (trade lists, the transactions endpoint),
+- account statistics (PnL, win rate, trade counts, …),
+- the balance/equity curve and daily snapshots,
+- in-app listings and analytics.
+
+Exclusion is invisible to API consumers — nothing in any payload indicates that
+something was omitted. Toggling recomputes all derived numbers immediately, and
+items can be restored at any time (nothing is deleted).
+
+> Balance model: `balance = openingBalance + Σ non-excluded deposits/withdrawals
+> + Σ non-excluded realized PnL`. Broker deposits are captured as transaction
+> rows during **Re-sync**; `?openingBalance=` on import sets the anchor for
+> backfilled accounts.

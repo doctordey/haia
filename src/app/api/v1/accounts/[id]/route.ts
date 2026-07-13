@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server';
-import { authenticateApiKey } from '@/lib/api/auth';
+import { authenticateApiKey, keyAllowsAccount, type ApiIdentity } from '@/lib/api/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
 import { exposeAccount } from '@/lib/api/serialize';
 
-async function findOwned(userId: string, id: string) {
+// Ownership + key account-restriction in one step. A restricted key gets the
+// same 404 as a nonexistent account, so it can't probe for other ids.
+async function findAllowed(identity: ApiIdentity, id: string) {
+  if (!keyAllowsAccount(identity, id)) return undefined;
   return db.query.tradingAccounts.findFirst({
-    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, userId)),
+    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, identity.userId)),
     with: { accountStats: true },
   });
 }
@@ -18,7 +21,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const account = await findOwned(auth.userId, id);
+  const account = await findAllowed(auth, id);
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
   return NextResponse.json(exposeAccount(account, account.accountStats));
@@ -37,7 +40,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const account = await findOwned(auth.userId, id);
+  const account = await findAllowed(auth, id);
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
   const body = await request.json().catch(() => ({}));

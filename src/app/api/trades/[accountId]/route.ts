@@ -43,6 +43,11 @@ export async function GET(
   }
 
   const conditions: ReturnType<typeof eq>[] = [eq(trades.accountId, accountId)];
+  // Excluded trades are hidden from listings too (coherent with stats/API);
+  // the Settings exclusions manager passes includeExcluded=1 to see them.
+  if (searchParams.get('includeExcluded') !== '1') {
+    conditions.push(eq(trades.isExcluded, false));
+  }
   if (type === 'open') conditions.push(eq(trades.isOpen, true));
   if (type === 'closed') conditions.push(eq(trades.isOpen, false));
 
@@ -172,6 +177,40 @@ export async function POST(
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Invalid trade' }, { status: 400 });
   }
+}
+
+// Toggle a trade's exclusion. Excluded trades vanish from API output, stats,
+// snapshots, and listings (any source — works for live trades too, unlike DELETE).
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ accountId: string }> }
+) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { accountId } = await params;
+  const account = await db.query.tradingAccounts.findFirst({
+    where: and(eq(tradingAccounts.id, accountId), eq(tradingAccounts.userId, session.user.id)),
+  });
+  if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
+
+  const body = await request.json().catch(() => ({}));
+  if (typeof body.tradeId !== 'string' || typeof body.isExcluded !== 'boolean') {
+    return NextResponse.json({ error: 'tradeId (string) and isExcluded (boolean) are required' }, { status: 400 });
+  }
+
+  const [updated] = await db
+    .update(trades)
+    .set({ isExcluded: body.isExcluded })
+    .where(and(eq(trades.id, body.tradeId), eq(trades.accountId, accountId)))
+    .returning({ id: trades.id, isExcluded: trades.isExcluded });
+
+  if (!updated) return NextResponse.json({ error: 'Trade not found' }, { status: 404 });
+
+  await recomputeAccountAggregates(accountId);
+  return NextResponse.json({ success: true, ...updated });
 }
 
 // Delete a manual trade by id (?tradeId=). Only manual entries can be removed —

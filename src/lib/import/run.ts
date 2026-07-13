@@ -107,7 +107,12 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     }
   }
 
-  const agg = await recomputeAccountAggregates(accountId, { openingBalance });
+  // The opening-balance anchor persists on the account; the recompute reads it.
+  if (openingBalance != null) {
+    await db.update(tradingAccounts).set({ openingBalance }).where(eq(tradingAccounts.id, accountId));
+  }
+
+  const agg = await recomputeAccountAggregates(accountId);
 
   return NextResponse.json({
     success: true,

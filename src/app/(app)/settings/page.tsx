@@ -35,7 +35,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         <TabsContent value="api" className="mt-4 space-y-4">
-          <ApiKeysSection toast={toast} />
+          <ApiKeysSection toast={toast} accounts={accounts} />
         </TabsContent>
 
         <TabsContent value="hitl" className="mt-4 space-y-4">
@@ -67,8 +67,8 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
   const [syncing, setSyncing] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [togglingHitl, setTogglingHitl] = useState<string | null>(null);
-  // Per-account modals: which account + which action ('labels' | 'trade' | 'import')
-  const [manage, setManage] = useState<{ account: any; mode: 'labels' | 'trade' | 'import' } | null>(null);
+  // Per-account modals: which account + which action
+  const [manage, setManage] = useState<{ account: any; mode: 'labels' | 'trade' | 'import' | 'exclusions' } | null>(null);
 
   async function handleToggleHitl(id: string, next: boolean) {
     setTogglingHitl(id);
@@ -173,6 +173,9 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
                   <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'import' })}>
                     Import
                   </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setManage({ account: acc, mode: 'exclusions' })}>
+                    Exclusions
+                  </Button>
                   <Button
                     variant={acc.hitlEnabled ? 'danger' : 'secondary'}
                     size="sm"
@@ -205,7 +208,127 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
       {manage?.mode === 'import' && (
         <ImportModal account={manage.account} onClose={() => setManage(null)} onSaved={() => { setManage(null); onRefetch(); }} toast={toast} />
       )}
+      {manage?.mode === 'exclusions' && (
+        <ExclusionsModal account={manage.account} onClose={() => { setManage(null); onRefetch(); }} onSaved={() => {}} toast={toast} />
+      )}
     </>
+  );
+}
+
+// Omit specific trades or deposits/withdrawals from everything the platform
+// derives and distributes: API output, stats, snapshots, and listings.
+function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
+  const [ops, setOps] = useState<any[]>([]);
+  const [tradeList, setTradeList] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [o, t] = await Promise.all([
+        fetch(`/api/accounts/${account.id}/balance-ops`),
+        fetch(`/api/trades/${account.id}?type=all&limit=100&includeExcluded=1`),
+      ]);
+      if (o.ok) setOps((await o.json()).ops || []);
+      if (t.ok) setTradeList((await t.json()).trades || []);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, [account.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleOp(op: any) {
+    setBusy(op.id);
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/balance-ops`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opId: op.id, isExcluded: !op.isExcluded }),
+      });
+      if (res.ok) { toast(op.isExcluded ? 'Transaction restored' : 'Transaction excluded', 'success'); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
+    } catch { toast('Failed to update', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function toggleTrade(t: any) {
+    setBusy(t.id);
+    try {
+      const res = await fetch(`/api/trades/${account.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tradeId: t.id, isExcluded: !t.isExcluded }),
+      });
+      if (res.ok) { toast(t.isExcluded ? 'Trade restored' : 'Trade excluded', 'success'); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
+    } catch { toast('Failed to update', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Exclusions — ${account.labelName || account.name}`} className="max-w-2xl">
+      <p className="text-xs text-text-secondary mb-3">
+        Excluded items are omitted from the API, statistics, and the balance/equity curve — with no trace visible
+        to API consumers. Toggle again to restore. Numbers recompute immediately.
+      </p>
+      {loading ? (
+        <p className="text-xs text-text-tertiary">Loading…</p>
+      ) : (
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          <div>
+            <h4 className="text-sm font-medium text-text-secondary mb-1.5">Deposits &amp; withdrawals</h4>
+            {ops.length === 0 ? (
+              <p className="text-xs text-text-tertiary">
+                None recorded. Broker transactions appear here after the next re-sync.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {ops.map((op) => (
+                  <div key={op.id} className={`flex items-center justify-between py-1.5 px-3 bg-bg-tertiary rounded-[var(--radius-md)] ${op.isExcluded ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Badge variant={op.kind === 'deposit' ? 'profit' : 'loss'}>{op.kind}</Badge>
+                      <span className="font-mono text-text-primary">{formatCurrency(op.amount)}</span>
+                      <span className="text-xs text-text-tertiary">{new Date(op.time).toLocaleDateString()}</span>
+                      {op.isExcluded && <Badge variant="warning">excluded</Badge>}
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={() => toggleOp(op)} loading={busy === op.id}>
+                      {op.isExcluded ? 'Restore' : 'Exclude'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h4 className="text-sm font-medium text-text-secondary mb-1.5">Trades (latest 100)</h4>
+            {tradeList.length === 0 ? (
+              <p className="text-xs text-text-tertiary">No trades yet.</p>
+            ) : (
+              <div className="space-y-1">
+                {tradeList.map((t) => (
+                  <div key={t.id} className={`flex items-center justify-between py-1.5 px-3 bg-bg-tertiary rounded-[var(--radius-md)] ${t.isExcluded ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-text-primary">{t.symbol}</span>
+                      <Badge variant={t.direction === 'BUY' ? 'profit' : 'loss'}>{t.direction}</Badge>
+                      <span className={`font-mono ${t.profit >= 0 ? 'text-profit-primary' : 'text-loss-primary'}`}>{formatCurrency(t.profit)}</span>
+                      <span className="text-xs text-text-tertiary">
+                        {t.closeTime ? new Date(t.closeTime).toLocaleDateString() : 'open'}
+                      </span>
+                      {t.isExcluded && <Badge variant="warning">excluded</Badge>}
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={() => toggleTrade(t)} loading={busy === t.id}>
+                      {t.isExcluded ? 'Restore' : 'Exclude'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="mt-4">
+        <Button variant="secondary" onClick={onClose} className="w-full">Done</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -418,15 +541,18 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
 
 type ApiKey = {
   id: string; name: string; prefix: string; scopes: string;
+  accountIds: string[] | null;
   lastUsedAt: string | null; expiresAt: string | null; createdAt: string;
 };
 
 // Manage per-user API keys for the public REST API (/api/v1).
-function ApiKeysSection({ toast }: { toast: (msg: string, type?: string) => void }) {
+function ApiKeysSection({ toast, accounts }: { toast: (msg: string, type?: string) => void; accounts: any[] }) {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [scope, setScope] = useState('read');
+  const [allAccounts, setAllAccounts] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [newKey, setNewKey] = useState<string | null>(null);
@@ -443,18 +569,34 @@ function ApiKeysSection({ toast }: { toast: (msg: string, type?: string) => void
   useEffect(() => { load(); }, [load]);
 
   async function create() {
+    if (!allAccounts && selectedIds.length === 0) {
+      toast('Select at least one account (or allow all)', 'error');
+      return;
+    }
     setCreating(true);
     try {
       const scopes = scope === 'write' ? ['read', 'write'] : ['read'];
       const res = await fetch('/api/api-keys', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim() || 'API key', scopes }),
+        body: JSON.stringify({
+          name: name.trim() || 'API key',
+          scopes,
+          ...(allAccounts ? {} : { accountIds: selectedIds }),
+        }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok) { setNewKey(d.key); setName(''); toast('API key created', 'success'); load(); }
+      if (res.ok) {
+        setNewKey(d.key); setName(''); setAllAccounts(true); setSelectedIds([]);
+        toast('API key created', 'success'); load();
+      }
       else { toast(d.error || 'Failed to create key', 'error'); }
     } catch { toast('Failed to create key', 'error'); }
     finally { setCreating(false); }
+  }
+
+  function accountLabel(id: string): string {
+    const acc = accounts.find((a) => a.id === id);
+    return acc ? (acc.labelName || acc.name) : 'removed account';
   }
 
   async function revoke(id: string) {
@@ -490,6 +632,35 @@ function ApiKeysSection({ toast }: { toast: (msg: string, type?: string) => void
             <Button onClick={create} loading={creating}>Create</Button>
           </div>
 
+          <div className="space-y-1.5">
+            <label className="block text-sm font-medium text-text-secondary">Account access</label>
+            <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+              <input type="checkbox" checked={allAccounts} onChange={(e) => setAllAccounts(e.target.checked)} />
+              All accounts (including ones connected later)
+            </label>
+            {!allAccounts && (
+              <div className="pl-6 space-y-1">
+                {accounts.length === 0 ? (
+                  <p className="text-xs text-text-tertiary">No accounts connected yet.</p>
+                ) : accounts.map((acc) => (
+                  <label key={acc.id} className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(acc.id)}
+                      onChange={(e) => setSelectedIds((ids) =>
+                        e.target.checked ? [...ids, acc.id] : ids.filter((i) => i !== acc.id))}
+                    />
+                    {acc.labelName || acc.name}
+                    <span className="text-xs text-text-tertiary">#{acc.labelLogin || acc.login}</span>
+                  </label>
+                ))}
+                <p className="text-xs text-text-tertiary">
+                  The key can only see the accounts ticked here — others 404 as if they don&apos;t exist.
+                </p>
+              </div>
+            )}
+          </div>
+
           {loading ? (
             <p className="text-xs text-text-tertiary">Loading…</p>
           ) : keys.length === 0 ? (
@@ -502,6 +673,12 @@ function ApiKeysSection({ toast }: { toast: (msg: string, type?: string) => void
                     <span className="text-text-primary">{k.name}</span>
                     <span className="font-mono text-xs text-text-tertiary">{k.prefix}…</span>
                     {k.scopes.split(',').map((s) => <Badge key={s} variant={s === 'write' ? 'info' : 'default'}>{s}</Badge>)}
+                    <Badge
+                      variant={k.accountIds ? 'warning' : 'default'}
+                      title={k.accountIds ? k.accountIds.map(accountLabel).join(', ') : 'Every account, including future ones'}
+                    >
+                      {k.accountIds ? `${k.accountIds.length} account${k.accountIds.length === 1 ? '' : 's'}` : 'all accounts'}
+                    </Badge>
                     <span className="text-xs text-text-tertiary">
                       {k.lastUsedAt ? `used ${new Date(k.lastUsedAt).toLocaleDateString()}` : 'never used'}
                     </span>

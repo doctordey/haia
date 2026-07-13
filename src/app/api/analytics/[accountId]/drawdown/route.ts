@@ -25,7 +25,7 @@ export async function GET(
   }
 
   const allTrades = await db.query.trades.findMany({
-    where: and(eq(trades.accountId, accountId), eq(trades.isOpen, false)),
+    where: and(eq(trades.accountId, accountId), eq(trades.isOpen, false), eq(trades.isExcluded, false)),
   });
 
   const result = calculateDrawdownSeries(

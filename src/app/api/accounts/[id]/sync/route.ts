@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { tradingAccounts, trades, dailySnapshots, accountStats } from '@/lib/db/schema';
-import { eq, and, ne, sql } from 'drizzle-orm';
+import { tradingAccounts, trades, balanceOps } from '@/lib/db/schema';
+import { eq, and, ne } from 'drizzle-orm';
 import { fetchHistoricalDeals } from '@/lib/metaapi';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
-import { calculateAccountStats } from '@/lib/calculations';
-import { format } from 'date-fns';
+import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
 export async function POST(
   _request: Request,
@@ -53,22 +52,32 @@ export async function POST(
 
     const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
 
-    // Track balance events by date for accurate daily snapshots
-    const balanceByDate = new Map<string, number>();
-
     if (deals && Array.isArray(deals)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sortedDeals = [...deals].sort(
-        (a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime()
+        (a: { time: string }, b: { time: string }) => new Date(a.time).getTime() - new Date(b.time).getTime()
       );
 
       for (const deal of sortedDeals) {
         const dealTime = new Date(deal.time);
-        const dateKey = format(dealTime, 'yyyy-MM-dd');
 
-        // Track balance operations (deposits/withdrawals) by date
+        // Deposits/withdrawals become balance_ops rows, so individual
+        // transactions can be excluded from the derived balance curve.
         if (deal.type === 'DEAL_TYPE_BALANCE') {
-          balanceByDate.set(dateKey, (balanceByDate.get(dateKey) || 0) + (deal.profit || 0));
+          const amount = deal.profit || 0;
+          await db
+            .insert(balanceOps)
+            .values({
+              accountId: id,
+              dealId: String(deal.id || deal.orderId || `${deal.time}-${amount}`),
+              kind: amount >= 0 ? 'deposit' : 'withdrawal',
+              amount,
+              time: dealTime,
+              comment: deal.comment || null,
+            })
+            .onConflictDoUpdate({
+              target: [balanceOps.accountId, balanceOps.dealId],
+              set: { amount, time: dealTime, kind: amount >= 0 ? 'deposit' : 'withdrawal' },
+            });
           continue;
         }
 
@@ -179,86 +188,16 @@ export async function POST(
     // on symbol/direction/lots/open-time — so pooled history stays clean.
     const manualReconciled = await reconcileManualDuplicates(id);
 
-    // Aggregate daily snapshots
-    const allTrades = await db.query.trades.findMany({ where: eq(trades.accountId, id) });
-    const closedTrades = allTrades.filter((t) => t.closeTime && !t.isOpen);
-    const dailyMap = new Map<string, typeof closedTrades>();
-
-    for (const trade of closedTrades) {
-      const dateKey = format(trade.closeTime!, 'yyyy-MM-dd');
-      if (!dailyMap.has(dateKey)) dailyMap.set(dateKey, []);
-      dailyMap.get(dateKey)!.push(trade);
-    }
-
-    // Seed balance from existing stats for incremental syncs
-    const existingStats = await db.query.accountStats.findFirst({
-      where: eq(accountStats.accountId, id),
-    });
-
-    const allDates = new Set([...dailyMap.keys(), ...balanceByDate.keys()]);
-    // For incremental syncs, start from the last known balance
-    let runningBalance = account.lastSyncAt && existingStats ? existingStats.balance : 0;
-
-    for (const dateKey of [...allDates].sort()) {
-      // Apply balance deposits/withdrawals for this date
-      const balanceChange = balanceByDate.get(dateKey) || 0;
-      runningBalance += balanceChange;
-
-      // Apply trade PNL for this date
-      const dayTrades = dailyMap.get(dateKey) || [];
-      const dayPnl = dayTrades.reduce((sum, t) => sum + t.profit, 0);
-      runningBalance += dayPnl;
-
-      await db
-        .insert(dailySnapshots)
-        .values({
-          accountId: id, date: dateKey, balance: runningBalance, equity: runningBalance,
-          pnl: dayPnl, tradeCount: dayTrades.length,
-          winCount: dayTrades.filter((t) => t.profit > 0).length,
-          lossCount: dayTrades.filter((t) => t.profit < 0).length,
-          volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
-          pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
-          commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
-          swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
-        })
-        .onConflictDoUpdate({
-          target: [dailySnapshots.accountId, dailySnapshots.date],
-          set: {
-            balance: runningBalance, equity: runningBalance, pnl: dayPnl,
-            tradeCount: dayTrades.length,
-            winCount: dayTrades.filter((t) => t.profit > 0).length,
-            lossCount: dayTrades.filter((t) => t.profit < 0).length,
-            volume: dayTrades.reduce((sum, t) => sum + t.lots, 0),
-            pips: dayTrades.reduce((sum, t) => sum + (t.pips || 0), 0),
-            commission: dayTrades.reduce((sum, t) => sum + t.commission, 0),
-            swap: dayTrades.reduce((sum, t) => sum + t.swap, 0),
-          },
-        });
-    }
-
-    // Calculate and store account stats
-    const stats = calculateAccountStats(
-      allTrades.map((t) => ({
-        profit: t.profit, pips: t.pips, lots: t.lots, commission: t.commission,
-        swap: t.swap, openTime: t.openTime, closeTime: t.closeTime, isOpen: t.isOpen,
-        symbol: t.symbol, direction: t.direction, entryPrice: t.entryPrice, closePrice: t.closePrice,
-      }))
-    );
-
-    await db
-      .insert(accountStats)
-      .values({ accountId: id, balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: accountStats.accountId,
-        set: { balance: runningBalance, equity: runningBalance, ...stats, lastCalculatedAt: new Date() },
-      });
+    // Snapshots + stats rebuild from trades and balance_ops, honoring
+    // exclusions — same authority every write path uses.
+    const agg = await recomputeAccountAggregates(id);
 
     await db
       .update(tradingAccounts)
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })
       .where(eq(tradingAccounts.id, id));
 
-    return NextResponse.json({ success: true, tradesImported: closedTrades.length, manualReconciled });
+    return NextResponse.json({ success: true, tradesImported: agg.closedTrades, manualReconciled });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Sync failed';
     console.error(`Sync error for account ${id}:`, message);

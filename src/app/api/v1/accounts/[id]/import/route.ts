@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateApiKey } from '@/lib/api/auth';
+import { authenticateApiKey, keyAllowsAccount } from '@/lib/api/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
@@ -18,9 +18,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
-  const account = await db.query.tradingAccounts.findFirst({
-    where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, auth.userId)),
-  });
+  // Restricted keys 404 like a missing account (no probing for other ids).
+  const account = keyAllowsAccount(auth, id)
+    ? await db.query.tradingAccounts.findFirst({
+        where: and(eq(tradingAccounts.id, id), eq(tradingAccounts.userId, auth.userId)),
+      })
+    : undefined;
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 });
 
   return runHistoryImport(id, request);

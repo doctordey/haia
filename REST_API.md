@@ -31,9 +31,13 @@ All responses are `application/json`. Timestamps in responses are ISO 8601 UTC
 (`2024-01-02T12:00:00.000Z`). Date filters (`from`/`to`) accept ISO 8601 **or**
 epoch (milliseconds; seconds if ≤10 digits).
 
-A public, no-auth **discovery endpoint** at `GET /api/v1` (or `/v1` on a
-dedicated API host) returns this same information as JSON — auth, endpoints, and
-a field data dictionary — so a consumer can self-serve without this file.
+Three public, no-auth self-description views (all generated from one source):
+
+- `GET /api/v1` (or `/v1` on a dedicated API host) — machine-readable JSON index.
+- `GET /api/v1/docs` — **human-readable HTML documentation** — the link to hand
+  to consumers.
+- `GET /api/v1/openapi.json` — OpenAPI 3.0 spec, importable into Postman,
+  Insomnia, or code generators.
 
 Scopes:
 

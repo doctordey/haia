@@ -76,9 +76,13 @@ describe('parseMt5Csv', () => {
       '1,2024-01-01,,balance,,,1000',
       '2,2024-01-02,EURUSD,buy,0.1,1.1,5',
     ].join('\n');
-    const { rows, skipped } = parseMt5Csv(csv);
+    const { rows, skipped, balanceOps } = parseMt5Csv(csv);
     expect(rows).toHaveLength(1);
-    expect(skipped).toBe(1);
+    // Balance rows are no longer merely skipped — they're captured as
+    // deposit/withdrawal operations (idempotent on the broker deal id).
+    expect(skipped).toBe(0);
+    expect(balanceOps).toHaveLength(1);
+    expect(balanceOps[0]).toMatchObject({ dealId: '1', amount: 1000 });
   });
 });
 

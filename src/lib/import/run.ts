@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { tradingAccounts } from '@/lib/db/schema';
+import { tradingAccounts, balanceOps } from '@/lib/db/schema';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { normalizeTrade, upsertTrades, type TradeInput, type NormalizedTrade } from '@/lib/trades/ingest';
-import { cleanImportText, parseMt5Csv, parseMt5Html, parseTradesJson } from '@/lib/import/mt5';
+import { cleanImportText, parseMt5Csv, parseMt5Html, parseTradesJson, type Mt5BalanceOp } from '@/lib/import/mt5';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
@@ -35,6 +35,7 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
   const contentType = request.headers.get('content-type') || '';
   const warnings: string[] = [];
   let inputs: TradeInput[] = [];
+  let importOps: Mt5BalanceOp[] = [];
   let skipped = 0;
   let format: 'json' | 'html' | 'csv' = 'csv';
 
@@ -50,19 +51,21 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
         format = 'html';
         const result = parseMt5Html(text);
         inputs = result.rows; skipped = result.skipped; warnings.push(...result.warnings);
+        importOps = result.balanceOps;
       } else if (text.startsWith('[') || text.startsWith('{')) {
         format = 'json';
         inputs = parseTradesJson(JSON.parse(text));
       } else {
         const result = parseMt5Csv(text);
         inputs = result.rows; skipped = result.skipped; warnings.push(...result.warnings);
+        importOps = result.balanceOps;
       }
     }
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Failed to parse import' }, { status: 400 });
   }
 
-  if (inputs.length === 0) {
+  if (inputs.length === 0 && importOps.length === 0) {
     return NextResponse.json({ error: 'No importable trades found', format, skipped, warnings }, { status: 400 });
   }
 
@@ -76,11 +79,31 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     }
   }
 
-  if (normalized.length === 0) {
+  if (normalized.length === 0 && importOps.length === 0) {
     return NextResponse.json({ error: 'No valid trades to import', format, details: errors.slice(0, 20) }, { status: 400 });
   }
 
   const inserted = await upsertTrades(normalized);
+
+  // Deposits/withdrawals from the report's Deals section — upserted by the
+  // broker's real deal id, so a later live sync seeing the same deals merges
+  // instead of duplicating.
+  for (const op of importOps) {
+    await db
+      .insert(balanceOps)
+      .values({
+        accountId,
+        dealId: op.dealId,
+        kind: op.amount >= 0 ? 'deposit' : 'withdrawal',
+        amount: op.amount,
+        time: new Date(op.time),
+        comment: op.comment,
+      })
+      .onConflictDoUpdate({
+        target: [balanceOps.accountId, balanceOps.dealId],
+        set: { amount: op.amount, time: new Date(op.time), kind: op.amount >= 0 ? 'deposit' : 'withdrawal', comment: op.comment },
+      });
+  }
 
   // If part of the imported window was already live-synced under different
   // tickets, drop the redundant manual copies.
@@ -90,10 +113,10 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
   // the next sync picks up exactly where the upload ended.
   let syncCursorAdvancedTo: Date | null = null;
   if (advanceSync) {
-    const latest = normalized.reduce<Date | null>((max, t) => {
-      const ts = t.closeTime ?? t.openTime;
-      return !max || ts > max ? ts : max;
-    }, null);
+    const latest = [
+      ...normalized.map((t) => t.closeTime ?? t.openTime),
+      ...importOps.map((op) => new Date(op.time)),
+    ].reduce<Date | null>((max, ts) => (!max || ts > max ? ts : max), null);
     if (latest) {
       const moved = await db
         .update(tradingAccounts)
@@ -118,6 +141,7 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     success: true,
     format,
     imported: inserted,
+    transactionsImported: importOps.length,
     deduplicated,
     skipped,
     failed: errors.length,

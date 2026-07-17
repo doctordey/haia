@@ -19,10 +19,19 @@ import type { TradeInput } from '@/lib/trades/ingest';
  *    to it). Lightly normalized here; full validation happens in `normalizeTrade`.
  */
 
+export interface Mt5BalanceOp {
+  dealId: string;         // broker deal id (idempotent upsert key)
+  amount: number;         // signed: deposits +, withdrawals −
+  time: string;           // normalized date string
+  comment: string | null;
+}
+
 export interface Mt5ParseResult {
   rows: TradeInput[];
   skipped: number;     // non-trade / non-parseable data lines skipped
   warnings: string[];
+  /** Deposits/withdrawals found in the report's Deals section (HTML) or balance rows (CSV). */
+  balanceOps: Mt5BalanceOp[];
 }
 
 // ── Text cleanup ────────────────────────────────────────────────────────────
@@ -127,6 +136,40 @@ function normDate(s: string | undefined): string | null {
   return t || null;
 }
 
+// A balance operation (deposit/withdrawal/credit) from a canonical-field
+// record, or null if the row isn't one. The amount lives in the Profit column;
+// the Deal/Ticket column carries the broker's real deal id.
+function balanceOpFromRec(rec: Record<string, string>): Mt5BalanceOp | null {
+  const type = (rec.type || '').toLowerCase();
+  if (!/^(balance|credit|deposit|withdrawal)/.test(type)) return null;
+  const amount = parseNum(rec.profit);
+  const time = normDate(rec.opentime);
+  if (amount == null || amount === 0 || !time || !rec.ticket) return null;
+  return { dealId: rec.ticket, amount, time, comment: rec.comment || null };
+}
+
+// Scan every table section for balance operations. Each header row that maps
+// ticket + type + profit starts a section; its data rows are mapped
+// first-occurrence-wins (the Deals section has both Type and Direction, which
+// canonicalize to the same field — the first, real Type must win).
+function collectBalanceOps(allRows: string[][]): Mt5BalanceOp[] {
+  const ops: Mt5BalanceOp[] = [];
+  let plan: (string | null)[] | null = null;
+  for (const cells of allRows) {
+    const p = buildPlan(cells);
+    if (p.filter(Boolean).length >= 4 && p.includes('ticket') && p.includes('type') && p.includes('profit')) {
+      plan = p;
+      continue;
+    }
+    if (!plan || cells.length < 4) continue;
+    const rec: Record<string, string> = {};
+    plan.forEach((field, idx) => { if (field && !(field in rec)) rec[field] = cells[idx] ?? ''; });
+    const op = balanceOpFromRec(rec);
+    if (op) ops.push(op);
+  }
+  return ops;
+}
+
 // Build a TradeInput from a canonical-field record. Returns null for rows that
 // aren't trades (balance/credit operations, summaries, blank lines).
 function recordToTrade(rec: Record<string, string>): TradeInput | null {
@@ -163,7 +206,7 @@ export function parseMt5Csv(text: string): Mt5ParseResult {
   const warnings: string[] = [];
   const lines = cleanImportText(text).split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length < 2) {
-    return { rows: [], skipped: 0, warnings: ['No data rows found in CSV.'] };
+    return { rows: [], skipped: 0, warnings: ['No data rows found in CSV.'], balanceOps: [] };
   }
 
   const delim = detectDelimiter(lines[0]);
@@ -174,19 +217,27 @@ export function parseMt5Csv(text: string): Mt5ParseResult {
   }
 
   const rows: TradeInput[] = [];
+  const balanceOps: Mt5BalanceOp[] = [];
   let skipped = 0;
 
   for (let i = 1; i < lines.length; i++) {
     const cells = splitCsvLine(lines[i], delim);
     const rec: Record<string, string> = {};
-    plan.forEach((field, idx) => { if (field) rec[field] = cells[idx] ?? ''; });
+    const recFirst: Record<string, string> = {};
+    plan.forEach((field, idx) => {
+      if (!field) return;
+      rec[field] = cells[idx] ?? '';
+      if (!(field in recFirst)) recFirst[field] = cells[idx] ?? '';
+    });
 
     const trade = recordToTrade(rec);
-    if (trade) rows.push(trade);
+    if (trade) { rows.push(trade); continue; }
+    const op = balanceOpFromRec(recFirst);
+    if (op) balanceOps.push(op);
     else skipped++;
   }
 
-  return { rows, skipped, warnings };
+  return { rows, skipped, warnings, balanceOps };
 }
 
 // ── HTML (MT5 "Report → HTML" / MT4 statement) ─────────────────────────────
@@ -222,6 +273,10 @@ function extractRows(html: string): string[][] {
 export function parseMt5Html(html: string): Mt5ParseResult {
   const allRows = extractRows(cleanImportText(html));
 
+  // Deposits/withdrawals live in the report's Deals section — collect them
+  // across every table section, independent of the Positions parse below.
+  const balanceOps = collectBalanceOps(allRows);
+
   // Locate the trade table by scoring candidate header rows. The Positions
   // table (what we want) has both open and close time/price pairs, which
   // outranks the Orders/Deals sections' headers.
@@ -239,8 +294,10 @@ export function parseMt5Html(html: string): Mt5ParseResult {
 
   if (!best) {
     return {
-      rows: [], skipped: 0,
-      warnings: ['No recognizable trade table found in HTML — expected an MT5/MT4 report with Symbol/Type/Price columns.'],
+      rows: [], skipped: 0, balanceOps,
+      warnings: balanceOps.length
+        ? []
+        : ['No recognizable trade table found in HTML — expected an MT5/MT4 report with Symbol/Type/Price columns.'],
     };
   }
 
@@ -283,7 +340,7 @@ export function parseMt5Html(html: string): Mt5ParseResult {
     else skipped++;
   }
 
-  return { rows, skipped, warnings: [] };
+  return { rows, skipped, warnings: [], balanceOps };
 }
 
 // ── JSON ───────────────────────────────────────────────────────────────────

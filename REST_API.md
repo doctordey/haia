@@ -142,7 +142,10 @@ trades. The format is auto-detected from Content-Type and the body itself:
 - **HTML** (`text/html`, or body starts with `<`) — the MT5 report statement
   (MT4 statements work too). The Positions table is located by its header row;
   section titles, pending orders, and summary rows are skipped. UTF-16 encoded
-  files (MT5's default save format) are handled.
+  files (MT5's default save format) are handled. **Deposits/withdrawals in the
+  report's Deals section are captured as transactions** (keyed by the broker's
+  real deal ids, so re-imports and later live syncs merge instead of
+  duplicating) and immediately served by the transactions endpoint.
 - **CSV** (`text/csv` / `text/plain`) — columns matched by header name
   (case-insensitive). MT5's repeated `Time`/`Price` columns are read as open
   then close. Non-trade rows (balance/credit) are skipped.

@@ -603,6 +603,7 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
         const extras = [
+          d.transactionsImported ? `${d.transactionsImported} deposit/withdrawal(s)` : '',
           d.deduplicated ? `${d.deduplicated} merged with live` : '',
           d.skipped ? `skipped ${d.skipped}` : '',
         ].filter(Boolean).join(', ');

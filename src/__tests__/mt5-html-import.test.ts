@@ -14,6 +14,11 @@ const MT5_REPORT = `
 <tr><td colspan="13"><b>Orders</b></td></tr>
 <tr align="center"><th>Open Time</th><th>Order</th><th>Symbol</th><th>Type</th><th>Volume</th><th>Price</th><th>S / L</th><th>T / P</th><th>Time</th><th>State</th><th>Comment</th></tr>
 <tr align="right"><td>2024.01.04 10:00:00</td><td>401</td><td>EURUSD</td><td>buy limit</td><td>0.10</td><td>1.09000</td><td></td><td></td><td>2024.01.04 10:00:00</td><td>canceled</td><td></td></tr>
+<tr><td colspan="15"><b>Deals</b></td></tr>
+<tr align="center"><th>Time</th><th>Deal</th><th>Symbol</th><th>Type</th><th>Direction</th><th>Volume</th><th>Price</th><th>Order</th><th>Cost</th><th>Commission</th><th>Fee</th><th>Swap</th><th>Profit</th><th>Balance</th><th>Comment</th></tr>
+<tr align="right"><td>2024.01.01 12:00:00</td><td>90001</td><td></td><td>balance</td><td></td><td></td><td></td><td></td><td></td><td>0.00</td><td>0.00</td><td>0.00</td><td>15&nbsp;000.00</td><td>15&nbsp;000.00</td><td>wire #ABC123</td></tr>
+<tr align="right"><td>2024.01.05 12:00:00</td><td>90002</td><td></td><td>balance</td><td></td><td></td><td></td><td></td><td></td><td>0.00</td><td>0.00</td><td>0.00</td><td>-5&nbsp;000.00</td><td>10&nbsp;000.00</td><td>withdrawal #XYZ</td></tr>
+<tr align="right"><td>2024.01.02 10:00:00</td><td>90003</td><td>EURUSD</td><td>buy</td><td>in</td><td>0.10</td><td>1.10000</td><td>77</td><td>0</td><td>-0.50</td><td>0</td><td>0</td><td>0.00</td><td></td><td></td></tr>
 </table>
 </body></html>`;
 
@@ -51,6 +56,14 @@ describe('parseMt5Html', () => {
     const { rows, warnings } = parseMt5Html('<html><body><p>hello</p></body></html>');
     expect(rows).toHaveLength(0);
     expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('captures deposits/withdrawals from the Deals section (real deal ids, trade deals excluded)', () => {
+    const { balanceOps } = parseMt5Html(MT5_REPORT);
+    expect(balanceOps).toHaveLength(2);
+    expect(balanceOps[0]).toMatchObject({ dealId: '90001', amount: 15000, comment: 'wire #ABC123' });
+    expect(balanceOps[1]).toMatchObject({ dealId: '90002', amount: -5000 });
+    expect(balanceOps[0].time).toBe('2024-01-01 12:00:00');
   });
 
   // Real MT5 ReportHistory exports (e.g. FusionMarkets): the header row has 13

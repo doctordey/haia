@@ -156,6 +156,11 @@ Query params:
 
 - `?openingBalance=10000` — anchors the rebuilt equity curve.
 - `?advanceSync=false` — disables the automatic sync-cursor handoff (below).
+- `?preserveBalance=1` — keeps the account's total balance exactly as-is:
+  newly captured deposits/withdrawals are absorbed into the opening anchor
+  (anchor decreases by the recorded amount), so they become itemised
+  transactions with **zero effect on the balance**. Use when the balance is
+  already correct and the funding was previously part of the anchor.
 
 ```json
 { "success": true, "format": "html", "imported": 42, "deduplicated": 0,

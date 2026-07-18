@@ -577,6 +577,7 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
 function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
   const [text, setText] = useState('');
   const [openingBalance, setOpeningBalance] = useState('');
+  const [preserveBalance, setPreserveBalance] = useState(false);
   const [importing, setImporting] = useState(false);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -594,7 +595,10 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
       const contentType = cleaned.startsWith('<') ? 'text/html'
         : cleaned.startsWith('[') || cleaned.startsWith('{') ? 'application/json'
         : 'text/csv';
-      const qs = openingBalance ? `?openingBalance=${encodeURIComponent(openingBalance)}` : '';
+      const params = new URLSearchParams();
+      if (openingBalance) params.set('openingBalance', openingBalance);
+      if (preserveBalance) params.set('preserveBalance', '1');
+      const qs = params.size ? `?${params.toString()}` : '';
       const res = await fetch(`/api/accounts/${account.id}/import${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': contentType },
@@ -636,6 +640,13 @@ function ImportModal({ account, onClose, onSaved, toast }: ManageModalProps) {
         />
         <Input label="Opening balance (optional)" type="number" step="0.01" placeholder="anchors the equity curve"
           value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} />
+        <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer">
+          <input type="checkbox" className="mt-0.5" checked={preserveBalance} onChange={(e) => setPreserveBalance(e.target.checked)} />
+          <span>
+            <strong>Keep current balance.</strong> Newly captured deposits/withdrawals are absorbed into the opening
+            anchor, so the account balance does not change — they just become visible as itemised transactions.
+          </span>
+        </label>
       </div>
       <div className="flex gap-2 mt-5">
         <Button variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>

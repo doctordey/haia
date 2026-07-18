@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { tradingAccounts, balanceOps } from '@/lib/db/schema';
-import { and, eq, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import { normalizeTrade, upsertTrades, type TradeInput, type NormalizedTrade } from '@/lib/trades/ingest';
 import { cleanImportText, parseMt5Csv, parseMt5Html, parseTradesJson, type Mt5BalanceOp } from '@/lib/import/mt5';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
@@ -31,6 +31,11 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
   const obRaw = searchParams.get('openingBalance');
   const openingBalance = obRaw != null && obRaw !== '' && Number.isFinite(Number(obRaw)) ? Number(obRaw) : undefined;
   const advanceSync = searchParams.get('advanceSync') !== 'false';
+  // preserveBalance=1: keep the account's total balance EXACTLY as it is by
+  // absorbing newly captured deposits/withdrawals into the opening anchor
+  // (anchor -= delta of recorded transactions). For accounts whose anchor
+  // already accounts for funding that is only now becoming itemised records.
+  const preserveBalance = ['1', 'true'].includes(searchParams.get('preserveBalance') || '');
 
   const contentType = request.headers.get('content-type') || '';
   const warnings: string[] = [];
@@ -85,6 +90,17 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
 
   const inserted = await upsertTrades(normalized);
 
+  // For preserve-balance accounting: measure the recorded-transaction total
+  // before and after the upserts; the anchor absorbs exactly the difference.
+  const sumOps = async () => {
+    const [row] = await db
+      .select({ s: sql<number>`coalesce(sum(${balanceOps.amount}), 0)` })
+      .from(balanceOps)
+      .where(eq(balanceOps.accountId, accountId));
+    return Number(row?.s ?? 0);
+  };
+  const opsSumBefore = preserveBalance && importOps.length > 0 ? await sumOps() : 0;
+
   // Deposits/withdrawals from the report's Deals section — upserted by the
   // broker's real deal id, so a later live sync seeing the same deals merges
   // instead of duplicating.
@@ -103,6 +119,21 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
         target: [balanceOps.accountId, balanceOps.dealId],
         set: { amount: op.amount, time: new Date(op.time), kind: op.amount >= 0 ? 'deposit' : 'withdrawal', comment: op.comment },
       });
+  }
+
+  // Preserve-balance: shift the anchor by exactly the newly recorded amount so
+  // opening + Σops + PnL is unchanged — the funding moves from "unattributed
+  // anchor" to itemised transactions with zero effect on the total.
+  let anchorAdjustedBy = 0;
+  if (preserveBalance && importOps.length > 0) {
+    const delta = (await sumOps()) - opsSumBefore;
+    if (delta !== 0) {
+      await db
+        .update(tradingAccounts)
+        .set({ openingBalance: sql`${tradingAccounts.openingBalance} - ${delta}` })
+        .where(eq(tradingAccounts.id, accountId));
+      anchorAdjustedBy = -delta;
+    }
   }
 
   // If part of the imported window was already live-synced under different
@@ -142,6 +173,7 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     format,
     imported: inserted,
     transactionsImported: importOps.length,
+    anchorAdjustedBy,
     deduplicated,
     skipped,
     failed: errors.length,

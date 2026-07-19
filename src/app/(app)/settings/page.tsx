@@ -259,18 +259,24 @@ function AccountsSection({ accounts, onRefetch, toast }: { accounts: any[]; onRe
 function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
   const [ops, setOps] = useState<any[]>([]);
   const [tradeList, setTradeList] = useState<any[]>([]);
+  const [orderList, setOrderList] = useState<any[]>([]);
+  const [dealList, setDealList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [o, t] = await Promise.all([
+      const [o, t, or, de] = await Promise.all([
         fetch(`/api/accounts/${account.id}/balance-ops`),
         fetch(`/api/trades/${account.id}?type=all&limit=100`),
+        fetch(`/api/accounts/${account.id}/orders`),
+        fetch(`/api/accounts/${account.id}/deals`),
       ]);
       if (o.ok) setOps((await o.json()).ops || []);
       if (t.ok) setTradeList((await t.json()).trades || []);
+      if (or.ok) setOrderList((await or.json()).orders || []);
+      if (de.ok) setDealList((await de.json()).deals || []);
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [account.id]);
@@ -299,6 +305,32 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
       });
       if (res.ok) { toast(t.isExcluded ? 'Trade visible via API again' : 'Trade hidden from API', 'success'); load(); }
       else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
+    } catch { toast('Failed to update', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function toggleOrder(o: any) {
+    setBusy(o.id);
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/orders`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.id, isExcluded: !o.isExcluded }),
+      });
+      if (res.ok) { toast(o.isExcluded ? 'Order transmitted via API again' : 'Order hidden from API', 'success'); load(); }
+      else { const d = await res.json().catch(() => ({})); toast(d.error || 'Failed to update', 'error'); }
+    } catch { toast('Failed to update', 'error'); }
+    finally { setBusy(null); }
+  }
+
+  async function toggleDeal(d: any) {
+    setBusy(d.id);
+    try {
+      const res = await fetch(`/api/accounts/${account.id}/deals`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dealId: d.id, isExcluded: !d.isExcluded }),
+      });
+      if (res.ok) { toast(d.isExcluded ? 'Deal transmitted via API again' : 'Deal hidden from API', 'success'); load(); }
+      else { const e = await res.json().catch(() => ({})); toast(e.error || 'Failed to update', 'error'); }
     } catch { toast('Failed to update', 'error'); }
     finally { setBusy(null); }
   }
@@ -404,6 +436,58 @@ function ExclusionsModal({ account, onClose, toast }: ManageModalProps) {
                     </div>
                     <Button variant="secondary" size="sm" onClick={() => toggleTrade(t)} loading={busy === t.id}>
                       {t.isExcluded ? 'Show' : 'Hide'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h4 className="text-sm font-medium text-text-secondary mb-1.5">Orders (latest 200)</h4>
+            {orderList.length === 0 ? (
+              <p className="text-xs text-text-tertiary">None recorded. Orders appear after a statement import.</p>
+            ) : (
+              <div className="space-y-1">
+                {orderList.map((o) => (
+                  <div key={o.id} className={`flex items-center justify-between py-1.5 px-3 bg-bg-tertiary rounded-[var(--radius-md)] ${o.isExcluded ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-text-primary">{o.symbol}</span>
+                      <Badge variant={o.type.startsWith('buy') ? 'profit' : 'loss'}>{o.type}</Badge>
+                      <span className="text-xs text-text-tertiary">{o.state}</span>
+                      <span className="font-mono text-xs text-text-tertiary">#{o.ticket}</span>
+                      <span className="text-xs text-text-tertiary">{new Date(o.setupTime).toLocaleDateString()}</span>
+                      {o.isExcluded && <Badge variant="warning">hidden</Badge>}
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={() => toggleOrder(o)} loading={busy === o.id}>
+                      {o.isExcluded ? 'Show' : 'Hide'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h4 className="text-sm font-medium text-text-secondary mb-1.5">Deals (latest 200)</h4>
+            {dealList.length === 0 ? (
+              <p className="text-xs text-text-tertiary">None recorded. Deals appear after a statement import.</p>
+            ) : (
+              <div className="space-y-1">
+                {dealList.map((d) => (
+                  <div key={d.id} className={`flex items-center justify-between py-1.5 px-3 bg-bg-tertiary rounded-[var(--radius-md)] ${(d.isExcluded || d.autoHidden) ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-text-primary">{d.symbol || '—'}</span>
+                      <Badge variant={d.type === 'buy' ? 'profit' : d.type === 'sell' ? 'loss' : 'default'}>{d.type}</Badge>
+                      {d.direction && <span className="text-xs text-text-tertiary">{d.direction}</span>}
+                      {d.profit != null && (
+                        <span className={`font-mono ${d.profit >= 0 ? 'text-profit-primary' : 'text-loss-primary'}`}>{formatCurrency(d.profit)}</span>
+                      )}
+                      <span className="font-mono text-xs text-text-tertiary">#{d.dealId}</span>
+                      <span className="text-xs text-text-tertiary">{new Date(d.time).toLocaleDateString()}</span>
+                      {d.isExcluded && <Badge variant="warning">hidden</Badge>}
+                      {!d.isExcluded && d.autoHidden && <Badge variant="warning">hidden via transaction</Badge>}
+                    </div>
+                    <Button variant="secondary" size="sm" onClick={() => toggleDeal(d)} loading={busy === d.id}>
+                      {d.isExcluded ? 'Show' : 'Hide'}
                     </Button>
                   </div>
                 ))}

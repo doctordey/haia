@@ -3,9 +3,10 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { tradingAccounts, trades, balanceOps } from '@/lib/db/schema';
 import { eq, and, ne, or, lt } from 'drizzle-orm';
-import { fetchHistoricalDeals } from '@/lib/metaapi';
+import { fetchHistoricalActivity } from '@/lib/metaapi';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
+import { recordLiveDeals, recordLiveOrders } from '@/lib/accounts/ledger';
 
 // A "syncing" claim older than this is considered dead and can be reclaimed.
 const STALE_SYNC_MS = 15 * 60_000;
@@ -56,7 +57,19 @@ export async function POST(
     const endDate = new Date();
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
-    const deals = await fetchHistoricalDeals(account.metaApiId, startDate, endDate);
+    const { deals, historyOrders } = await fetchHistoricalActivity(account.metaApiId, startDate, endDate);
+
+    // Ledger recording (orders/deals distribute endpoints) — best-effort so a
+    // hiccup here can't fail the balance/trade sync.
+    let ledger = { orders: 0, deals: 0 };
+    try {
+      ledger = {
+        deals: await recordLiveDeals(id, deals),
+        orders: await recordLiveOrders(id, historyOrders),
+      };
+    } catch (e) {
+      console.warn(`Ledger recording failed for account ${id}:`, e instanceof Error ? e.message : e);
+    }
 
     if (deals && Array.isArray(deals)) {
       const sortedDeals = [...deals].sort(
@@ -203,7 +216,13 @@ export async function POST(
       .set({ syncStatus: 'synced', lastSyncAt: new Date(), syncError: null })
       .where(eq(tradingAccounts.id, id));
 
-    return NextResponse.json({ success: true, tradesImported: agg.closedTrades, manualReconciled });
+    return NextResponse.json({
+      success: true,
+      tradesImported: agg.closedTrades,
+      manualReconciled,
+      ordersRecorded: ledger.orders,
+      dealsRecorded: ledger.deals,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Sync failed';
     console.error(`Sync error for account ${id}:`, message);

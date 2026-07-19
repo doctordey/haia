@@ -64,7 +64,12 @@ export async function getAccountConnection(metaApiId: string) {
   return { account, connection };
 }
 
-export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, endDate: Date) {
+/**
+ * Deals + history orders for a time range on one RPC connection. `historyOrders`
+ * is null when that fetch fails — callers treat it as best-effort (the deal
+ * stream is the balance authority; order history only feeds the ledger).
+ */
+export async function fetchHistoricalActivity(metaApiId: string, startDate: Date, endDate: Date) {
   const api = await getMetaApi();
   const account = await api.metatraderAccountApi.getAccount(metaApiId);
 
@@ -76,10 +81,21 @@ export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, e
   try {
     await withTimeout(connection.connect(), SYNC_STEP_TIMEOUT_MS, 'rpc connect');
     await withTimeout(connection.waitSynchronized(), SYNC_STEP_TIMEOUT_MS, 'history sync');
-    return await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
+    const deals = await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
+    let historyOrders: unknown = null;
+    try {
+      historyOrders = await withTimeout(connection.getHistoryOrdersByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'orders fetch');
+    } catch {
+      // best-effort — see doc comment
+    }
+    return { deals, historyOrders };
   } finally {
     try { await connection.close(); } catch {}
   }
+}
+
+export async function fetchHistoricalDeals(metaApiId: string, startDate: Date, endDate: Date) {
+  return (await fetchHistoricalActivity(metaApiId, startDate, endDate)).deals;
 }
 
 /** Reject if `p` doesn't settle within `ms` — bounds slow MetaApi RPC steps so a

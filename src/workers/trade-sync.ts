@@ -11,6 +11,7 @@ import { eq, and, ne, or, lt } from 'drizzle-orm';
 import { getMetaApi, withTimeout, SYNC_STEP_TIMEOUT_MS } from '../lib/metaapi';
 import { reconcileManualDuplicates } from '../lib/trades/reconcile';
 import { recomputeAccountAggregates } from '../lib/accounts/aggregate';
+import { recordLiveDeals, recordLiveOrders } from '../lib/accounts/ledger';
 import { installMetaApiLogFilter } from '../lib/log-filter';
 
 // Drop MetaApi's engine.io reconnect spam before any connection is opened.
@@ -70,6 +71,23 @@ async function syncAccount(accountId: string) {
     const startDate = account.lastSyncAt ? new Date(account.lastSyncAt) : new Date(Date.now() - 2 * 365 * 86400000);
 
     const deals = await withTimeout(connection.getDealsByTimeRange(startDate, endDate), SYNC_STEP_TIMEOUT_MS, 'deals fetch');
+
+    // Ledger recording (orders/deals distribute endpoints) — best-effort: a
+    // failure here must not stall the balance/trade sync below.
+    try {
+      const dealCount = await recordLiveDeals(accountId, deals);
+      const historyOrders = await withTimeout(
+        connection.getHistoryOrdersByTimeRange(startDate, endDate),
+        SYNC_STEP_TIMEOUT_MS,
+        'orders fetch',
+      );
+      const orderCount = await recordLiveOrders(accountId, historyOrders);
+      if (dealCount || orderCount) {
+        console.log(`[sync] Ledger for ${account.name}: ${orderCount} orders, ${dealCount} deals`);
+      }
+    } catch (e) {
+      console.warn(`[sync] Ledger recording failed for ${account.name}:`, e instanceof Error ? e.message : e);
+    }
 
     if (deals && Array.isArray(deals)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -66,6 +66,45 @@ describe('parseMt5Html', () => {
     expect(balanceOps[0].time).toBe('2024-01-01 12:00:00');
   });
 
+  it('captures the Orders section (its header is the one with a State column)', () => {
+    const { orders } = parseMt5Html(MT5_REPORT);
+    expect(orders).toHaveLength(1);
+    expect(orders[0]).toMatchObject({
+      ticket: '401', symbol: 'EURUSD', type: 'buy limit', state: 'canceled',
+      price: 1.09, lotsFilled: 0.1, lotsRequested: 0.1,
+      setupTime: '2024-01-04 10:00:00', doneTime: '2024-01-04 10:00:00',
+    });
+  });
+
+  it('captures the full Deals ledger (balance and trade deals, with order linkage)', () => {
+    const { deals } = parseMt5Html(MT5_REPORT);
+    expect(deals).toHaveLength(3);
+    expect(deals[0]).toMatchObject({ dealId: '90001', type: 'balance', symbol: null, profit: 15000, balance: 15000 });
+    expect(deals[1]).toMatchObject({ dealId: '90002', type: 'balance', profit: -5000 });
+    expect(deals[2]).toMatchObject({
+      dealId: '90003', symbol: 'EURUSD', type: 'buy', direction: 'in',
+      lots: 0.1, price: 1.1, orderTicket: '77', commission: -0.5, balance: null,
+    });
+    expect(deals[2].time).toBe('2024-01-02 10:00:00');
+  });
+
+  // Real reports end with a Results block ("Total Net Profit: | 692 395.85 |
+  // …") whose rows have enough cells to masquerade as deal data. Numeric deal
+  // ids + parseable timestamps must keep them out.
+  it('rejects the summary rows that follow the Deals table', () => {
+    const html = `
+<table>
+<tr><td colspan="15"><b>Deals</b></td></tr>
+<tr><th>Time</th><th>Deal</th><th>Symbol</th><th>Type</th><th>Direction</th><th>Volume</th><th>Price</th><th>Order</th><th>Commission</th><th>Fee</th><th>Swap</th><th>Profit</th><th>Balance</th><th>Comment</th></tr>
+<tr><td>2026.05.12 07:49:33</td><td>865298691</td><td>XAUUSD</td><td>sell</td><td>in</td><td>18.22</td><td>4719.88</td><td>878696523</td><td>-40.99</td><td>0.00</td><td>0.00</td><td>0.00</td><td>12&nbsp;232&nbsp;063.70</td><td></td></tr>
+<tr><td>Total Net Profit:</td><td>692&nbsp;395.85</td><td>Gross Profit:</td><td>835&nbsp;420.61</td><td>Gross Loss:</td><td>-132&nbsp;033.95</td></tr>
+<tr><td>Profit Factor:</td><td>6.33</td><td>Expected Payoff:</td><td>69&nbsp;239.59</td></tr>
+</table>`;
+    const { deals } = parseMt5Html(html);
+    expect(deals).toHaveLength(1);
+    expect(deals[0].dealId).toBe('865298691');
+  });
+
   // Real MT5 ReportHistory exports (e.g. FusionMarkets): the header row has 13
   // cells (last one colspan=2) while data rows have 14 — an empty spacer cell
   // after Type — shifting every column from Volume onward. Regression for the

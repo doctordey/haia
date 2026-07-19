@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { tradingAccounts, balanceOps } from '@/lib/db/schema';
+import { tradingAccounts, balanceOps, orders, deals } from '@/lib/db/schema';
 import { and, eq, isNull, lt, or } from 'drizzle-orm';
 import { normalizeTrade, upsertTrades, type TradeInput, type NormalizedTrade } from '@/lib/trades/ingest';
-import { cleanImportText, parseMt5Csv, parseMt5Html, parseTradesJson, type Mt5BalanceOp } from '@/lib/import/mt5';
+import { cleanImportText, parseMt5Csv, parseMt5Html, parseTradesJson, type Mt5BalanceOp, type Mt5Order, type Mt5Deal } from '@/lib/import/mt5';
 import { reconcileManualDuplicates } from '@/lib/trades/reconcile';
 import { recomputeAccountAggregates } from '@/lib/accounts/aggregate';
 
@@ -36,6 +36,8 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
   const warnings: string[] = [];
   let inputs: TradeInput[] = [];
   let importOps: Mt5BalanceOp[] = [];
+  let importOrders: Mt5Order[] = [];
+  let importDeals: Mt5Deal[] = [];
   let skipped = 0;
   let format: 'json' | 'html' | 'csv' = 'csv';
 
@@ -51,21 +53,21 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
         format = 'html';
         const result = parseMt5Html(text);
         inputs = result.rows; skipped = result.skipped; warnings.push(...result.warnings);
-        importOps = result.balanceOps;
+        importOps = result.balanceOps; importOrders = result.orders; importDeals = result.deals;
       } else if (text.startsWith('[') || text.startsWith('{')) {
         format = 'json';
         inputs = parseTradesJson(JSON.parse(text));
       } else {
         const result = parseMt5Csv(text);
         inputs = result.rows; skipped = result.skipped; warnings.push(...result.warnings);
-        importOps = result.balanceOps;
+        importOps = result.balanceOps; importOrders = result.orders; importDeals = result.deals;
       }
     }
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Failed to parse import' }, { status: 400 });
   }
 
-  if (inputs.length === 0 && importOps.length === 0) {
+  if (inputs.length === 0 && importOps.length === 0 && importOrders.length === 0 && importDeals.length === 0) {
     return NextResponse.json({ error: 'No importable trades found', format, skipped, warnings }, { status: 400 });
   }
 
@@ -79,7 +81,7 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     }
   }
 
-  if (normalized.length === 0 && importOps.length === 0) {
+  if (normalized.length === 0 && importOps.length === 0 && importOrders.length === 0 && importDeals.length === 0) {
     return NextResponse.json({ error: 'No valid trades to import', format, details: errors.slice(0, 20) }, { status: 400 });
   }
 
@@ -103,6 +105,69 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
         target: [balanceOps.accountId, balanceOps.dealId],
         set: { amount: op.amount, time: new Date(op.time), kind: op.amount >= 0 ? 'deposit' : 'withdrawal', comment: op.comment },
       });
+  }
+
+  // Order records from the report's Orders section — upserted by the broker's
+  // real order id, so re-importing an overlapping statement merges instead of
+  // duplicating. Orders never touch balances or stats.
+  for (const o of importOrders) {
+    await db
+      .insert(orders)
+      .values({
+        accountId,
+        ticket: o.ticket,
+        symbol: o.symbol,
+        type: o.type,
+        lotsRequested: o.lotsRequested,
+        lotsFilled: o.lotsFilled,
+        price: o.price,
+        stopLoss: o.stopLoss,
+        takeProfit: o.takeProfit,
+        setupTime: new Date(o.setupTime),
+        doneTime: o.doneTime ? new Date(o.doneTime) : null,
+        state: o.state,
+        comment: o.comment,
+      })
+      .onConflictDoUpdate({
+        target: [orders.accountId, orders.ticket],
+        set: {
+          symbol: o.symbol,
+          type: o.type,
+          lotsRequested: o.lotsRequested,
+          lotsFilled: o.lotsFilled,
+          price: o.price,
+          stopLoss: o.stopLoss,
+          takeProfit: o.takeProfit,
+          setupTime: new Date(o.setupTime),
+          doneTime: o.doneTime ? new Date(o.doneTime) : null,
+          state: o.state,
+          comment: o.comment,
+        },
+      });
+  }
+
+  // The raw deal ledger from the report's Deals section — upserted by the
+  // broker's real deal id, same idempotency as balance ops.
+  for (const d of importDeals) {
+    const values = {
+      orderTicket: d.orderTicket,
+      time: new Date(d.time),
+      symbol: d.symbol,
+      type: d.type,
+      direction: d.direction,
+      lots: d.lots,
+      price: d.price,
+      commission: d.commission,
+      fee: d.fee,
+      swap: d.swap,
+      profit: d.profit,
+      balance: d.balance,
+      comment: d.comment,
+    };
+    await db
+      .insert(deals)
+      .values({ accountId, dealId: d.dealId, ...values })
+      .onConflictDoUpdate({ target: [deals.accountId, deals.dealId], set: values });
   }
 
   // If part of the imported window was already live-synced under different
@@ -142,6 +207,8 @@ export async function runHistoryImport(accountId: string, request: Request): Pro
     format,
     imported: inserted,
     transactionsImported: importOps.length,
+    ordersImported: importOrders.length,
+    dealsImported: importDeals.length,
     deduplicated,
     skipped,
     failed: errors.length,

@@ -1,8 +1,10 @@
-import type { tradingAccounts, accountStats, trades } from '@/lib/db/schema';
+import type { tradingAccounts, accountStats, trades, orders, deals } from '@/lib/db/schema';
 
 type AccountRow = typeof tradingAccounts.$inferSelect;
 type StatsRow = typeof accountStats.$inferSelect;
 type TradeRow = typeof trades.$inferSelect;
+type OrderRow = typeof orders.$inferSelect;
+type DealRow = typeof deals.$inferSelect;
 
 /**
  * Shape a trading account for the public distribute endpoints, applying the
@@ -65,5 +67,48 @@ export function exposeTrade(t: TradeRow, distinguishManual: boolean) {
     magicNumber: t.magicNumber,
     comment: t.comment,
     ...(distinguishManual ? { source: t.source } : {}),
+  };
+}
+
+/**
+ * Public deal shape — the statement's Deals section, one row per ledger entry.
+ * The running `balance` column is deliberately never exposed: a balance jump
+ * would betray transactions that are excluded from transmission.
+ */
+export function exposeDeal(d: DealRow) {
+  return {
+    id: d.id,
+    ticket: d.dealId,
+    orderTicket: d.orderTicket,
+    time: d.time,
+    symbol: d.symbol,
+    type: d.type,
+    direction: d.direction,
+    lots: d.lots,
+    price: d.price,
+    commission: d.commission,
+    fee: d.fee,
+    swap: d.swap,
+    profit: d.profit,
+    comment: d.comment,
+  };
+}
+
+/** Public order shape — the statement's Orders section, one row per order. */
+export function exposeOrder(o: OrderRow) {
+  return {
+    id: o.id,
+    ticket: o.ticket,
+    symbol: o.symbol,
+    type: o.type,
+    lotsRequested: o.lotsRequested,
+    lotsFilled: o.lotsFilled,
+    price: o.price,
+    stopLoss: o.stopLoss,
+    takeProfit: o.takeProfit,
+    setupTime: o.setupTime,
+    doneTime: o.doneTime,
+    state: o.state,
+    comment: o.comment,
   };
 }

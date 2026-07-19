@@ -37,6 +37,14 @@ export const ENDPOINTS = [
     query: { status: 'open|closed|all', from: 'ISO 8601 or epoch', to: 'ISO 8601 or epoch', dateField: 'close|open (default close)', symbol: 'e.g. EURUSD', page: 'default 1', limit: 'default 100, max 500' },
   },
   {
+    method: 'GET', path: '/accounts/{accountId}/orders', desc: 'Order history (market + pending orders, as on the statement’s Orders section).',
+    query: { state: 'filled|canceled|all', from: 'ISO 8601 or epoch', to: 'ISO 8601 or epoch', dateField: 'setup|done (default setup)', symbol: 'e.g. EURUSD', page: 'default 1', limit: 'default 100, max 500' },
+  },
+  {
+    method: 'GET', path: '/accounts/{accountId}/deals', desc: 'Raw deal ledger (entries, exits, balance operations), as on the statement’s Deals section.',
+    query: { type: 'buy|sell|balance|…', from: 'ISO 8601 or epoch', to: 'ISO 8601 or epoch', symbol: 'e.g. EURUSD', page: 'default 1', limit: 'default 100, max 500' },
+  },
+  {
     method: 'GET', path: '/accounts/{accountId}/transactions', desc: 'Deposits/withdrawals (transfers).',
     query: { from: 'ISO 8601 or epoch', to: 'ISO 8601 or epoch' },
   },
@@ -79,6 +87,37 @@ export const DATA_DICTIONARY: Record<string, Record<string, string>> = {
     swap: 'number',
     isOpen: 'boolean — true = open position',
   },
+  order: {
+    id: 'string',
+    ticket: 'string — broker order id',
+    symbol: 'string — instrument',
+    type: '"buy" | "sell" | "buy limit" | "sell limit" | "buy stop" | "sell stop" | …',
+    lotsRequested: 'number | null — requested volume',
+    lotsFilled: 'number | null — filled volume (0 for canceled orders)',
+    price: 'number | null — order price (null for market orders)',
+    stopLoss: 'number | null',
+    takeProfit: 'number | null',
+    setupTime: 'ISO 8601 — when the order was placed',
+    doneTime: 'ISO 8601 | null — when it reached its final state',
+    state: '"filled" | "canceled" | "expired" | …',
+    comment: 'string | null',
+  },
+  deal: {
+    id: 'string',
+    ticket: 'string — broker deal id',
+    orderTicket: 'string | null — originating order id',
+    time: 'ISO 8601',
+    symbol: 'string | null — null for balance/credit deals',
+    type: '"buy" | "sell" | "balance" | "credit" | …',
+    direction: '"in" | "out" | "in/out" | null',
+    lots: 'number | null',
+    price: 'number | null',
+    commission: 'number | null',
+    fee: 'number | null',
+    swap: 'number | null',
+    profit: 'number | null — realized PnL portion (transfer amount for balance deals)',
+    comment: 'string | null',
+  },
   transaction: {
     id: 'string',
     kind: '"deposit" | "withdrawal"',
@@ -108,7 +147,7 @@ export function discoveryDoc(base: string) {
       ],
       keyFormat: 'hk_ followed by 48 hex characters',
       scopes: {
-        read: 'fetch accounts, trades, transactions',
+        read: 'fetch accounts, trades, orders, deals, transactions',
         write: 'also ingest trades, import history, edit labels',
       },
       errors: { '401': 'missing/invalid/revoked/expired key', '403': 'key lacks required scope', '404': 'account not visible to this key' },
@@ -119,6 +158,8 @@ export function discoveryDoc(base: string) {
       listAccounts: `curl -H "Authorization: Token <key>" ${base}/accounts`,
       historyRange: `curl -H "Authorization: Token <key>" "${base}/accounts/{accountId}/trades?status=closed&from=2024-01-01T00:00:00Z&to=2024-02-01T00:00:00Z"`,
       openPositions: `curl -H "Authorization: Token <key>" "${base}/accounts/{accountId}/trades?status=open"`,
+      orders: `curl -H "Authorization: Token <key>" "${base}/accounts/{accountId}/orders?state=filled"`,
+      deals: `curl -H "Authorization: Token <key>" ${base}/accounts/{accountId}/deals`,
       transactions: `curl -H "Authorization: Token <key>" ${base}/accounts/{accountId}/transactions`,
     },
   };
@@ -137,7 +178,7 @@ export function openapiSpec(base: string) {
     info: {
       title: apiName(),
       version: '1.0.0',
-      description: 'Trading-account performance data: accounts, trade/execution history, and transfers. Authenticate every request with an API key (Authorization: Bearer <key>, Authorization: Token <key>, or X-API-Key: <key>).',
+      description: 'Trading-account performance data: accounts, trade/execution history, order history, the raw deal ledger, and transfers. Authenticate every request with an API key (Authorization: Bearer <key>, Authorization: Token <key>, or X-API-Key: <key>).',
     },
     servers: [{ url: base }],
     security: [{ bearerAuth: [] }, { apiKeyHeader: [] }],
@@ -179,6 +220,35 @@ export function openapiSpec(base: string) {
             profit: NUM, pips: NUM_N, commission: NUM, swap: NUM,
             isOpen: { type: 'boolean' },
             magicNumber: { type: 'integer', nullable: true }, comment: STR_N,
+          },
+        },
+        Order: {
+          type: 'object',
+          properties: {
+            id: STR, ticket: STR, symbol: STR,
+            type: { type: 'string', description: '"buy", "sell", "buy limit", "sell stop", …' },
+            lotsRequested: NUM_N, lotsFilled: NUM_N,
+            price: { type: 'number', nullable: true, description: 'order price (null for market orders)' },
+            stopLoss: NUM_N, takeProfit: NUM_N,
+            setupTime: { type: 'string', format: 'date-time', description: 'when the order was placed' },
+            doneTime: { type: 'string', format: 'date-time', nullable: true, description: 'when it reached its final state' },
+            state: { type: 'string', description: '"filled", "canceled", "expired", …' },
+            comment: STR_N,
+          },
+        },
+        Deal: {
+          type: 'object',
+          properties: {
+            id: STR,
+            ticket: { type: 'string', description: 'broker deal id' },
+            orderTicket: { type: 'string', nullable: true, description: 'originating order id' },
+            time: { type: 'string', format: 'date-time' },
+            symbol: { type: 'string', nullable: true, description: 'null for balance/credit deals' },
+            type: { type: 'string', description: '"buy", "sell", "balance", "credit", …' },
+            direction: { type: 'string', nullable: true, description: '"in", "out", "in/out"' },
+            lots: NUM_N, price: NUM_N, commission: NUM_N, fee: NUM_N, swap: NUM_N,
+            profit: { type: 'number', nullable: true, description: 'realized PnL portion (transfer amount for balance deals)' },
+            comment: STR_N,
           },
         },
         Transaction: {
@@ -233,6 +303,45 @@ export function openapiSpec(base: string) {
           ],
           responses: {
             '200': { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { trades: { type: 'array', items: { $ref: '#/components/schemas/Trade' } }, pagination: { $ref: '#/components/schemas/Pagination' } } } } } },
+            '400': { description: 'Invalid from/to', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'Account not visible to this key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/accounts/{accountId}/orders': {
+        get: {
+          summary: 'Order history (market + pending orders)',
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: STR },
+            { name: 'state', in: 'query', schema: { type: 'string', enum: ['filled', 'canceled', 'all'], default: 'all' } },
+            { name: 'from', in: 'query', schema: STR, description: 'ISO 8601 or epoch (ms; seconds if ≤10 digits)' },
+            { name: 'to', in: 'query', schema: STR, description: 'ISO 8601 or epoch (ms; seconds if ≤10 digits)' },
+            { name: 'dateField', in: 'query', schema: { type: 'string', enum: ['setup', 'done'], default: 'setup' } },
+            { name: 'symbol', in: 'query', schema: STR },
+            { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', default: 100, maximum: 500 } },
+          ],
+          responses: {
+            '200': { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { orders: { type: 'array', items: { $ref: '#/components/schemas/Order' } }, pagination: { $ref: '#/components/schemas/Pagination' } } } } } },
+            '400': { description: 'Invalid from/to', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+            '404': { description: 'Account not visible to this key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+          },
+        },
+      },
+      '/accounts/{accountId}/deals': {
+        get: {
+          summary: 'Raw deal ledger (entries, exits, balance operations)',
+          parameters: [
+            { name: 'accountId', in: 'path', required: true, schema: STR },
+            { name: 'type', in: 'query', schema: STR, description: 'buy | sell | balance | credit | … (default all)' },
+            { name: 'from', in: 'query', schema: STR, description: 'ISO 8601 or epoch (ms; seconds if ≤10 digits)' },
+            { name: 'to', in: 'query', schema: STR, description: 'ISO 8601 or epoch (ms; seconds if ≤10 digits)' },
+            { name: 'symbol', in: 'query', schema: STR },
+            { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } },
+            { name: 'limit', in: 'query', schema: { type: 'integer', default: 100, maximum: 500 } },
+          ],
+          responses: {
+            '200': { description: 'OK', content: { 'application/json': { schema: { type: 'object', properties: { deals: { type: 'array', items: { $ref: '#/components/schemas/Deal' } }, pagination: { $ref: '#/components/schemas/Pagination' } } } } } },
             '400': { description: 'Invalid from/to', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
             '404': { description: 'Account not visible to this key', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
           },
@@ -294,7 +403,7 @@ export function renderDocsHtml(base: string): string {
   a{color:#8B7CF7} .pill{display:inline-block;background:#1A1D26;border:1px solid #23262F;border-radius:999px;padding:2px 12px;font-size:13px;color:#9AA1B2;margin-right:8px}
 </style></head><body><main>
   <h1>${esc(doc.name)}</h1>
-  <p class="sub">REST API for trading-account performance data — accounts, trade history, and transfers.</p>
+  <p class="sub">REST API for trading-account performance data — accounts, trade history, orders, deals, and transfers.</p>
   <p><span class="pill">Base URL <code>${esc(base)}</code></span><span class="pill">JSON responses</span><span class="pill">Timestamps ISO 8601 UTC</span></p>
 
   <h2>Authentication</h2>
@@ -314,6 +423,10 @@ X-API-Key: &lt;api_key&gt;</code></pre>
 ${esc(doc.examples.historyRange)}
 
 ${esc(doc.examples.openPositions)}
+
+${esc(doc.examples.orders)}
+
+${esc(doc.examples.deals)}
 
 ${esc(doc.examples.transactions)}</code></pre>
 

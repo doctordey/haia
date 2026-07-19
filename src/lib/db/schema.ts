@@ -164,6 +164,72 @@ export const balanceOpsRelations = relations(balanceOps, ({ one }) => ({
   account: one(tradingAccounts, { fields: [balanceOps.accountId], references: [tradingAccounts.id] }),
 }));
 
+// ─── Orders ──────────────────────────────────────────
+// The statement's Orders section (market + pending order records), captured on
+// history import so the public API can transmit it alongside positions and
+// transactions. Orders never affect balances or stats — pure distribution data.
+
+export const orders = pgTable('orders', {
+  id:            text('id').primaryKey().$defaultFn(() => createId()),
+  accountId:     text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  ticket:        text('ticket').notNull(),           // broker order id (idempotent upsert key)
+  symbol:        text('symbol').notNull(),
+  type:          text('type').notNull(),             // "buy" | "sell" | "buy limit" | "sell stop" | ...
+  lotsRequested: real('lots_requested'),
+  lotsFilled:    real('lots_filled'),
+  price:         real('price'),                      // order price (null for market orders)
+  stopLoss:      real('stop_loss'),
+  takeProfit:    real('take_profit'),
+  setupTime:     timestamp('setup_time').notNull(),  // placed (report "Open Time")
+  doneTime:      timestamp('done_time'),             // reached final state (filled/canceled/expired)
+  state:         text('state').notNull(),            // "filled" | "canceled" | "expired" | ...
+  comment:       text('comment'),
+  isExcluded:    boolean('is_excluded').notNull().default(false),  // not transmitted via the public API
+  createdAt:     timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  unique('orders_account_ticket_uniq').on(table.accountId, table.ticket),
+  index('orders_account_setup_time_idx').on(table.accountId, table.setupTime),
+]);
+
+export const ordersRelations = relations(orders, ({ one }) => ({
+  account: one(tradingAccounts, { fields: [orders.accountId], references: [tradingAccounts.id] }),
+}));
+
+// ─── Deals ───────────────────────────────────────────
+// The statement's Deals section — the broker's raw execution/balance ledger
+// (entries, exits, commissions, balance operations), captured on history
+// import. Like orders, pure distribution data: balances and stats stay derived
+// from trades + balanceOps. The running `balance` column is stored for audit
+// but never transmitted — it would betray excluded transactions.
+
+export const deals = pgTable('deals', {
+  id:          text('id').primaryKey().$defaultFn(() => createId()),
+  accountId:   text('account_id').notNull().references(() => tradingAccounts.id, { onDelete: 'cascade' }),
+  dealId:      text('deal_id').notNull(),          // broker deal id (idempotent upsert key)
+  orderTicket: text('order_ticket'),               // originating order id, when present
+  time:        timestamp('time').notNull(),
+  symbol:      text('symbol'),                     // null for balance/credit deals
+  type:        text('type').notNull(),             // "buy" | "sell" | "balance" | "credit" | ...
+  direction:   text('direction'),                  // "in" | "out" | "in/out" | null
+  lots:        real('lots'),
+  price:       real('price'),
+  commission:  real('commission'),
+  fee:         real('fee'),
+  swap:        real('swap'),
+  profit:      real('profit'),
+  balance:     real('balance'),                    // running balance after this deal (never exposed)
+  comment:     text('comment'),
+  isExcluded:  boolean('is_excluded').notNull().default(false),  // not transmitted via the public API
+  createdAt:   timestamp('created_at').notNull().defaultNow(),
+}, (table) => [
+  unique('deals_account_deal_uniq').on(table.accountId, table.dealId),
+  index('deals_account_time_idx').on(table.accountId, table.time),
+]);
+
+export const dealsRelations = relations(deals, ({ one }) => ({
+  account: one(tradingAccounts, { fields: [deals.accountId], references: [tradingAccounts.id] }),
+}));
+
 // ─── Daily Snapshots ─────────────────────────────────
 
 export const dailySnapshots = pgTable('daily_snapshots', {

@@ -26,12 +26,48 @@ export interface Mt5BalanceOp {
   comment: string | null;
 }
 
+export interface Mt5Order {
+  ticket: string;              // broker order id (idempotent upsert key)
+  symbol: string;
+  type: string;                // "buy" | "sell" | "buy limit" | "sell stop" | ...
+  lotsRequested: number | null;
+  lotsFilled: number | null;
+  price: number | null;        // order price (null for market orders)
+  stopLoss: number | null;
+  takeProfit: number | null;
+  setupTime: string;           // placed (report "Open Time"), normalized date string
+  doneTime: string | null;     // reached final state (filled/canceled/expired)
+  state: string;               // "filled" | "canceled" | "expired" | ...
+  comment: string | null;
+}
+
+export interface Mt5Deal {
+  dealId: string;              // broker deal id (idempotent upsert key)
+  orderTicket: string | null;  // originating order id, when present
+  time: string;                // normalized date string
+  symbol: string | null;       // null for balance/credit deals
+  type: string;                // "buy" | "sell" | "balance" | "credit" | ...
+  direction: string | null;    // "in" | "out" | "in/out" | null
+  lots: number | null;
+  price: number | null;
+  commission: number | null;
+  fee: number | null;
+  swap: number | null;
+  profit: number | null;
+  balance: number | null;      // running balance after this deal
+  comment: string | null;
+}
+
 export interface Mt5ParseResult {
   rows: TradeInput[];
   skipped: number;     // non-trade / non-parseable data lines skipped
   warnings: string[];
   /** Deposits/withdrawals found in the report's Deals section (HTML) or balance rows (CSV). */
   balanceOps: Mt5BalanceOp[];
+  /** Rows of the report's Orders section (market + pending order records). */
+  orders: Mt5Order[];
+  /** Full rows of the report's Deals section (the broker's raw execution/balance ledger). */
+  deals: Mt5Deal[];
 }
 
 // ── Text cleanup ────────────────────────────────────────────────────────────
@@ -94,6 +130,8 @@ function canon(header: string): string | null {
     ticket: 'ticket', order: 'ticket', deal: 'ticket', position: 'ticket', id: 'ticket', positionid: 'ticket',
     comment: 'comment', notes: 'comment',
     magic: 'magic', magicnumber: 'magic',
+    state: 'state', status: 'state',
+    balance: 'balance',
   };
   return map[h] ?? null;
 }
@@ -170,6 +208,143 @@ function collectBalanceOps(allRows: string[][]): Mt5BalanceOp[] {
   return ops;
 }
 
+// A normalized date string that actually parses as a date — guards against
+// summary rows ("Total Net Profit: …") whose cells land in time columns.
+function validDate(s: string | undefined): string | null {
+  const t = normDate(s);
+  return t && !Number.isNaN(new Date(t).getTime()) ? t : null;
+}
+
+// Column plan for the Orders section header. Differs from buildPlan: the first
+// time-ish column ("Open Time") is when the order was placed, the second bare
+// "Time" is when it reached its final state; the single Price column is the
+// order price (no open/close pair to disambiguate).
+function buildOrderPlan(headerCells: string[]): (string | null)[] {
+  let timeSeen = 0;
+  return headerCells.map((cell) => {
+    const c = canon(cell);
+    if (c === 'time' || c === 'opentime') return timeSeen++ === 0 ? 'setuptime' : 'donetime';
+    if (c === 'price' || c === 'entryprice') return 'price';
+    return c;
+  });
+}
+
+// An order from a canonical-field record, or null if the row isn't one
+// (summaries, blank lines). Volume may read "filled / requested"; market
+// orders carry the literal "market" in the Price column (→ null).
+function orderFromRec(rec: Record<string, string>): Mt5Order | null {
+  const type = (rec.type || '').toLowerCase();
+  if (!rec.ticket || !rec.symbol || !/buy|sell/.test(type)) return null;
+  const setupTime = validDate(rec.setuptime);
+  if (!setupTime) return null;
+  const volParts = (rec.lots || '').split('/');
+  return {
+    ticket: rec.ticket,
+    symbol: rec.symbol,
+    type,
+    lotsFilled: parseNum(volParts[0]),
+    lotsRequested: parseNum(volParts[1] ?? volParts[0]),
+    price: parseNum(rec.price),
+    stopLoss: parseNum(rec.sl),
+    takeProfit: parseNum(rec.tp),
+    setupTime,
+    doneTime: validDate(rec.donetime),
+    state: (rec.state || '').toLowerCase(),
+    comment: rec.comment || null,
+  };
+}
+
+// Column plan for the Deals section header. Repeated canonical fields carry
+// distinct meanings here: Deal then Order (both "ticket"), Type then Direction
+// (both "type"), Commission then Fee (both "commission") — first occurrence is
+// always the real one.
+function buildDealPlan(headerCells: string[]): (string | null)[] {
+  let ticketSeen = 0, typeSeen = 0, commissionSeen = 0;
+  return headerCells.map((cell) => {
+    const c = canon(cell);
+    if (c === 'ticket') return ticketSeen++ === 0 ? 'dealid' : 'orderticket';
+    if (c === 'type') return typeSeen++ === 0 ? 'type' : 'direction';
+    if (c === 'commission') return commissionSeen++ === 0 ? 'commission' : 'fee';
+    if (c === 'time' || c === 'opentime') return 'time';
+    if (c === 'price' || c === 'entryprice') return 'price';
+    return c;
+  });
+}
+
+// A deal from a canonical-field record, or null if the row isn't one. Deal ids
+// are strictly numeric — that plus a parseable time keeps the report's summary
+// rows (which follow the Deals table) out.
+function dealFromRec(rec: Record<string, string>): Mt5Deal | null {
+  const type = (rec.type || '').toLowerCase();
+  if (!rec.dealid || !/^\d+$/.test(rec.dealid) || !type) return null;
+  const time = validDate(rec.time);
+  if (!time) return null;
+  return {
+    dealId: rec.dealid,
+    orderTicket: rec.orderticket || null,
+    time,
+    symbol: rec.symbol || null,
+    type,
+    direction: (rec.direction || '').toLowerCase() || null,
+    lots: parseNum(rec.lots),
+    price: parseNum(rec.price),
+    commission: parseNum(rec.commission),
+    fee: parseNum(rec.fee),
+    swap: parseNum(rec.swap),
+    profit: parseNum(rec.profit),
+    balance: parseNum(rec.balance),
+    comment: rec.comment || null,
+  };
+}
+
+// Shared section scanner. `matchHeader` inspects each header row (a row with
+// ≥4 recognized columns including Symbol+Type) and returns a column plan when
+// it's the section of interest — any other header ends collection, so
+// neighbouring sections can't leak in. Data rows get the same spacer-cell
+// realignment as the Positions parse (colspan in the header, empty spacer
+// cells in the data) and are mapped first-occurrence-wins.
+function collectSection<T>(
+  allRows: string[][],
+  matchHeader: (raw: string[], generic: (string | null)[]) => (string | null)[] | null,
+  fromRec: (rec: Record<string, string>) => T | null,
+): T[] {
+  const out: T[] = [];
+  let plan: (string | null)[] | null = null;
+  for (const raw of allRows) {
+    const generic = buildPlan(raw);
+    if (generic.filter(Boolean).length >= 4 && generic.includes('symbol') && generic.includes('type')) {
+      plan = matchHeader(raw, generic);
+      continue;
+    }
+    if (!plan || raw.length < 4) continue;
+
+    let cells = raw;
+    if (cells.length > plan.length) {
+      let excess = cells.length - plan.length;
+      cells = cells.filter((cell) => {
+        if (excess > 0 && cell === '') { excess--; return false; }
+        return true;
+      });
+    }
+
+    const rec: Record<string, string> = {};
+    plan.forEach((field, idx) => { if (field && !(field in rec)) rec[field] = cells[idx] ?? ''; });
+    const value = fromRec(rec);
+    if (value) out.push(value);
+  }
+  return out;
+}
+
+// The Orders section header is the one carrying a State column.
+function collectOrders(allRows: string[][]): Mt5Order[] {
+  return collectSection(allRows, (raw, generic) => (generic.includes('state') ? buildOrderPlan(raw) : null), orderFromRec);
+}
+
+// The Deals section header is the one carrying a Balance column.
+function collectDeals(allRows: string[][]): Mt5Deal[] {
+  return collectSection(allRows, (raw, generic) => (generic.includes('balance') ? buildDealPlan(raw) : null), dealFromRec);
+}
+
 // Build a TradeInput from a canonical-field record. Returns null for rows that
 // aren't trades (balance/credit operations, summaries, blank lines).
 function recordToTrade(rec: Record<string, string>): TradeInput | null {
@@ -206,11 +381,14 @@ export function parseMt5Csv(text: string): Mt5ParseResult {
   const warnings: string[] = [];
   const lines = cleanImportText(text).split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length < 2) {
-    return { rows: [], skipped: 0, warnings: ['No data rows found in CSV.'], balanceOps: [] };
+    return { rows: [], skipped: 0, warnings: ['No data rows found in CSV.'], balanceOps: [], orders: [], deals: [] };
   }
 
   const delim = detectDelimiter(lines[0]);
   const plan = buildPlan(splitCsvLine(lines[0], delim));
+  const cellRows = lines.map((l) => splitCsvLine(l, delim));
+  const orders = collectOrders(cellRows);
+  const deals = collectDeals(cellRows);
 
   if (!plan.includes('symbol') || !plan.includes('type')) {
     warnings.push('Could not find Symbol/Type columns — check this is an MT5 history export.');
@@ -237,7 +415,7 @@ export function parseMt5Csv(text: string): Mt5ParseResult {
     else skipped++;
   }
 
-  return { rows, skipped, warnings, balanceOps };
+  return { rows, skipped, warnings, balanceOps, orders, deals };
 }
 
 // ── HTML (MT5 "Report → HTML" / MT4 statement) ─────────────────────────────
@@ -273,9 +451,12 @@ function extractRows(html: string): string[][] {
 export function parseMt5Html(html: string): Mt5ParseResult {
   const allRows = extractRows(cleanImportText(html));
 
-  // Deposits/withdrawals live in the report's Deals section — collect them
+  // Deposits/withdrawals live in the report's Deals section, order records in
+  // its Orders section, and the raw deal ledger in Deals — all collected
   // across every table section, independent of the Positions parse below.
   const balanceOps = collectBalanceOps(allRows);
+  const orders = collectOrders(allRows);
+  const deals = collectDeals(allRows);
 
   // Locate the trade table by scoring candidate header rows. The Positions
   // table (what we want) has both open and close time/price pairs, which
@@ -294,8 +475,8 @@ export function parseMt5Html(html: string): Mt5ParseResult {
 
   if (!best) {
     return {
-      rows: [], skipped: 0, balanceOps,
-      warnings: balanceOps.length
+      rows: [], skipped: 0, balanceOps, orders, deals,
+      warnings: balanceOps.length || orders.length || deals.length
         ? []
         : ['No recognizable trade table found in HTML — expected an MT5/MT4 report with Symbol/Type/Price columns.'],
     };
@@ -340,7 +521,7 @@ export function parseMt5Html(html: string): Mt5ParseResult {
     else skipped++;
   }
 
-  return { rows, skipped, warnings: [], balanceOps };
+  return { rows, skipped, warnings: [], balanceOps, orders, deals };
 }
 
 // ── JSON ───────────────────────────────────────────────────────────────────

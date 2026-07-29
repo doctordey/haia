@@ -586,6 +586,21 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
   );
 }
 
+// Broker/server time offset. MT4/MT5 servers commonly run on UTC+3, and the
+// datetime-local inputs produce a bare wall-clock string with no offset. We
+// tag the entered value with +03:00 so it's stored as the correct instant
+// regardless of the server's own timezone.
+const SERVER_TZ_OFFSET = '+03:00';
+
+// Append the server offset to a bare datetime-local value ("YYYY-MM-DDTHH:mm"
+// or "...:ss"). Returns the input untouched if it already carries an offset/Z
+// or is empty.
+function withServerOffset(value: string): string {
+  if (!value) return value;
+  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(value)) return value;
+  return `${value}${SERVER_TZ_OFFSET}`;
+}
+
 // Hand-enter a single trade/position (source = manual).
 function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps) {
   const [form, setForm] = useState({
@@ -606,9 +621,9 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
       const payload: Record<string, unknown> = {
         symbol: form.symbol, direction: form.direction,
         lots: Number(form.lots), entryPrice: Number(form.entryPrice),
-        openTime: form.openTime,
+        openTime: withServerOffset(form.openTime),
       };
-      if (form.closeTime) payload.closeTime = form.closeTime;
+      if (form.closeTime) payload.closeTime = withServerOffset(form.closeTime);
       if (form.closePrice) payload.closePrice = Number(form.closePrice);
       if (form.stopLoss) payload.stopLoss = Number(form.stopLoss);
       if (form.takeProfit) payload.takeProfit = Number(form.takeProfit);
@@ -630,6 +645,7 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
     <Modal open onClose={onClose} title={`Add manual trade — ${account.labelName || account.name}`} className="max-w-lg">
       <p className="text-xs text-text-secondary mb-4">
         Leave close time / price blank for an open position. Profit is optional; pips are derived from prices when possible.
+        Times are entered in server time (UTC+3).
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Input label="Symbol" placeholder="EURUSD" value={form.symbol} onChange={(e) => set('symbol', e.target.value)} />

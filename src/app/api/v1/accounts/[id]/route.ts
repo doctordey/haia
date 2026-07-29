@@ -104,6 +104,18 @@ export function buildLabelUpdate(body: Record<string, unknown>):
     if (typeof body.distinguishManual !== 'boolean') return { error: 'distinguishManual must be a boolean' };
     set.distinguishManual = body.distinguishManual;
   }
+  if ('serverTimezone' in body) {
+    // Fixed UTC offset like "+03:00" or "-05:30". Empty/null resets to the
+    // default (+03:00), the common MT4/MT5 broker server time.
+    if (body.serverTimezone == null || body.serverTimezone === '') set.serverTimezone = '+03:00';
+    else {
+      const tz = String(body.serverTimezone).trim();
+      if (!/^[+-]\d{2}:\d{2}$/.test(tz)) return { error: 'serverTimezone must be a UTC offset like "+03:00" or null' };
+      const [h, m] = tz.slice(1).split(':').map(Number);
+      if (h > 14 || m > 59) return { error: 'serverTimezone is out of range' };
+      set.serverTimezone = tz;
+    }
+  }
 
   return { set };
 }

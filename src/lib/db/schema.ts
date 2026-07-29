@@ -72,12 +72,6 @@ export const tradingAccounts = pgTable('trading_accounts', {
   labelLeverage: integer('label_leverage'),                       // override leverage
   beginningDate: date('beginning_date'),                          // inception / tracking-start date exposed via the API
 
-  // Broker/server timezone as a fixed UTC offset (e.g. "+03:00"). MT4/MT5
-  // servers commonly run on UTC+3. Manual trade times are entered in this
-  // timezone and tagged with the offset so they're stored as the correct
-  // instant regardless of where the app runs.
-  serverTimezone: text('server_timezone').notNull().default('+03:00'),
-
   // When true, manual entries are kept distinguishable from live (broker-synced)
   // ones — surfaced as a `source` field and filterable. When false the two are
   // pooled and reported together everywhere.

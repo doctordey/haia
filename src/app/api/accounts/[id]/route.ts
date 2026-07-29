@@ -103,7 +103,7 @@ export async function PATCH(
   // Label overrides (account name / number / live-demo exposed via the REST API)
   // and the manual/live distinction toggle. Shares the validation used by the
   // public v1 PATCH so the rules stay identical.
-  const labelKeys = ['labelName', 'labelLogin', 'labelType', 'accountType', 'labelServer', 'labelBroker', 'labelLeverage', 'beginningDate', 'distinguishManual', 'serverTimezone'];
+  const labelKeys = ['labelName', 'labelLogin', 'labelType', 'accountType', 'labelServer', 'labelBroker', 'labelLeverage', 'beginningDate', 'distinguishManual'];
   if (labelKeys.some((k) => k in body)) {
     const result = buildLabelUpdate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });

@@ -1,1 +1,0 @@
-ALTER TABLE "trading_accounts" ADD COLUMN "server_timezone" text DEFAULT '+03:00' NOT NULL;

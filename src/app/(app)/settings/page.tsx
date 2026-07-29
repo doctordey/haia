@@ -521,7 +521,6 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
     labelBroker: account.labelBroker || '',
     labelLeverage: account.labelLeverage != null ? String(account.labelLeverage) : '',
     beginningDate: account.beginningDate || '',
-    serverTimezone: account.serverTimezone || '+03:00',
     distinguishManual: account.distinguishManual !== false,
   });
   const [saving, setSaving] = useState(false);
@@ -540,7 +539,6 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
           labelBroker: form.labelBroker.trim() || null,
           labelLeverage: form.labelLeverage.trim() === '' ? null : Number(form.labelLeverage),
           beginningDate: form.beginningDate || null,
-          serverTimezone: form.serverTimezone || null,
           distinguishManual: form.distinguishManual,
         }),
       });
@@ -573,9 +571,6 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
             value={form.labelLeverage} onChange={(e) => setForm({ ...form, labelLeverage: e.target.value })} />
           <Input label="Beginning date" type="date"
             value={form.beginningDate} onChange={(e) => setForm({ ...form, beginningDate: e.target.value })} />
-          <Select label="Server timezone (manual trade times)" value={form.serverTimezone}
-            onChange={(e) => setForm({ ...form, serverTimezone: e.target.value })}
-            options={TZ_OFFSET_OPTIONS.map((o) => ({ value: o, label: `UTC${o}` }))} />
         </div>
         <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer pt-1">
           <input type="checkbox" checked={form.distinguishManual}
@@ -591,27 +586,6 @@ function AccountLabelsModal({ account, onClose, onSaved, toast }: ManageModalPro
   );
 }
 
-// Default broker/server time offset. MT4/MT5 servers commonly run on UTC+3.
-// Used when an account has no explicit serverTimezone set.
-const DEFAULT_SERVER_TZ_OFFSET = '+03:00';
-
-// Common UTC offsets offered when configuring an account's server timezone.
-const TZ_OFFSET_OPTIONS = [
-  '-12:00', '-11:00', '-10:00', '-09:00', '-08:00', '-07:00', '-06:00', '-05:00',
-  '-04:00', '-03:00', '-02:00', '-01:00', '+00:00', '+01:00', '+02:00', '+03:00',
-  '+04:00', '+05:00', '+05:30', '+06:00', '+07:00', '+08:00', '+09:00', '+10:00',
-  '+11:00', '+12:00', '+13:00', '+14:00',
-];
-
-// Append a fixed UTC offset to a bare datetime-local value ("YYYY-MM-DDTHH:mm"
-// or "...:ss"). Returns the input untouched if it already carries an offset/Z
-// or is empty.
-function withServerOffset(value: string, offset: string): string {
-  if (!value) return value;
-  if (/[zZ]$|[+-]\d{2}:\d{2}$/.test(value)) return value;
-  return `${value}${offset || DEFAULT_SERVER_TZ_OFFSET}`;
-}
-
 // Hand-enter a single trade/position (source = manual).
 function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps) {
   const [form, setForm] = useState({
@@ -619,7 +593,6 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
     stopLoss: '', takeProfit: '', openTime: '', closeTime: '', profit: '', commission: '', swap: '', comment: '',
   });
   const [saving, setSaving] = useState(false);
-  const serverTz = account.serverTimezone || DEFAULT_SERVER_TZ_OFFSET;
 
   function set(k: string, v: string) { setForm((f) => ({ ...f, [k]: v })); }
 
@@ -633,9 +606,9 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
       const payload: Record<string, unknown> = {
         symbol: form.symbol, direction: form.direction,
         lots: Number(form.lots), entryPrice: Number(form.entryPrice),
-        openTime: withServerOffset(form.openTime, serverTz),
+        openTime: form.openTime,
       };
-      if (form.closeTime) payload.closeTime = withServerOffset(form.closeTime, serverTz);
+      if (form.closeTime) payload.closeTime = form.closeTime;
       if (form.closePrice) payload.closePrice = Number(form.closePrice);
       if (form.stopLoss) payload.stopLoss = Number(form.stopLoss);
       if (form.takeProfit) payload.takeProfit = Number(form.takeProfit);
@@ -657,7 +630,7 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
     <Modal open onClose={onClose} title={`Add manual trade — ${account.labelName || account.name}`} className="max-w-lg">
       <p className="text-xs text-text-secondary mb-4">
         Leave close time / price blank for an open position. Profit is optional; pips are derived from prices when possible.
-        Times are entered in this account&apos;s server time (UTC{serverTz}).
+        Times are saved exactly as entered (broker/server time) — no timezone conversion.
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Input label="Symbol" placeholder="EURUSD" value={form.symbol} onChange={(e) => set('symbol', e.target.value)} />

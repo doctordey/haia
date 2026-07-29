@@ -639,8 +639,8 @@ function ManualTradeModal({ account, onClose, onSaved, toast }: ManageModalProps
         <Input label="Profit ($)" type="number" step="0.01" value={form.profit} onChange={(e) => set('profit', e.target.value)} />
         <Input label="Entry price" type="number" step="any" value={form.entryPrice} onChange={(e) => set('entryPrice', e.target.value)} />
         <Input label="Close price" type="number" step="any" value={form.closePrice} onChange={(e) => set('closePrice', e.target.value)} />
-        <Input label="Open time" type="datetime-local" value={form.openTime} onChange={(e) => set('openTime', e.target.value)} />
-        <Input label="Close time" type="datetime-local" value={form.closeTime} onChange={(e) => set('closeTime', e.target.value)} />
+        <Input label="Open time" type="datetime-local" step="1" value={form.openTime} onChange={(e) => set('openTime', e.target.value)} />
+        <Input label="Close time" type="datetime-local" step="1" value={form.closeTime} onChange={(e) => set('closeTime', e.target.value)} />
         <Input label="Stop loss" type="number" step="any" value={form.stopLoss} onChange={(e) => set('stopLoss', e.target.value)} />
         <Input label="Take profit" type="number" step="any" value={form.takeProfit} onChange={(e) => set('takeProfit', e.target.value)} />
         <Input label="Commission" type="number" step="0.01" value={form.commission} onChange={(e) => set('commission', e.target.value)} />
